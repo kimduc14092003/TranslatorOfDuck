@@ -61,4 +61,4 @@ Mỗi lượt đo dùng **một tab douyin.com duy nhất**.
 node spike/s1/dev/mock_test.mjs
 ```
 
-Cần Node 18+, `playwright` (có Chromium) và `ffmpeg`. Script dựng một server HTTPS cục bộ đóng vai `www.douyin.com` và CDN, trả JSON feed giả (fetch, XHR, `RENDER_DATA`, state của player) cùng file MP4 tạo bằng ffmpeg, rồi kiểm 15 điều kiện. Trong đó có: bắt được dữ liệu trước khi phát, A0/A2 tải được khi có CORS và báo lỗi khi không có CORS, nhận ra faststart, chế độ đối chứng không đụng vào `fetch` của trang, và báo cáo không lộ ID/URL.
+Cần Node 18+, `playwright` (có Chromium) và `ffmpeg`. Script dựng một server HTTPS cục bộ đóng vai `www.douyin.com` và CDN, trả JSON feed giả (fetch, XHR, `RENDER_DATA`, state của player) cùng file MP4 tạo bằng ffmpeg, rồi kiểm 17 điều kiện. Trong đó có: bắt được dữ liệu trước khi phát, A0/A2 tải được khi có CORS và báo lỗi khi không có CORS, nhận ra faststart, chế độ đối chứng không đụng vào `fetch` của trang, báo cáo không lộ ID/URL, và gặp 403 thì thử lại có cookie.

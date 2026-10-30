@@ -244,7 +244,7 @@
     const t0 = performance.now();
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 15000);
-    origFetch.call(window, req.url, { headers: { Range: 'bytes=0-' + (req.bytes - 1) }, credentials: 'omit', signal: ctl.signal })
+    origFetch.call(window, req.url, { headers: { Range: 'bytes=0-' + (req.bytes - 1) }, credentials: req.withCookies ? 'include' : 'omit', signal: ctl.signal })
       .then(async (res) => {
         const tHead = performance.now() - t0;
         const buf = new Uint8Array(await res.arrayBuffer()).subarray(0, req.bytes);

@@ -54,6 +54,8 @@ const feed2 = { status_code: 0, aweme_list: [aweme('7400000000000000003', 'fast.
 // item 3 trỏ tới URL không có CORS để kiểm đường A0 → A2 khi lỗi
 feed2.aweme_list[0].video.bit_rate.forEach(g => { g.play_addr.url_list = [cdn('fast.mp4', false)]; });
 feed2.aweme_list[0].video.play_addr.url_list = [cdn('fast.mp4', false)];
+// item 2: các gear trả 403 để kiểm lần thử lại có cookie (a2c)
+feed1.aweme_list[1].video.bit_rate.forEach(g => { g.play_addr.url_list = [cdn('slow.mp4') + '&deny=1']; });
 const ssr = { app: { videoDetail: aweme('7400000000000000004', 'fast.mp4') } };
 
 const PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body>
@@ -104,6 +106,7 @@ const server = https.createServer({ key: fs.readFileSync(path.join(TMP, 'key.pem
   const body = MEDIA[file];
   const cors = u.searchParams.get('cors') === '1';
   const headers = cors ? { 'access-control-allow-origin': 'https://www.douyin.com', 'access-control-expose-headers': 'content-range' } : {};
+  if (u.searchParams.get('deny') === '1') return send(403, headers, '');
   if (req.method === 'OPTIONS') return send(204, { ...headers, 'access-control-allow-headers': 'range' });
   mediaHits.push({ file, range: req.headers.range || null, referer: req.headers.referer || null, origin: req.headers.origin || null, cookie: !!req.headers.cookie });
   if (!body) return send(404, headers, '');
@@ -174,6 +177,8 @@ await page.waitForTimeout(5000);
 const ctl = await pop.evaluate(() => chrome.storage.local.get('s1_report').then(r => r.s1_report));
 console.log('\ncontrol run:', JSON.stringify({ pageLoads: ctl.pageLoads, hookModes: ctl.hookModes, endpoints: ctl.endpoints,
   bySource: ctl.items.bySource, hookChecks: ctl.hook.checks }));
+checks['403 retried with cookies (a2c)'] = Object.values(report.downloads.a2c).reduce((x, y) => x + y, 0) >= 1;
+checks['section recorded'] = Object.keys(report.active.section).length >= 1;
 checks['reset cleared old numbers'] = ctl.pageLoads === 1;
 checks['hook off: no T0 capture'] = Object.keys(ctl.endpoints).length === 0 && ctl.hookModes.off === 1;
 checks['hook off: SSR/T1 still measured'] = (ctl.items.bySource.ssr || 0) >= 1 && (ctl.items.bySource.player || 0) >= 1;

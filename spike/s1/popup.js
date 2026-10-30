@@ -22,7 +22,8 @@ function summarize(r) {
   const minutes = Math.max(1, Math.round((r.updatedAt - r.createdAt) / 60000));
   return {
     'Thời gian thu (phút)': minutes,
-    'Số lần tải trang / chế độ hook': r.pageLoads + ' / ' + Object.entries(r.hookModes).map(([k, v]) => k + '×' + v).join(', '),
+    'Số lần tải trang / chế độ hook': r.pageLoads + ' / ' + (Object.entries(r.hookModes).map(([k, v]) => k + '×' + v).join(', ') || 'hiện tại: ' + (r.env.lastHookMode || '?')),
+    'Khu vực đã lướt': Object.entries(r.active.section || {}).map(([k, v]) => k + ' ' + v).join(', ') || '–',
     'Trình duyệt': (r.env.cocCoc ? 'Cốc Cốc' : 'Chrome') + ' ' + (r.env.chromeMajor || '?'),
     'T0: lượt gọi API feed bắt được': epCalls + ' (' + epItems + ' item)',
     'Video khác nhau thấy được': it.unique + ' (' + Object.entries(it.bySource).map(([k, v]) => k + ' ' + v).join(', ') + ')',
@@ -34,6 +35,7 @@ function summarize(r) {
     'Nguồn chính tải được (A0 hoặc A2)': pct(dl.primaryOk, dl.primaryOk + dl.primaryFail),
     'A0 thành công': pct(okCount(dl.a0), total(dl.a0)),
     'A2 thành công': pct(okCount(dl.a2), total(dl.a2)),
+    'Thử lại có cookie sau 403 thành công': pct(okCount(dl.a2c), total(dl.a2c)),
     'Trung vị tải 256 KB (A0, ms)': median(dl.tTotalMs.a0) ?? '–',
     'File faststart (moov đầu file)': pct(dl.faststart.true || 0, total(dl.faststart)),
     'Có track âm thanh mp4a': pct(dl.hasMp4a.true || 0, total(dl.hasMp4a)),

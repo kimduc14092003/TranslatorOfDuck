@@ -49,7 +49,7 @@
 
   function newReport() {
     return {
-      version: 1, createdAt: Date.now(), updatedAt: Date.now(),
+      version: 2, createdAt: Date.now(), updatedAt: Date.now(),
       env: {}, pageLoads: 0, hookModes: {},
       endpoints: {}, unknownPaths: {}, parseErrors: 0,
       ssr: { pages: 0, renderData: 0, renderDataItems: 0, paceF: 0, paceFAwemeHits: 0 },
@@ -58,10 +58,10 @@
       items: { unique: 0, bySource: {}, byKind: {}, withAudioOnly: 0, withMp4Gear: 0, withPktOffsetMap: 0,
         encrypted: 0, isSubtitled: 0, hasOcr: 0, musicOriginal: 0, gearsPerItem: [], minGearKB: [],
         durationsS: [], fps: {}, formats: {}, h265Gears: 0, gearsTotal: 0, mediaHosts: {} },
-      active: { changes: 0, how: {}, withDescAtActivate: 0, plays: 0, withDescAtPlay: 0, noDescAtPlay: 0,
+      active: { changes: 0, how: {}, section: {}, withDescAtActivate: 0, plays: 0, withDescAtPlay: 0, noDescAtPlay: 0,
         bySourceAtPlay: {}, leadBeforePlayMs: [], videoTagsOnPage: [], noIdFound: 0 },
-      downloads: { requests: 0, itemsTested: 0, a0: {}, a2: {}, byCandidate: {}, tHeadMs: { a0: [], a2: [] },
-        tTotalMs: { a0: [], a2: [] }, faststart: {}, hasMp4a: {}, codecs: {}, hasElst: 0, firstBox: {},
+      downloads: { requests: 0, itemsTested: 0, a0: {}, a2: {}, a2c: {}, byCandidate: {}, tHeadMs: { a0: [], a2: [], a2c: [] },
+        tTotalMs: { a0: [], a2: [], a2c: [] }, faststart: {}, hasMp4a: {}, codecs: {}, hasElst: 0, firstBox: {},
         hosts: {}, finalHosts: {}, redirected: 0, sizeMatch: { match: 0, mismatch: 0, unknown: 0 },
         expiryMin: [], primaryOk: 0, primaryFail: 0 },
       captcha: { appearances: 0 },
@@ -173,6 +173,13 @@
     if (cand) return { id: cand.getAttribute('data-e2e-vid'), how: 'center-data-e2e-vid', el: cand };
     return null;
   }
+  // Khu vực đang lướt: đoạn đầu của path + tên các tham số (không lấy giá trị).
+  function sectionOf() {
+    const u = new URL(location.href);
+    const seg = u.pathname.split('/').filter(Boolean)[0] || 'root';
+    const keys = [...u.searchParams.keys()].filter(k => k !== 'modal_id').sort();
+    return seg.replace(/^\d+$/, ':id') + (keys.length ? '?' + keys.join('&') : '');
+  }
   function videoFor(active) {
     if (active.el) { const v = active.el.querySelector('video'); if (v) return v; }
     let best = null, area = 0;
@@ -209,6 +216,7 @@
     const a = report.active;
     a.changes++;
     bump(a.how, act.how);
+    bump(a.section, sectionOf());
     if (items.has(act.id)) a.withDescAtActivate++;
     pushCap(a.videoTagsOnPage, document.querySelectorAll('video').length);
     const v = videoFor(act);
@@ -251,12 +259,12 @@
     testQueue.push(it.d);
     runTests();
   }
-  function a2(url) {
+  function a2(url, withCookies = false) {
     return new Promise((resolve) => {
       const reqId = ++reqSeq;
       pendingA2.set(reqId, resolve);
       setTimeout(() => { if (pendingA2.has(reqId)) { pendingA2.delete(reqId); resolve({ ok: false, error: 'no_answer' }); } }, 20000);
-      window.dispatchEvent(new CustomEvent(DOWN, { detail: JSON.stringify({ type: 'a2', reqId, url, bytes: RANGE_BYTES }) }));
+      window.dispatchEvent(new CustomEvent(DOWN, { detail: JSON.stringify({ type: 'a2', reqId, url, bytes: RANGE_BYTES, withCookies }) }));
     });
   }
   async function a0(url) {
@@ -280,8 +288,10 @@
     dl.requests++;
     const outcome = r.ok ? 'ok_' + r.status : (r.error || 'http_' + r.status);
     bump(dl[method], outcome);
-    const bc = dl.byCandidate[cand.label] || (dl.byCandidate[cand.label] = { a0: {}, a2: {} });
+    const bc = dl.byCandidate[cand.label] || (dl.byCandidate[cand.label] = { a0: {}, a2: {}, a2c: {}, mp4a: {}, source: {} });
     bump(bc[method], outcome);
+    if (cand.source) bump(bc.source, cand.source);
+    if (r.ok && r.scan) bump(bc.mp4a, String(r.scan.hasMp4a));
     bump(dl.hosts, hostOf(cand.url));
     if (r.tHeadMs != null) pushCap(dl.tHeadMs[method], r.tHeadMs);
     if (r.tTotalMs != null && r.ok) pushCap(dl.tTotalMs[method], r.tTotalMs);
@@ -310,7 +320,7 @@
     try {
       while (testQueue.length) {
         const d = testQueue.shift();
-        const cands = candidatesOf(d);
+        const cands = candidatesOf(d).map(c => ({ ...c, source: [...(items.get(d.id) || { sources: new Set() }).sources][0] || null }));
         if (!cands.length) { log('no_candidate', { id: fnv(d.id) }); continue; }
         report.downloads.itemsTested++;
         const compare = report.downloads.itemsTested <= COMPARE_ITEMS;
@@ -325,6 +335,12 @@
             const r2 = await a2(c.url);
             record('a2', c, r2);
             ok = ok || r2.ok;
+            // 403 khi không gửi cookie: thử lại một lần CÓ cookie để biết link có cần đăng nhập không.
+            if (r2.status === 403) {
+              const r3 = await a2(c.url, true);
+              record('a2c', c, r3);
+              ok = ok || r3.ok;
+            }
           }
           if (i === 0) primaryOk = ok;
         }
@@ -372,7 +388,7 @@
     chrome.storage.local.set({ [KEY]: report });
   }
   chrome.storage.local.get(KEY, (res) => {
-    report = (res && res[KEY] && res[KEY].version === 1) ? res[KEY] : newReport();
+    report = (res && res[KEY] && res[KEY].version === 2) ? res[KEY] : newReport();
     const ua = navigator.userAgent;
     let hookMode = 'on';
     try { hookMode = localStorage.getItem('__tod_s1_hook') === 'off' ? 'off' : 'on'; } catch (_) { /* mặc định on */ }
