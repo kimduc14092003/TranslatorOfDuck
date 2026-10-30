@@ -8,6 +8,8 @@ import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+// Chỉ ghi lại TÊN biến và số dòng không đọc được (không bao giờ giá trị) để báo lỗi gõ sai khi khởi động.
+export const dotEnvInfo = { names: [], badLines: [], empty: [] };
 loadDotEnv(path.join(HERE, '.env'));
 const ENV = process.env;
 const GEMINI_BASE = ENV.GEMINI_BASE || 'https://generativelanguage.googleapis.com/v1beta';
@@ -22,12 +24,22 @@ export const PIPELINE_VERSION = 'alpha-6';
 
 function loadDotEnv(file) {
   if (!fs.existsSync(file)) return;
-  for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+  fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/).forEach((line, i) => {
+    if (!line.trim() || /^\s*#/.test(line)) return;
+    const m = line.match(/^\s*(?:export\s+)?([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (!m) { dotEnvInfo.badLines.push(i + 1); return; }
+    dotEnvInfo.names.push(m[1]);
+    if (!m[2].replace(/^["']|["']$/g, '')) dotEnvInfo.empty.push(m[1]);
     // Biến đã đặt (kể cả rỗng, như test đặt OPENAI_API_KEY='' để không gọi dịch vụ thật) thì giữ nguyên.
-    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
-  }
+    if (process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+  });
 }
+// Key OpenAI dạng "sk-proj-…", "sk-svcacct-…" hoặc dạng cũ "sk-" + 48 ký tự có "T3BlbkFJ" (key DashScope cũng bắt đầu
+// bằng "sk-" nhưng chỉ 32 ký tự hex). Dán nhầm vào biến key khác thì vẫn dùng làm key OpenAI.
+const looksOpenAI = (v) => /^sk-(proj|svcacct|admin)-/.test(v || '') || /^sk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}$/.test(v || '');
+export const misplacedOpenAIKey = ['GEMINI_API_KEY', 'DASHSCOPE_API_KEY', 'GROQ_API_KEY'].find(n => looksOpenAI(ENV[n])) || null;
+if (!ENV.OPENAI_API_KEY && misplacedOpenAIKey) ENV.OPENAI_API_KEY = ENV[misplacedOpenAIKey];
+for (const n of ['GEMINI_API_KEY', 'DASHSCOPE_API_KEY']) if (looksOpenAI(ENV[n])) delete ENV[n];
 const mtProvider = () => (ENV.OPENAI_API_KEY ? 'openai' : ENV.GEMINI_API_KEY ? 'gemini' : null);
 export function config() {
   const mt = mtProvider();

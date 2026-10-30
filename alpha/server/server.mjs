@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { config, makeSubtitles, PIPELINE_VERSION } from './pipeline.mjs';
+import { config, dotEnvInfo, makeSubtitles, misplacedOpenAIKey, PIPELINE_VERSION } from './pipeline.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -166,5 +166,13 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   const c = config();
   console.log(`TranslatorOfDuck Alpha server: http://${HOST}:${PORT}  (ASR: ${c.asr || 'CHƯA CÓ KEY'}, dịch: ${c.mt || 'CHƯA CÓ KEY'}, dịch theo từng đoạn 30 s)`);
+  // Báo tên biến (không bao giờ in giá trị) để tìm lỗi gõ sai tên trong .env.
+  const KNOWN = ['OPENAI_API_KEY', 'OPENAI_MODEL', 'OPENAI_BASE', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_BASE', 'DASHSCOPE_API_KEY',
+    'DASHSCOPE_BASE', 'FUNASR_MODEL', 'FFMPEG', 'HOST', 'PORT', 'MAX_SECONDS', 'TOD_DUMP', 'TOD_WORK'];
+  const odd = dotEnvInfo.names.filter(n => !KNOWN.includes(n));
+  if (odd.length) console.log(`  → .env có biến server không dùng: ${odd.join(', ')}. Tên key đúng: OPENAI_API_KEY, GEMINI_API_KEY, DASHSCOPE_API_KEY.`);
+  if (misplacedOpenAIKey) console.log(`  → ${misplacedOpenAIKey} có dạng key OpenAI: đang dùng nó để dịch bằng OpenAI. Nên đổi tên dòng đó thành OPENAI_API_KEY.`);
+  if (dotEnvInfo.empty.length) console.log(`  → .env có biến để trống: ${dotEnvInfo.empty.join(', ')}.`);
+  if (dotEnvInfo.badLines.length) console.log(`  → .env: dòng ${dotEnvInfo.badLines.join(', ')} không đọc được (cần dạng TÊN=giá trị trên một dòng).`);
   if (!c.mt) console.log('  → Điền OPENAI_API_KEY hoặc GEMINI_API_KEY (và DASHSCOPE_API_KEY nếu có) vào alpha/server/.env rồi chạy lại.');
 });
