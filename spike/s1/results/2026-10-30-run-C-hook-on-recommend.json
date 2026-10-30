@@ -1,0 +1,1427 @@
+{
+ "spike": "S1",
+ "exportedAt": "2026-10-30T04:20:23.997Z",
+ "notes": {
+  "loggedIn": true
+ },
+ "summary": {
+  "Thời gian thu (phút)": 11,
+  "Số lần tải trang / chế độ hook": "0 / ",
+  "Trình duyệt": "Chrome 154",
+  "T0: lượt gọi API feed bắt được": "221 (34 item)",
+  "Video khác nhau thấy được": "35 (player 29, xhr 34)",
+  "Video đã phát": 34,
+  "Có dữ liệu TRƯỚC khi phát": "100%",
+  "Trung vị đi trước (giây)": "53.1",
+  "Có luồng chỉ âm thanh": "26%",
+  "Video tải thử": 30,
+  "Nguồn chính tải được (A0 hoặc A2)": "0%",
+  "A0 thành công": "17%",
+  "A2 thành công": "17%",
+  "Trung vị tải 256 KB (A0, ms)": 725,
+  "File faststart (moov đầu file)": "100%",
+  "Có track âm thanh mp4a": "100%",
+  "Trung vị URL còn hạn (phút)": "–",
+  "Hook bị trang thay thế (lần kiểm)": "342/342",
+  "Captcha xuất hiện": 0
+ },
+ "report": {
+  "active": {
+   "bySourceAtPlay": {
+    "xhr": 34
+   },
+   "changes": 34,
+   "how": {
+    "feed-active-video": 34
+   },
+   "leadBeforePlayMs": [
+    432,
+    4303,
+    11206,
+    15101,
+    21095,
+    29488,
+    30092,
+    55610,
+    48684,
+    52318,
+    53809,
+    55574,
+    57404,
+    61579,
+    6868,
+    23342,
+    51867,
+    54549,
+    55806,
+    81023,
+    27956,
+    33380,
+    34249,
+    35456,
+    52596,
+    59441,
+    151601,
+    155458,
+    170128,
+    175863,
+    189639,
+    220649,
+    53698,
+    63343
+   ],
+   "noDescAtPlay": 0,
+   "noIdFound": 2,
+   "plays": 34,
+   "videoTagsOnPage": [
+    3,
+    3,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    3,
+    3,
+    3,
+    4,
+    4,
+    4,
+    3,
+    4,
+    3,
+    4,
+    3,
+    3,
+    3,
+    4,
+    3,
+    4,
+    4,
+    4,
+    4,
+    4,
+    3,
+    4
+   ],
+   "withDescAtActivate": 34,
+   "withDescAtPlay": 34
+  },
+  "captcha": {
+   "appearances": 0
+  },
+  "createdAt": 1793333337251,
+  "downloads": {
+   "a0": {
+    "http_403": 39,
+    "ok_206": 8
+   },
+   "a2": {
+    "http_403": 39,
+    "ok_206": 8
+   },
+   "byCandidate": {
+    "audio_only": {
+     "a0": {
+      "http_403": 7
+     },
+     "a2": {
+      "http_403": 7
+     }
+    },
+    "aweme_play_api": {
+     "a0": {
+      "ok_206": 8
+     },
+     "a2": {
+      "ok_206": 8
+     }
+    },
+    "min_mp4_gear": {
+     "a0": {
+      "http_403": 24
+     },
+     "a2": {
+      "http_403": 24
+     }
+    },
+    "play_addr": {
+     "a0": {
+      "http_403": 8
+     },
+     "a2": {
+      "http_403": 8
+     }
+    }
+   },
+   "codecs": {
+    "avc1": 14,
+    "null": 2
+   },
+   "expiryMin": [],
+   "faststart": {
+    "true": 16
+   },
+   "finalHosts": {
+    "v11-o.douyinvod.com": 8,
+    "v3-web-prime.douyinvod.com": 78,
+    "v5-dy-ov-experiment.zjcdn.com": 6,
+    "v5-hl-mly-ov.zjcdn.com": 2
+   },
+   "firstBox": {
+    "ftyp": 16
+   },
+   "hasElst": 16,
+   "hasMp4a": {
+    "true": 16
+   },
+   "hosts": {
+    "v3-web-prime.douyinvod.com": 78,
+    "www.douyin.com": 16
+   },
+   "itemsTested": 30,
+   "primaryFail": 30,
+   "primaryOk": 0,
+   "redirected": 16,
+   "requests": 94,
+   "sizeMatch": {
+    "match": 0,
+    "mismatch": 0,
+    "unknown": 16
+   },
+   "tHeadMs": {
+    "a0": [
+     93,
+     63,
+     513,
+     121,
+     28,
+     778,
+     189,
+     62,
+     690,
+     26,
+     16,
+     716,
+     25,
+     41,
+     16,
+     633,
+     36,
+     16,
+     1584,
+     11,
+     7,
+     489,
+     22,
+     23,
+     1913,
+     8,
+     23,
+     43,
+     36,
+     41,
+     19,
+     40,
+     13,
+     84,
+     51,
+     90,
+     182,
+     102,
+     54,
+     51,
+     123,
+     52,
+     178,
+     64,
+     48,
+     46,
+     55
+    ],
+    "a2": [
+     87,
+     63,
+     419,
+     33,
+     12,
+     418,
+     69,
+     65,
+     360,
+     18,
+     8,
+     387,
+     27,
+     19,
+     8,
+     409,
+     46,
+     7,
+     1032,
+     6,
+     8,
+     372,
+     74,
+     48,
+     408,
+     15,
+     36,
+     18,
+     14,
+     42,
+     14,
+     15,
+     13,
+     8,
+     189,
+     84,
+     59,
+     70,
+     70,
+     28,
+     16,
+     58,
+     20,
+     51,
+     102,
+     71,
+     19
+    ]
+   },
+   "tTotalMs": {
+    "a0": [
+     517,
+     787,
+     697,
+     753,
+     647,
+     1692,
+     493,
+     2099
+    ],
+    "a2": [
+     420,
+     430,
+     369,
+     390,
+     414,
+     1065,
+     419,
+     410
+    ]
+   }
+  },
+  "endpoints": {
+   "/aweme/v1/creator/external/highlight/ [xhr]": {
+    "calls": 2,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/activity/pull/carnival/ [xhr]": {
+    "calls": 1,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/comment/list/ [xhr]": {
+    "calls": 21,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/danmaku/conf/set/ [xhr]": {
+    "calls": 2,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/danmaku/get_v2/ [xhr]": {
+    "calls": 1,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/external/notification/ [xhr]": {
+    "calls": 1,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/history/write/ [xhr]": {
+    "calls": 30,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/homepage/impression/ [xhr]": {
+    "calls": 68,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/hot/search/list/ [xhr]": {
+    "calls": 1,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/im/user/active/status/ [xhr]": {
+    "calls": 2,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/im/user/active/update/ [xhr]": {
+    "calls": 1,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/im/user/info/ [xhr]": {
+    "calls": 4,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/mix/watch/record/ [xhr]": {
+    "calls": 3,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/play/progress/ [xhr]": {
+    "calls": 6,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/query/account/type/ [xhr]": {
+    "calls": 34,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/tab/feed [xhr]": {
+    "calls": 6,
+    "items": 34,
+    "known": true,
+    "nonJson": 0
+   },
+   "/aweme/v1/web/user/profile/self/ [xhr]": {
+    "calls": 6,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   },
+   "/aweme/v2/web/aweme/stats/ [xhr]": {
+    "calls": 32,
+    "items": 0,
+    "known": false,
+    "nonJson": 0
+   }
+  },
+  "env": {
+   "chromeMajor": "154",
+   "cocCoc": false,
+   "lastHookMode": "on",
+   "screen": "1875x919",
+   "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36"
+  },
+  "hook": {
+   "checks": 342,
+   "fetchReplaced": 342,
+   "openReplaced": 342
+  },
+  "hookModes": {},
+  "items": {
+   "byKind": {
+    "video": 35
+   },
+   "bySource": {
+    "player": 29,
+    "xhr": 34
+   },
+   "durationsS": [
+    12,
+    18,
+    24,
+    14,
+    1800,
+    23,
+    13,
+    12,
+    6,
+    8,
+    633,
+    148,
+    8,
+    1557,
+    33,
+    50,
+    11,
+    20,
+    14,
+    14,
+    618,
+    8,
+    467,
+    9,
+    14,
+    6,
+    13,
+    31,
+    14,
+    9,
+    616,
+    654,
+    11,
+    34,
+    600
+   ],
+   "encrypted": 0,
+   "formats": {
+    "dash": 37,
+    "mp4": 374
+   },
+   "fps": {
+    "27": 11,
+    "28": 11,
+    "30": 364,
+    "43": 1,
+    "48": 1,
+    "60": 23
+   },
+   "gearsPerItem": [
+    12,
+    7,
+    12,
+    12,
+    12,
+    12,
+    11,
+    12,
+    12,
+    12,
+    12,
+    12,
+    10,
+    12,
+    12,
+    12,
+    12,
+    12,
+    12,
+    12,
+    12,
+    12,
+    12,
+    12,
+    12,
+    11,
+    12,
+    12,
+    12,
+    12,
+    12,
+    12,
+    12,
+    12,
+    12
+   ],
+   "gearsTotal": 411,
+   "h265Gears": 154,
+   "hasOcr": 0,
+   "isSubtitled": 0,
+   "mediaHosts": {
+    "v3-web-prime.douyinvod.com": 35,
+    "www.douyin.com": 34
+   },
+   "minGearKB": [
+    2251,
+    1035,
+    2394,
+    836,
+    270093,
+    1846,
+    1370,
+    1384,
+    428,
+    671,
+    74680,
+    13382,
+    428,
+    101309,
+    2661,
+    2433,
+    919,
+    751,
+    1072,
+    1869,
+    48959,
+    357,
+    46390,
+    943,
+    1634,
+    268,
+    764,
+    603,
+    2005,
+    795,
+    52274,
+    61411,
+    589,
+    1224,
+    70772
+   ],
+   "musicOriginal": 1,
+   "unique": 35,
+   "withAudioOnly": 9,
+   "withMp4Gear": 35,
+   "withPktOffsetMap": 1
+  },
+  "log": [
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333339039,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333339158,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333339222,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333339285,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333342928,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333342962,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333342992,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333343004,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333349875,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333349944,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333350006,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333350072,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333353606,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333353628,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333353645,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333353653,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "audio_only",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333359609,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "audio_only",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333359637,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333359679,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333359699,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333359715,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333359723,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333368003,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333368049,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333368064,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333368071,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333404585,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333404591,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333404598,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333404607,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333408239,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333408314,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333408336,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "play_addr",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333408385,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333410907,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333410922,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333411488,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333411524,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "audio_only",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333413391,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "audio_only",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333413416,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "audio_only",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333417511,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "audio_only",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333417525,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333420261,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333420337,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "audio_only",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333436693,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "audio_only",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333436707,
+    "type": "download_fail"
+   },
+   {
+    "path": "/aweme/v2/web/aweme/stats/",
+    "t": 1793333437086,
+    "type": "parse_error",
+    "via": "xhr"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333465252,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333465269,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333467881,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333467894,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333497083,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333497091,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333502496,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333502685,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333503363,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333503447,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "audio_only",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333504663,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "audio_only",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333504722,
+    "type": "download_fail"
+   },
+   {
+    "path": "/aweme/v2/web/aweme/stats/",
+    "t": 1793333505314,
+    "type": "parse_error",
+    "via": "xhr"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333521768,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333521844,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "audio_only",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333528519,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "audio_only",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333528589,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333658610,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333658666,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333662473,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333662490,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333677021,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333677079,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333682946,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333682971,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333696545,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333696597,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333727605,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333727708,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333741631,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "min_mp4_gear",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333741759,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "audio_only",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a0",
+    "outcome": "http_403",
+    "t": 1793333751246,
+    "type": "download_fail"
+   },
+   {
+    "candidate": "audio_only",
+    "contentType": "video/mp4",
+    "host": "v3-web-prime.douyinvod.com",
+    "message": null,
+    "method": "a2",
+    "outcome": "http_403",
+    "t": 1793333751273,
+    "type": "download_fail"
+   }
+  ],
+  "pageLoads": 0,
+  "parseErrors": 2,
+  "ssr": {
+   "paceF": 0,
+   "paceFAwemeHits": 0,
+   "pages": 0,
+   "renderData": 0,
+   "renderDataItems": 0
+  },
+  "t1": {
+   "paths": {
+    "player.config.awemeInfo": 1,
+    "player.config.pluginsConfig.ChapterPlugin.awemeInfo": 164,
+    "player.config.pluginsConfig.DanmakuPlugin.awemeInfo": 341,
+    "player.config.pluginsConfig.Pip.awemeInfo": 341,
+    "player.config.pluginsConfig.PlayClaritySettingPlugin.awemeInfo": 341,
+    "player.config.pluginsConfig.WatchLaterPlugin.awemeInfo": 341
+   },
+   "probes": 342,
+   "shapes": [],
+   "withPlayer": 342
+  },
+  "unknownPaths": {
+   "/aweme/v1/creator/external/highlight/": 2,
+   "/aweme/v1/web/activity/pull/carnival/": 1,
+   "/aweme/v1/web/comment/list/": 21,
+   "/aweme/v1/web/danmaku/conf/set/": 2,
+   "/aweme/v1/web/danmaku/get_v2/": 1,
+   "/aweme/v1/web/external/notification/": 1,
+   "/aweme/v1/web/history/write/": 30,
+   "/aweme/v1/web/homepage/impression/": 68,
+   "/aweme/v1/web/hot/search/list/": 1,
+   "/aweme/v1/web/im/user/active/status/": 2,
+   "/aweme/v1/web/im/user/active/update/": 1,
+   "/aweme/v1/web/im/user/info/": 4,
+   "/aweme/v1/web/mix/watch/record/": 3,
+   "/aweme/v1/web/play/progress/": 6,
+   "/aweme/v1/web/query/account/type/": 34,
+   "/aweme/v1/web/user/profile/self/": 6,
+   "/aweme/v2/web/aweme/stats/": 32
+  },
+  "updatedAt": 1793334021061,
+  "version": 1
+ }
+}
