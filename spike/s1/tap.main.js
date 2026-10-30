@@ -94,6 +94,9 @@
       hasOcrContent: !!(aw.seo_info && aw.seo_info.ocr_content),
       musicIsOriginal: aw.music ? (aw.music.is_original != null ? !!aw.music.is_original : (aw.music.isOriginal != null ? !!aw.music.isOriginal : null)) : null,
       encrypted: !!(v.enca || v.encv || (v.play_addr && v.play_addr.encrypt)),
+      // Chỉ dùng làm ngữ cảnh cho bộ mẫu S3 (lưu trên máy người dùng), không vào báo cáo S1.
+      desc: typeof aw.desc === 'string' ? aw.desc.slice(0, 300) : null,
+      hashtags: Array.isArray(aw.text_extra) ? aw.text_extra.map(t => t && t.hashtag_name).filter(Boolean).slice(0, 10) : [],
     };
   }
   function walk(node, out, source, depth) {

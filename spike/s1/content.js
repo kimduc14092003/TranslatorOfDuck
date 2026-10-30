@@ -108,6 +108,7 @@
     }
     dirty = true;
     maybeQueueActiveTest();
+    maybeQueueSample();
   }
 
   function onUp(msg) {
@@ -227,6 +228,86 @@
     }
     dirty = true;
     maybeQueueActiveTest();
+    maybeQueueSample();
+  }
+
+  // ---------------- S3: thu mẫu âm thanh cho bài thử ASR ----------------
+  // Lưu đoạn đầu (~SAMPLE_SEC + 5 s) của video đang xem về thư mục Downloads.
+  // Chỉ là công cụ đo nội bộ: bản sản phẩm không lưu/xuất media.
+  const SAMPLES = 's3_samples';
+  const SAMPLING = 's3_sampling';
+  let sampling = { on: false, target: 60, seconds: 30 };
+  let sampleList = [];
+  let sampleBusy = false;
+  const sampleQueue = [];
+  chrome.storage.local.get([SAMPLES, SAMPLING], (res) => {
+    sampleList = res[SAMPLES] || [];
+    sampling = { ...sampling, ...(res[SAMPLING] || {}) };
+  });
+  chrome.storage.onChanged.addListener((ch, area) => {
+    if (area !== 'local') return;
+    if (ch[SAMPLING]) { sampling = { ...sampling, ...(ch[SAMPLING].newValue || { on: false }) }; if (report) maybeQueueSample(); }
+    if (ch[SAMPLES]) sampleList = ch[SAMPLES].newValue || [];
+  });
+
+  function maybeQueueSample() {
+    if (!sampling.on || !currentId || sampleList.length + sampleQueue.length >= sampling.target) return;
+    const it = items.get(currentId);
+    if (!it || it.d.kind !== 'video' || !it.d.playUri || /^https?:/.test(it.d.playUri)) return;
+    const h = fnv(it.d.id);
+    if (sampleList.some(s => s.h === h) || sampleQueue.some(q => q.h === h)) return;
+    sampleQueue.push({ h, d: it.d });
+    runSamples();
+  }
+  async function rangeFetch(url, end) {
+    const res = await fetch(url, { headers: { Range: 'bytes=0-' + end }, credentials: 'omit', cache: 'no-store' });
+    if (res.status !== 206 && res.status !== 200) throw new Error('http_' + res.status);
+    const total = Number(((res.headers.get('content-range') || '').match(/\/(\d+)$/) || [])[1]) || null;
+    return { buf: await res.arrayBuffer(), total, status: res.status };
+  }
+  async function takeSample(job) {
+    const url = 'https://www.douyin.com/aweme/v1/play/?video_id=' + encodeURIComponent(job.d.playUri);
+    const probe = await rangeFetch(url, 65535);
+    const durS = job.d.durationMs ? job.d.durationMs / 1000 : null;
+    const want = sampling.seconds + 5;
+    let end;
+    if (probe.total && durS) end = Math.min(probe.total - 1, Math.ceil(probe.total * Math.min(1, want / durS)) + 524288);
+    else end = 4 * 1024 * 1024 - 1;
+    const full = probe.total && end <= 65535 ? probe : await rangeFetch(url, end);
+    const scanned = scan(new Uint8Array(full.buf, 0, Math.min(full.buf.byteLength, 4 * 1024 * 1024)));
+    const file = 'tod_s3_' + job.h + '.mp4';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([full.buf], { type: 'video/mp4' }));
+    a.download = file;
+    // Chặn click lan lên trang để router của Douyin không bắt nhầm; hành vi tải vẫn giữ nguyên.
+    a.addEventListener('click', (e) => e.stopPropagation());
+    document.documentElement.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    return {
+      h: job.h, file, durationMs: job.d.durationMs, bytes: full.buf.byteLength, totalBytes: probe.total,
+      approxSeconds: durS && probe.total ? Math.min(durS, Math.round(durS * full.buf.byteLength / probe.total)) : null,
+      faststart: scanned.faststart, hasMp4a: scanned.hasMp4a, videoCodec: scanned.videoCodec,
+      desc: job.d.desc, hashtags: job.d.hashtags, savedAt: new Date().toISOString(),
+    };
+  }
+  async function runSamples() {
+    if (sampleBusy) return;
+    sampleBusy = true;
+    try {
+      while (sampleQueue.length && sampling.on && contextAlive()) {
+        const job = sampleQueue.shift();
+        try {
+          const meta = await takeSample(job);
+          sampleList = [...sampleList, meta];
+          chrome.storage.local.set({ [SAMPLES]: sampleList });
+          if (sampleList.length >= sampling.target) chrome.storage.local.set({ [SAMPLING]: { ...sampling, on: false } });
+        } catch (e) {
+          log('sample_fail', { message: String(e && e.message).slice(0, 80) });
+        }
+      }
+    } finally { sampleBusy = false; }
   }
 
   // ---------------- phép thử tải A0 / A2 ----------------

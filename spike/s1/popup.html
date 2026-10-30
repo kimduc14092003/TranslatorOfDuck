@@ -30,6 +30,15 @@
   <div class="row">
     <button id="hook">Hook: …</button>
   </div>
+  <h1 style="margin-top:14px">S3 · Thu mẫu âm thanh</h1>
+  <div class="muted">Lưu ~35 giây đầu của mỗi video bạn xem vào thư mục Downloads, để chạy bài thử nhận dạng giọng nói trên máy bạn. Chỉ dùng để thử nghiệm, xóa sau khi xong.</div>
+  <label>Số mẫu cần thu <input type="number" id="sampleTarget" min="5" max="200" value="60" style="width:64px"></label>
+  <div class="row">
+    <button class="primary" id="sampleToggle">Bắt đầu thu mẫu</button>
+    <button id="sampleManifest">Lưu danh sách mẫu</button>
+    <button id="sampleClear">Xóa danh sách mẫu</button>
+  </div>
+  <div id="sampleStatus" class="muted" style="margin-top:6px"></div>
   <div id="status"></div>
   <script src="popup.js"></script>
 </body>

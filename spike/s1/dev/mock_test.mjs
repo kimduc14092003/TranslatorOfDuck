@@ -99,6 +99,7 @@ const server = https.createServer({ key: fs.readFileSync(path.join(TMP, 'key.pem
     if (u.pathname === '/') return send(200, { 'content-type': 'text/html; charset=utf-8' }, PAGE);
     if (u.pathname.startsWith('/aweme/v1/web/tab/feed')) return send(200, { 'content-type': 'application/json' }, JSON.stringify(feed1));
     if (u.pathname.startsWith('/aweme/v2/web/module/feed')) return send(200, { 'content-type': 'application/json' }, JSON.stringify(feed2));
+    if (u.pathname.startsWith('/aweme/v1/play/')) return send(302, { location: cdn('fast.mp4') }, '');
     if (u.pathname.startsWith('/blobsim/')) return send(200, { 'content-type': 'video/mp4' }, MEDIA['fast.mp4']);
     return send(404, {}, '');
   }
@@ -125,6 +126,7 @@ const ctx = await chromium.launchPersistentContext(path.join(TMP, 'profile'), {
   headless: true,
   channel: 'chromium', // bản headless-shell mặc định không nạp extension
   ignoreHTTPSErrors: true,
+  acceptDownloads: true,
   args: [`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`, '--autoplay-policy=no-user-gesture-required',
     '--no-proxy-server', '--ignore-certificate-errors',
     `--host-resolver-rules=MAP www.douyin.com:443 127.0.0.1:${port}, MAP v3-web.douyinvod.com:443 127.0.0.1:${port}`],
@@ -183,6 +185,19 @@ checks['reset cleared old numbers'] = ctl.pageLoads === 1;
 checks['hook off: no T0 capture'] = Object.keys(ctl.endpoints).length === 0 && ctl.hookModes.off === 1;
 checks['hook off: SSR/T1 still measured'] = (ctl.items.bySource.ssr || 0) >= 1 && (ctl.items.bySource.player || 0) >= 1;
 checks['hook off: page fetch untouched'] = await page.evaluate(() => window.fetch.toString().includes('[native code]'));
+
+// Phần 3: thu mẫu S3 (bật hook lại, bật thu mẫu, tải lại trang)
+await page.evaluate(() => localStorage.setItem('__tod_s1_hook', 'on'));
+await pop.evaluate(() => chrome.storage.local.set({ s3_samples: [], s3_sampling: { on: true, target: 2, seconds: 30 } }));
+const downloads = [];
+page.on('download', d => downloads.push(d.suggestedFilename()));
+await page.reload();
+await page.waitForTimeout(9000);
+const s3 = await pop.evaluate(() => chrome.storage.local.get(['s3_samples', 's3_sampling']));
+console.log('\nS3 samples:', JSON.stringify(s3.s3_samples.map(x => ({ file: x.file, bytes: x.bytes, faststart: x.faststart, hasMp4a: x.hasMp4a, hasDesc: x.desc !== undefined }))), 'downloads:', downloads, 'sampling:', JSON.stringify(s3.s3_sampling));
+checks['S3: 2 samples saved and downloaded'] = s3.s3_samples.length === 2 && downloads.filter(f => f.startsWith('tod_s3_')).length === 2;
+checks['S3: sampling stops at target'] = s3.s3_sampling.on === false;
+checks['S3: page still on douyin (no navigation)'] = new URL(page.url()).hostname === 'www.douyin.com';
 
 console.log('\nCHECKS');
 for (const [k, v] of Object.entries(checks)) console.log((v ? 'PASS ' : 'FAIL ') + k);

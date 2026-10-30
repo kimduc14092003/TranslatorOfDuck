@@ -118,7 +118,37 @@ $('loggedIn').addEventListener('change', async (e) => {
   await chrome.storage.local.set({ [NOTES]: { ...(res[NOTES] || {}), loggedIn: e.target.checked } });
 });
 
+// ---------------- S3: thu mẫu ----------------
+async function renderSampling() {
+  const { s3_sampling: sp = { on: false, target: 60 }, s3_samples: list = [] } = await chrome.storage.local.get(['s3_sampling', 's3_samples']);
+  $('sampleTarget').value = sp.target || 60;
+  $('sampleToggle').textContent = sp.on ? 'Dừng thu mẫu' : 'Bắt đầu thu mẫu';
+  $('sampleStatus').textContent = 'Đã lưu ' + list.length + '/' + (sp.target || 60) + ' mẫu' + (sp.on ? ' (đang thu: cứ lướt và xem từng video vài giây)' : '') + '.';
+}
+$('sampleToggle').addEventListener('click', async () => {
+  const { s3_sampling: sp = { on: false } } = await chrome.storage.local.get('s3_sampling');
+  const target = Math.max(5, Math.min(200, Number($('sampleTarget').value) || 60));
+  await chrome.storage.local.set({ s3_sampling: { on: !sp.on, target, seconds: 30 } });
+  renderSampling();
+});
+$('sampleManifest').addEventListener('click', async () => {
+  const { s3_samples: list = [] } = await chrome.storage.local.get('s3_samples');
+  const blob = new Blob([JSON.stringify({ kind: 'tod_s3_manifest', version: 1, createdAt: new Date().toISOString(), samples: list }, null, 1)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'tod_s3_manifest.json';
+  a.click();
+  flash('Đã lưu tod_s3_manifest.json (' + list.length + ' mẫu).');
+});
+$('sampleClear').addEventListener('click', async () => {
+  await chrome.storage.local.set({ s3_samples: [], s3_sampling: { on: false, target: Number($('sampleTarget').value) || 60, seconds: 30 } });
+  renderSampling();
+  flash('Đã xóa danh sách mẫu (file đã lưu trong Downloads vẫn còn).');
+});
+chrome.storage.onChanged.addListener((ch) => { if (ch.s3_samples || ch.s3_sampling) renderSampling(); });
+
 (async () => {
+  renderSampling();
   const res = await chrome.storage.local.get([KEY, NOTES]);
   render(res[KEY]);
   $('loggedIn').checked = !!(res[NOTES] && res[NOTES].loggedIn);

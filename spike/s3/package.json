@@ -1,0 +1,13 @@
+{
+  "name": "tod-s3-bench",
+  "private": true,
+  "type": "module",
+  "description": "Bài thử nhận dạng giọng nói và dịch trên mẫu Douyin do extension S1 lưu.",
+  "scripts": {
+    "selftest": "node dev/selftest.mjs"
+  },
+  "optionalDependencies": {
+    "ffmpeg-static": "^5.2.0"
+  },
+  "engines": { "node": ">=18" }
+}
