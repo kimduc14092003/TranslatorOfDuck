@@ -184,7 +184,8 @@ Nguyên nhân và cách sửa:
 - Chủ dự án đổi sang key OpenAI. Có `OPENAI_API_KEY` trong `alpha/server/.env` thì server dịch (cả lượt rút gọn) bằng OpenAI Chat Completions, trả JSON theo JSON Schema `strict`. Không có thì vẫn dùng Gemini. Model đổi bằng `OPENAI_MODEL`.
 - 429 theo phút: chờ theo header `retry-after-ms` rồi gọi lại. 429 `insufficient_quota` (hết tiền): tạm ngừng 10 phút như Gemini hết lượt trong ngày.
 - Test (`dev/queue-test.mjs`, `alpha/dev/e2e.mjs`) đặt `OPENAI_API_KEY=''` để server không nạp key thật từ `.env`. `loadDotEnv` giữ nguyên biến đã đặt, kể cả biến rỗng.
-- Chưa chạy với key thật: lúc sửa, `.env` chưa có `OPENAI_API_KEY` (`/health` báo `mt: gemini`).
+- Đã chạy với key thật (31/10). Tải lại trang rồi lướt 7 video: video 1–2 có kết quả sau 5,4–5,5 s, video 3–7 có ngay khi lướt tới. Dịch mất 1,2–4,6 s mỗi đoạn, không gặp 429.
+- Khi khởi động, server báo các tên biến trong `.env` không dùng được (chỉ in tên, không in giá trị). Ví dụ: dòng key bị để sau `#` nên server không thấy.
 
 Còn lại, chưa làm:
 - **Key Gemini gói miễn phí** không đủ cho việc lướt bình thường: hết lượt trong ngày sau vài chục video. Lượt rút gọn (§8) gọi thêm một lần mỗi đoạn có dòng dài. Cần chủ dự án chọn: bật trả phí, đổi model, hay bỏ lượt rút gọn.
