@@ -381,11 +381,22 @@
   });
 
   // ---------------- khởi động ----------------
+  // Khi extension được tải lại, script cũ trong tab đang mở mất kết nối với extension;
+  // lúc đó dừng hẳn thay vì ném lỗi "Extension context invalidated".
+  const timers = [];
+  function contextAlive() {
+    try { return !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; }
+  }
+  function shutdown() {
+    timers.forEach(clearInterval);
+    timers.length = 0;
+  }
   function save() {
+    if (!contextAlive()) { shutdown(); return; }
     if (!dirty || !report) return;
     dirty = false;
     report.updatedAt = Date.now();
-    chrome.storage.local.set({ [KEY]: report });
+    try { chrome.storage.local.set({ [KEY]: report }); } catch (_) { shutdown(); }
   }
   chrome.storage.local.get(KEY, (res) => {
     report = (res && res[KEY] && res[KEY].version === 2) ? res[KEY] : newReport();
@@ -406,9 +417,7 @@
       try { onUp(JSON.parse(ev.detail)); } catch (_) { /* bỏ qua tin hỏng */ }
     });
     window.dispatchEvent(new CustomEvent(DOWN, { detail: JSON.stringify({ type: 'ready' }) }));
-    setInterval(tick, 300);
-    setInterval(checkCaptcha, 2000);
-    setInterval(save, 3000);
+    timers.push(setInterval(tick, 300), setInterval(checkCaptcha, 2000), setInterval(save, 3000));
     addEventListener('pagehide', save);
   });
 })();
