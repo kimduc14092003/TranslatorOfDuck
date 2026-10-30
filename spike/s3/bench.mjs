@@ -359,7 +359,7 @@ function report() {
   const lines = ['# Báo cáo S3/S4: nhận dạng giọng nói', '', `Mẫu: ${samples.length}, mỗi mẫu tối đa ${SECONDS} s. Đáp án có ở ${fs.existsSync(refDir) ? fs.readdirSync(refDir).filter(f => f.endsWith('.txt')).length : 0} mẫu.`, ''];
   // Chưa có đáp án thì so mỗi dịch vụ với dịch vụ đứng đầu danh sách ưu tiên (chỉ để tham khảo).
   const anchor = PRIORITY.find(n => samples.some(s => { const r = readJson(path.join(WORK, 'asr', n, s.h + '.json')); return r && !r.error; }));
-  lines.push(`| Provider | Model | OK / lỗi | Độ trễ p50 / p95 (ms) | Nhanh hơn thời gian thực | Có mốc theo từ | Nghi bịa chữ | CER trung bình / trung vị | Lệch so với ${anchor || '–'} |`, '|---|---|---|---|---|---|---|---|---|');
+  lines.push(`| Provider | Model | OK / lỗi | Độ trễ p50 / p95 (ms) | Nhanh hơn thời gian thực | Có lời | Có mốc theo từ | Nghi bịa chữ | CER trung bình / trung vị | Lệch so với ${anchor || '–'} |`, '|---|---|---|---|---|---|---|---|---|---|');
   const summary = {};
   for (const n of PRIORITY) {
     const recs = samples.map(s => ({ s, r: readJson(path.join(WORK, 'asr', n, s.h + '.json')) })).filter(x => x.r);
@@ -385,18 +385,28 @@ function report() {
       }
     }
     summary[n] = { model: ok[0] && ok[0].r.model, ok: ok.length, errors: recs.length - ok.length, p50: round(pct(lat, 0.5), 0), p95: round(pct(lat, 0.95), 0),
-      rtfMedian: round(pct(rtf, 0.5), 0), wordTimes: ok.filter(x => x.r.words && x.r.words.length).length,
+      rtfMedian: round(pct(rtf, 0.5), 0), withSpeech: ok.filter(x => normalize(x.r.text).length > 0).length, wordTimes: ok.filter(x => x.r.words && x.r.words.length).length,
       suspicious: ok.filter(x => suspicious(x.r)).length, cerMean: round(mean, 3), cerMedian: round(pct(cers, 0.5), 3), cerN: cers.length, diffVsAnchor: round(pct(diffs, 0.5), 3),
       firstError: (recs.find(x => x.r.error) || { r: {} }).r.error || null };
     const v = summary[n];
-    lines.push(`| ${n} | ${v.model || '–'} | ${v.ok} / ${v.errors} | ${v.p50 ?? '–'} / ${v.p95 ?? '–'} | ${v.rtfMedian ?? '–'}× | ${v.wordTimes}/${v.ok} | ${v.suspicious} | ${v.cerMean ?? '–'} / ${v.cerMedian ?? '–'} (n=${v.cerN}) | ${n === anchor ? 'mốc' : (v.diffVsAnchor ?? '–')} |`);
+    lines.push(`| ${n} | ${v.model || '–'} | ${v.ok} / ${v.errors} | ${v.p50 ?? '–'} / ${v.p95 ?? '–'} | ${v.rtfMedian ?? '–'}× | ${v.withSpeech}/${v.ok} | ${v.wordTimes}/${v.ok} | ${v.suspicious} | ${v.cerMean ?? '–'} / ${v.cerMedian ?? '–'} (n=${v.cerN}) | ${n === anchor ? 'mốc' : (v.diffVsAnchor ?? '–')} |`);
   }
   const errs = Object.entries(summary).filter(([, v]) => v.firstError);
   if (errs.length) { lines.push('', '## Lỗi đầu tiên của từng provider', ''); for (const [n, v] of errs) lines.push(`- **${n}**: ${v.firstError.replace(/\n/g, ' ').slice(0, 300)}`); }
+  // Từng mẫu: lời Trung của dịch vụ tốt nhất hiện có và bản dịch (nếu có) để xem nhanh chất lượng.
+  lines.push('', '## Từng mẫu', '', '| Mẫu | Giây | Mô tả video | Lời nói (Trung) | Bản dịch (Việt) |', '|---|---|---|---|---|');
+  const cell = (t, n) => String(t || '').replace(/\s+/g, ' ').replace(/\|/g, '/').slice(0, n);
+  for (const s of samples) {
+    const b = bestAsr(s.h);
+    const m = readJson(path.join(WORK, 'mt', 'gemini', s.h + '.json'));
+    const vi = m && m.cues ? m.cues.map(c => c.vi).join(' / ') : '';
+    const zh = b ? (normalize(b.text).length ? b.text : '(không có lời)') : '(chưa chạy)';
+    lines.push(`| ${s.h} | ${s.seconds} | ${cell(s.desc, 40)} | ${cell(zh, 120)} | ${cell(vi, 160)} |`);
+  }
   const mtDir = path.join(WORK, 'mt', 'gemini');
   if (fs.existsSync(mtDir)) {
-    lines.push('', '## Dịch thử (Gemini), 5 mẫu đầu', '');
-    for (const s of samples.slice(0, 5)) {
+    lines.push('', '## Dịch thử (Gemini) theo từng câu, 5 mẫu đầu có bản dịch', '');
+    for (const s of samples.filter(x => { const m = readJson(path.join(mtDir, x.h + '.json')); return m && m.cues; }).slice(0, 5)) {
       const m = readJson(path.join(mtDir, s.h + '.json'));
       if (!m || !m.cues) continue;
       lines.push(`### ${s.h} (ASR: ${m.asrProvider}, ${m.latencyMs} ms)`, '', '| Thời gian | Trung | Việt |', '|---|---|---|');
