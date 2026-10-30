@@ -400,7 +400,8 @@ function report() {
     const b = bestAsr(s.h);
     const m = readJson(path.join(WORK, 'mt', 'gemini', s.h + '.json'));
     const vi = m && m.cues ? m.cues.map(c => c.vi).join(' / ') : '';
-    const zh = b ? (normalize(b.text).length ? b.text : '(không có lời)') : '(chưa chạy)';
+    const ran = PRIORITY.some(n => { const r = readJson(path.join(WORK, 'asr', n, s.h + '.json')); return r && !r.error; });
+    const zh = b ? b.text : (ran ? '(không có lời)' : '(chưa chạy)');
     lines.push(`| ${s.h} | ${s.seconds} | ${cell(s.desc, 40)} | ${cell(zh, 120)} | ${cell(vi, 160)} |`);
   }
   const mtDir = path.join(WORK, 'mt', 'gemini');
