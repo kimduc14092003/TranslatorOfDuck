@@ -166,5 +166,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   const c = config();
   console.log(`TranslatorOfDuck Alpha server: http://${HOST}:${PORT}  (ASR: ${c.asr || 'CHƯA CÓ KEY'}, dịch: ${c.mt || 'CHƯA CÓ KEY'}, dịch theo từng đoạn 30 s)`);
-  if (!c.mt) console.log('  → Điền GEMINI_API_KEY (và DASHSCOPE_API_KEY nếu có) vào alpha/server/.env rồi chạy lại.');
+  if (!c.mt) console.log('  → Điền OPENAI_API_KEY hoặc GEMINI_API_KEY (và DASHSCOPE_API_KEY nếu có) vào alpha/server/.env rồi chạy lại.');
 });

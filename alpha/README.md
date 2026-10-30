@@ -7,7 +7,7 @@ Bản thử chạy trên máy bạn. Khi lướt Douyin, sub tiếng Việt hi�
   - Phần bạn không xem thì không dịch, nên không tốn tiền API.
   - 2 video kế tiếp trong feed được dịch sẵn đoạn đầu.
 - Extension chỉ tải đúng phần cần của video, tự tách riêng âm thanh rồi gửi tới **server chạy trên chính máy bạn**.
-- Server tách âm thanh, nhận dạng giọng nói (Fun-ASR, hoặc Gemini nếu không có key Alibaba), chia câu, dịch bằng Gemini rồi trả sub về.
+- Server tách âm thanh, nhận dạng giọng nói (Fun-ASR, hoặc Gemini nếu không có key Alibaba), chia câu, dịch bằng OpenAI hoặc Gemini rồi trả sub về.
 - Video bài hát hoặc chỉ có nhạc sẽ bỏ qua. Video nói chuyện có xen đoạn hát thì chỉ bỏ những câu hát.
 - Key nằm trong file `.env` trên máy bạn, không gửi đi đâu ngoài nhà cung cấp AI.
 
@@ -27,11 +27,11 @@ notepad .env
 Trong Notepad, điền key rồi lưu:
 
 ```
-GEMINI_API_KEY=key Gemini của bạn
+OPENAI_API_KEY=key OpenAI của bạn (dịch)
 DASHSCOPE_API_KEY=key Alibaba của bạn (Fun-ASR)
 ```
 
-Có thể chép đúng 2 dòng này từ `spike\s3\.env` đã dùng lần trước. Chỉ cần `GEMINI_API_KEY` cũng chạy được, nhưng Fun-ASR cho mốc thời gian chuẩn hơn.
+Dịch dùng OpenAI nếu có `OPENAI_API_KEY`, không thì dùng `GEMINI_API_KEY`. Đổi model OpenAI bằng dòng `OPENAI_MODEL=...`. Nếu chỉ có `GEMINI_API_KEY` thì server vẫn chạy (Gemini lo cả nhận dạng lẫn dịch), nhưng Fun-ASR cho mốc thời gian chuẩn hơn. Key Gemini gói miễn phí hết lượt sau vài chục video mỗi ngày.
 
 **2. Bật server** (mỗi lần dùng):
 
@@ -73,7 +73,8 @@ Thấy dòng `TranslatorOfDuck Alpha server: http://127.0.0.1:8787` là được
 | Hiện tượng | Cách xử lý |
 |---|---|
 | Nhãn đỏ "không kết nối được server" | Cửa sổ `npm start` đã bị đóng. Mở lại theo bước 2. |
-| Popup: "thiếu GEMINI_API_KEY" | Kiểm tra file `alpha\server\.env`, rồi tắt và bật lại `npm start`. |
+| Popup: "thiếu OPENAI_API_KEY hoặc GEMINI_API_KEY" | Kiểm tra file `alpha\server\.env`, rồi tắt và bật lại `npm start`. |
+| Nhãn đỏ "OpenAI hết hạn mức…" hoặc "Gemini đã hết lượt…" | Key hết tiền hoặc hết lượt miễn phí. Server tạm ngừng gọi 10 phút; nạp tiền hoặc đổi key rồi bật lại `npm start`. |
 | `npm` báo ENOENT / không thấy package.json | Bạn đang đứng sai thư mục. `cd` vào `alpha\server` trước. |
 | Không thấy nhãn nào trên video | Tải lại trang Douyin (F5) sau khi cài hoặc cập nhật extension. |
 | Lỗi "ffmpeg" | Chạy lại `npm install` trong `alpha\server`. |

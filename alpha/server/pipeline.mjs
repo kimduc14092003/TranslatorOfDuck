@@ -12,6 +12,9 @@ loadDotEnv(path.join(HERE, '.env'));
 const ENV = process.env;
 const GEMINI_BASE = ENV.GEMINI_BASE || 'https://generativelanguage.googleapis.com/v1beta';
 const GEMINI_MODEL = ENV.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+// Dịch: có OPENAI_API_KEY thì dùng OpenAI, không thì Gemini.
+const OPENAI_BASE = ENV.OPENAI_BASE || 'https://api.openai.com/v1';
+const OPENAI_MODEL = ENV.OPENAI_MODEL || 'gpt-4.1-mini';
 const DASHSCOPE_BASE = ENV.DASHSCOPE_BASE || 'https://dashscope-intl.aliyuncs.com';
 const FUNASR_MODEL = ENV.FUNASR_MODEL || 'fun-asr-flash-2026-06-15';
 export const MAX_SECONDS = Number(ENV.MAX_SECONDS || 60);
@@ -21,12 +24,15 @@ function loadDotEnv(file) {
   if (!fs.existsSync(file)) return;
   for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
     const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+    // Biến đã đặt (kể cả rỗng, như test đặt OPENAI_API_KEY='' để không gọi dịch vụ thật) thì giữ nguyên.
+    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
   }
 }
+const mtProvider = () => (ENV.OPENAI_API_KEY ? 'openai' : ENV.GEMINI_API_KEY ? 'gemini' : null);
 export function config() {
-  return { asr: ENV.DASHSCOPE_API_KEY ? 'funasr' : (ENV.GEMINI_API_KEY ? 'gemini' : null), mt: ENV.GEMINI_API_KEY ? 'gemini' : null,
-    model: GEMINI_MODEL, maxSeconds: MAX_SECONDS };
+  const mt = mtProvider();
+  return { asr: ENV.DASHSCOPE_API_KEY ? 'funasr' : (ENV.GEMINI_API_KEY ? 'gemini' : null), mt,
+    model: mt === 'openai' ? OPENAI_MODEL : GEMINI_MODEL, maxSeconds: MAX_SECONDS };
 }
 
 const round = (x, d = 2) => (x == null || !isFinite(x) ? null : Math.round(x * 10 ** d) / 10 ** d);
@@ -83,20 +89,24 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
   signal?.addEventListener('abort', () => { clearTimeout(t); reject(signal.reason); }, { once: true });
 });
 // timeoutMs: mỗi lần gọi có hạn; quá hạn thì gọi lại ngay. Đo trên dữ liệu thật: lần dịch thường 1,5–2 s nhưng có lần 24 s.
-// Hết lượt gọi trong ngày (vd. Gemini gói miễn phí: quotaId ...PerDay...): gọi lại vô ích, chỉ làm video kẹt
-// "đang dịch" mỗi lần 20–60 s. Nhớ lại DAY_QUOTA_PAUSE_MS, trong lúc đó báo lỗi ngay, không gọi dịch vụ.
+// Hết hạn mức không tự hồi trong vài giây (Gemini gói miễn phí: quotaId ...PerDay...; OpenAI: insufficient_quota,
+// hết tiền trong tài khoản): gọi lại vô ích, chỉ làm video kẹt "đang dịch" mỗi lần 20–60 s. Nhớ lại
+// DAY_QUOTA_PAUSE_MS, trong lúc đó báo lỗi ngay, không gọi dịch vụ.
 const DAY_QUOTA_PAUSE_MS = 10 * 60 * 1000;
-const dayQuotaUntil = new Map();   // host → thời điểm thử lại
-const hostName = (host) => /generativelanguage/.test(host) ? 'Gemini' : host;
-function dayQuotaError(host) {
-  const err = new Error(`${hostName(host)} đã hết lượt gọi trong ngày (gói miễn phí)`);
+const dayQuotaUntil = new Map();   // dịch vụ → thời điểm thử lại
+const serviceOf = (url) => url.startsWith(OPENAI_BASE) ? 'OpenAI' : url.startsWith(GEMINI_BASE) ? 'Gemini'
+  : url.startsWith(DASHSCOPE_BASE) ? 'DashScope' : new URL(url).host;
+const QUOTA_WHY = { Gemini: 'đã hết lượt gọi trong ngày (gói miễn phí)', OpenAI: 'hết hạn mức hoặc hết tiền trong tài khoản' };
+function dayQuotaError(service) {
+  const err = new Error(`${service} ${QUOTA_WHY[service] || 'hết hạn mức'}`);
   err.quotaDay = true;
-  err.retryAfterMs = Math.max(0, (dayQuotaUntil.get(host) || 0) - Date.now());
+  err.retryAfterMs = Math.max(0, (dayQuotaUntil.get(service) || 0) - Date.now());
   return err;
 }
 async function httpJson(url, init, timeoutMs = 20000) {
   const host = new URL(url).host;
-  if ((dayQuotaUntil.get(host) || 0) > Date.now()) throw dayQuotaError(host);
+  const service = serviceOf(url);
+  if ((dayQuotaUntil.get(service) || 0) > Date.now()) throw dayQuotaError(service);
   for (let i = 0; ; i++) {
     let res, text;
     try {
@@ -116,13 +126,16 @@ async function httpJson(url, init, timeoutMs = 20000) {
       if ((res.status === 429 || res.status >= 500) && i < RETRY_WAITS.length) {
         // Gemini ghi loại hạn mức (quotaId) và thời gian nên chờ (retryDelay) trong lỗi 429: ghi log, chờ đúng chừng đó.
         const details = (body && body.error && body.error.details) || [];
-        const quota = details.flatMap(d => d.violations || []).map(v => v.quotaId).filter(Boolean)[0];
-        if (res.status === 429 && /PerDay/i.test(quota || '')) {
-          dayQuotaUntil.set(host, Date.now() + DAY_QUOTA_PAUSE_MS);
-          console.log(`    · ${host} báo 429 (${quota}): hết lượt trong ngày, tạm không gọi ${DAY_QUOTA_PAUSE_MS / 60000} phút`);
-          throw dayQuotaError(host);
+        const quota = details.flatMap(d => d.violations || []).map(v => v.quotaId).filter(Boolean)[0]
+          || (body && body.error && body.error.code === 'insufficient_quota' ? 'insufficient_quota' : null);
+        if (res.status === 429 && /PerDay|insufficient_quota/i.test(quota || '')) {
+          dayQuotaUntil.set(service, Date.now() + DAY_QUOTA_PAUSE_MS);
+          console.log(`    · ${host} báo 429 (${quota}): hết hạn mức, tạm không gọi ${service} ${DAY_QUOTA_PAUSE_MS / 60000} phút`);
+          throw dayQuotaError(service);
         }
-        const hint = Number((/^([\d.]+)s$/.exec((details.find(d => d.retryDelay) || {}).retryDelay || '') || [])[1]) * 1000 || 0;
+        // OpenAI ghi thời gian nên chờ ở header retry-after-ms / retry-after.
+        const hint = Number((/^([\d.]+)s$/.exec((details.find(d => d.retryDelay) || {}).retryDelay || '') || [])[1]) * 1000
+          || Number(res.headers.get('retry-after-ms')) || Number(res.headers.get('retry-after')) * 1000 || 0;
         const wait = Math.min(Math.max(RETRY_WAITS[i], hint), 20000);
         if (res.status === 429) console.log(`    · ${new URL(url).host} báo 429${quota ? ' (' + quota + ')' : ''}: thử lại sau ${Math.round(wait / 1000)} s`);
         await sleep(wait, init.signal);
@@ -166,6 +179,30 @@ async function geminiJson(parts, schema, temperature = 0, signal, timeoutMs = 10
   const t = b.candidates && b.candidates[0] && b.candidates[0].content && b.candidates[0].content.parts.map(p => p.text || '').join('');
   return JSON.parse(t || '{}');
 }
+// Gọi model dịch (OpenAI hoặc Gemini), trả JSON theo schema (viết kiểu Gemini, đổi sang JSON Schema cho OpenAI).
+const toJsonSchema = (x) => {
+  if (!x || typeof x !== 'object') return x;
+  const out = { ...x, type: String(x.type).toLowerCase() };
+  if (x.properties) out.properties = Object.fromEntries(Object.entries(x.properties).map(([k, v]) => [k, toJsonSchema(v)]));
+  if (x.items) out.items = toJsonSchema(x.items);
+  if (out.type === 'object') out.additionalProperties = false;
+  return out;
+};
+async function openaiJson(text, schema, temperature, signal, timeoutMs = 10000) {
+  const reasoning = /^(o\d|gpt-5)/.test(OPENAI_MODEL);   // model suy luận không nhận temperature
+  const b = await httpJson(`${OPENAI_BASE}/chat/completions`, {
+    method: 'POST',
+    signal, headers: { Authorization: 'Bearer ' + ENV.OPENAI_API_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: OPENAI_MODEL, messages: [{ role: 'user', content: text }], ...(reasoning ? {} : { temperature }),
+      response_format: { type: 'json_schema', json_schema: { name: 'subtitles', strict: true, schema: toJsonSchema(schema) } } }),
+  }, timeoutMs);
+  const m = b.choices && b.choices[0] && b.choices[0].message;
+  if (m && m.refusal) throw new Error('OpenAI từ chối: ' + String(m.refusal).slice(0, 100));
+  return JSON.parse((m && m.content) || '{}');
+}
+const mtJson = (text, schema, temperature, signal) =>
+  (mtProvider() === 'openai' ? openaiJson(text, schema, temperature, signal) : geminiJson([{ text }], schema, temperature, signal));
+const mtService = () => (mtProvider() === 'openai' ? 'OpenAI' : 'Gemini');
 async function geminiAsr(mp3, signal) {
   const schema = { type: 'OBJECT', properties: { segments: { type: 'ARRAY', items: { type: 'OBJECT', properties: {
     start: { type: 'NUMBER' }, end: { type: 'NUMBER' }, text: { type: 'STRING' } }, required: ['start', 'end', 'text'] } } }, required: ['segments'] };
@@ -333,8 +370,8 @@ const CUE_SCHEMA = { type: 'OBJECT', properties: { cues: { type: 'ARRAY', items:
   id: { type: 'INTEGER' }, vi: { type: 'STRING' } }, required: ['id', 'vi'] } } }, required: ['cues'] };
 const budget = (c) => Math.floor(Math.min(84, 17 * (c.end - c.start)));
 export async function translate(meta, cues, context = [], signal) {
-  if (!ENV.GEMINI_API_KEY) throw new Error('Chưa có GEMINI_API_KEY trong alpha/server/.env');
-  const first = await geminiJson([{ text: [
+  if (!mtProvider()) throw new Error('Chưa có OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env');
+  const first = await mtJson([
     'Dịch phụ đề video Douyin từ tiếng Trung sang tiếng Việt tự nhiên, như phụ đề chuyên nghiệp.',
     'Mỗi dòng phải dịch ĐỦ Ý của chính dòng đó (không tóm tắt, không gộp, không bỏ dòng). Giữ đúng id.',
     'Mỗi dòng có max_chars: chỉ rút gọn khi bản dịch đủ ý dài hơn max_chars. Không được để lại chữ Hán.',
@@ -344,7 +381,7 @@ export async function translate(meta, cues, context = [], signal) {
     'Hashtag: ' + JSON.stringify(meta.hashtags || []),
     ...(context.length ? ['Các dòng ngay trước trong video (đã dịch, chỉ để giữ mạch và xưng hô, không dịch lại): ' + JSON.stringify(context)] : []),
     'Các dòng: ' + JSON.stringify(cues.map(c => ({ id: c.id, seconds: round(c.end - c.start, 1), max_chars: budget(c), zh: c.zh }))),
-  ].join('\n') }], CUE_SCHEMA, 0.2, signal);
+  ].join('\n'), CUE_SCHEMA, 0.2, signal);
   const vi = new Map((first.cues || []).map(c => [c.id, fixViText(c.vi)]));
   const out = cues.map(c => {
     const text = vi.get(c.id) || '';
@@ -357,10 +394,10 @@ export async function translate(meta, cues, context = [], signal) {
   const long = out.filter(c => c.flags.includes('too_long'));
   if (long.length) {
     try {
-      const r = await geminiJson([{ text: [
+      const r = await mtJson([
         'Rút gọn các dòng phụ đề tiếng Việt sau cho vừa max_chars (đếm cả dấu cách). Giữ ý chính, giữ xưng hô và tên riêng, bỏ từ đệm và chi tiết phụ. Không thêm ý mới.',
         'Các dòng: ' + JSON.stringify(long.map(c => ({ id: c.id, max_chars: budget(c), zh: c.zh, vi: c.vi }))),
-      ].join('\n') }], CUE_SCHEMA, 0.2, signal);
+      ].join('\n'), CUE_SCHEMA, 0.2, signal);
       const short = new Map((r.cues || []).map(c => [c.id, fixViText(c.vi)]));
       for (const c of long) {
         const v = short.get(c.id);
@@ -379,8 +416,7 @@ export async function translate(meta, cues, context = [], signal) {
 // opts (video dài, từng đoạn): { kind: 'aac', offset: giây bắt đầu của âm thanh, from, to, context }; signal: huỷ giữa chừng.
 export async function makeSubtitles(meta, buf, opts = {}) {
   // Dịch đang hết lượt trong ngày: báo ngay, khỏi tốn tiền nhận dạng giọng nói cho đoạn không dịch được.
-  const mtHost = new URL(GEMINI_BASE).host;
-  if ((dayQuotaUntil.get(mtHost) || 0) > Date.now()) throw dayQuotaError(mtHost);
+  if ((dayQuotaUntil.get(mtService()) || 0) > Date.now()) throw dayQuotaError(mtService());
   const t0 = Date.now();
   const audio = await extractAudio(buf, opts.kind);
   const tAudio = Date.now();

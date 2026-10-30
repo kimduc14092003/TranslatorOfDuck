@@ -21,8 +21,8 @@ async function checkServer() {
     const ok = h.ok && h.mt;
     $('health').className = ok ? 'ok' : 'bad';
     $('health').textContent = ok
-      ? `Server chạy. Nhận dạng: ${h.asr === 'funasr' ? 'Fun-ASR' : 'Gemini'}, dịch: Gemini.`
-      : 'Server chạy nhưng thiếu GEMINI_API_KEY trong alpha/server/.env.';
+      ? `Server chạy. Nhận dạng: ${h.asr === 'funasr' ? 'Fun-ASR' : 'Gemini'}, dịch: ${h.mt === 'openai' ? 'OpenAI' : 'Gemini'}.`
+      : 'Server chạy nhưng thiếu OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env.';
   } catch (_) {
     $('health').className = 'bad';
     $('health').textContent = 'Không kết nối được. Mở PowerShell trong alpha\\server và chạy "npm start".';

@@ -73,7 +73,7 @@ const PROV = `http://127.0.0.1:${providers.address().port}`;
 const alphaPort = 18787 + Math.floor(Math.random() * 1000);
 const alpha = spawn(process.execPath, [path.join(ROOT, 'server', 'server.mjs')], {
   env: { ...process.env, PORT: String(alphaPort), TOD_WORK: path.join(TMP, 'work'), FFMPEG: 'ffmpeg',
-    DASHSCOPE_API_KEY: 'test', GEMINI_API_KEY: 'test', DASHSCOPE_BASE: PROV, GEMINI_BASE: PROV + '/v1beta' },
+    DASHSCOPE_API_KEY: 'test', GEMINI_API_KEY: 'test', OPENAI_API_KEY: '', DASHSCOPE_BASE: PROV, GEMINI_BASE: PROV + '/v1beta' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let alphaLog = '';
