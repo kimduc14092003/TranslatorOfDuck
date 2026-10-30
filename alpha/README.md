@@ -4,7 +4,7 @@ Bản thử chạy trên máy bạn. Khi lướt Douyin, sub tiếng Việt hi�
 
 - Extension tải trước đoạn đầu (60 giây) của video đang xem và 2 video kế tiếp. Nó gửi đoạn đó tới **server chạy trên chính máy bạn**.
 - Server tách âm thanh, nhận dạng giọng nói (Fun-ASR, hoặc Gemini nếu không có key Alibaba), chia câu, dịch bằng Gemini rồi trả sub về.
-- Video chỉ có nhạc hoặc bài hát sẽ bỏ qua (góc video hiện "không có lời nói").
+- Video bài hát hoặc chỉ có nhạc sẽ bỏ qua. Video nói chuyện có xen đoạn hát thì chỉ bỏ những câu hát.
 - Key nằm trong file `.env` trên máy bạn, không gửi đi đâu ngoài nhà cung cấp AI.
 
 ## Chạy lần đầu (Windows)
@@ -50,7 +50,7 @@ Thấy dòng `TranslatorOfDuck Alpha server: http://127.0.0.1:8787` là được
 - Góc trên trái video có nhãn:
   - **VI · đang dịch…** (vàng): đang chờ.
   - **VI** (xanh): đã có sub.
-  - **không có lời nói** (xám): bài hát hoặc nhạc, bỏ qua.
+  - **bỏ qua** (xám), kèm lý do và số giây đã nghe, ví dụ "bài hát (60 s đầu)" hoặc "không nghe thấy lời (60 s đầu)". Cửa sổ `npm start` in thêm mấy chữ đầu nghe được.
   - **lỗi** (đỏ): kèm lý do ngắn.
 - Video đầu tiên mất vài giây. Các video sau thường đã dịch xong trước khi bạn lướt tới.
 - Popup cho đổi vị trí sub (dưới / giữa / trên), cỡ chữ, và xem thống kê của tab.
@@ -59,7 +59,8 @@ Thấy dòng `TranslatorOfDuck Alpha server: http://127.0.0.1:8787` là được
 
 - Chỉ dịch **60 giây đầu** mỗi video (đổi được bằng `MAX_SECONDS=` trong `.env`).
 - Chỉ hỗ trợ www.douyin.com: lướt feed, `?modal_id=` và trang `/video/...`.
-- Bộ lọc nói/hát còn đơn giản: thỉnh thoảng bỏ nhầm video có lời, hoặc dịch nhầm một bài hát.
+- Bộ lọc nói/hát còn đơn giản: thỉnh thoảng bỏ nhầm video có lời, hoặc dịch nhầm một bài hát. Gặp trường hợp sai, gửi dòng log của video đó trong cửa sổ `npm start`.
+- Video có mục lục nằm ở cuối file (hiếm) chưa hỗ trợ; nhãn đỏ sẽ ghi rõ.
 - Sub đã dịch được lưu ở `alpha\server\work\cache`. Xem lại video cũ sẽ không tốn thêm tiền API. Xóa thư mục này nếu muốn dịch lại.
 
 ## Gặp lỗi

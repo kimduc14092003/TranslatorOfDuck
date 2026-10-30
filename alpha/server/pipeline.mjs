@@ -15,7 +15,7 @@ const GEMINI_MODEL = ENV.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 const DASHSCOPE_BASE = ENV.DASHSCOPE_BASE || 'https://dashscope-intl.aliyuncs.com';
 const FUNASR_MODEL = ENV.FUNASR_MODEL || 'fun-asr-flash-2026-06-15';
 export const MAX_SECONDS = Number(ENV.MAX_SECONDS || 60);
-export const PIPELINE_VERSION = 'alpha-1';
+export const PIPELINE_VERSION = 'alpha-2';
 
 function loadDotEnv(file) {
   if (!fs.existsSync(file)) return;
@@ -161,6 +161,28 @@ export function classifySpeech(meta, r) {
   return { label, ...f };
 }
 
+// Lọc theo từng câu: video nói có nhạc nền hay đoạn hát ngắn thì chỉ bỏ những câu hát, không bỏ cả video.
+// Câu "hát" khi chữ kéo dài (trung vị > 0,33 s/chữ, cùng ngưỡng với cả video) hoặc lặp đi lặp lại.
+export function splitSung(r) {
+  const words = (r.words || []).filter(w => w.end > w.start);
+  const segs = r.segments || [];
+  if (!words.length || !segs.length) return { r, sentences: segs.map(x => ({ start: x.start, end: x.end, text: x.text, sung: false })), sung: 0, total: segs.length };
+  const sentences = segs.map((x) => {
+    const ws = words.filter(w => w.start >= x.start - 0.05 && w.end <= x.end + 0.05);
+    const perChar = [];
+    for (const w of ws) { const n = (w.text.match(HAN) || []).length; for (let i = 0; i < n; i++) perChar.push((w.end - w.start) / n); }
+    const med = pct(perChar, 0.5);
+    const sung = (perChar.length >= 4 && med > 0.33) || /(.{1,8})\1{2,}/u.test(normalize(x.text).join(''));
+    return { start: x.start, end: x.end, text: x.text, medCharDur: round(med, 3), sung, words: ws };
+  });
+  const kept = sentences.filter(x => !x.sung);
+  const keptWords = new Set(kept.flatMap(x => x.words));
+  return {
+    r: { ...r, segments: kept.map(x => ({ start: x.start, end: x.end, text: x.text })), words: words.filter(w => keptWords.has(w)), text: kept.map(x => x.text).join('') },
+    sentences: sentences.map(({ words: _w, ...x }) => x), sung: sentences.length - kept.length, total: sentences.length,
+  };
+}
+
 // ---------------------------------------------------------------- chia câu, mốc thời gian (§7.3, §7.4)
 const FRAME = 1 / 30;
 export function segmentCues(r) {
@@ -271,11 +293,18 @@ export async function makeSubtitles(meta, videoBuf) {
   const asr = await transcribe(audio.mp3);
   const tAsr = Date.now();
   const cls = classifySpeech(meta, asr);
-  if (cls.label !== 'speech') return { status: 'skipped', label: cls.label, asr: asr.provider, seconds: audio.seconds, timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio } };
-  const cues = segmentCues(asr);
+  const split = splitSung(asr);
+  const base = { asr: asr.provider, seconds: audio.seconds, heard: (asr.text || '').slice(0, 40), sung: split.sung, sentences: split.total,
+    debug: { features: cls, sentences: split.sentences } };
+  const skip = (label) => ({ status: 'skipped', label, ...base, timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio } });
+  if (cls.label !== 'speech' && cls.label !== 'singing') return skip(cls.label);
+  // Cả video là bài hát khi: lặp lời, hoặc nhận ra "hát" kèm hashtag nhạc, hoặc quá nửa số câu là câu hát.
+  if (cls.label === 'singing' && (cls.repeat || cls.tagMusic || split.sung * 2 > split.total)) return skip('singing');
+  if (((split.r.text || '').match(HAN) || []).length < 4) return skip('singing');
+  const cues = segmentCues(split.r);
   const vi = cues.length ? await translate(meta, cues) : [];
   const tMt = Date.now();
-  return { status: vi.length ? 'ok' : 'skipped', label: cls.label, asr: asr.provider, seconds: audio.seconds,
+  return { status: vi.length ? 'ok' : 'skipped', label: vi.length ? 'speech' : 'untranslated', ...base,
     cues: vi.map(c => ({ start: c.start, end: c.end, vi: c.vi, zh: c.zh })),
     timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio, mtMs: tMt - tAsr, totalMs: tMt - t0 } };
 }

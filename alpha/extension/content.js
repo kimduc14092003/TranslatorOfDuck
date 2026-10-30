@@ -86,13 +86,31 @@
     const total = Number(((res.headers.get('content-range') || '').match(/\/(\d+)$/) || [])[1]) || null;
     return { buf: await res.arrayBuffer(), total };
   }
-  // Ước lượng số byte chứa MAX_SECONDS giây đầu (file đều faststart, §5.6b) rồi tải một lần.
+  // Cuối phần "mục lục" (moov) nằm ở đầu file faststart (§5.6b). Video dài có moov vài MB,
+  // nên phải cộng phần này vào ước lượng, không thì chỉ lấy được nửa số giây cần.
+  function headerEnd(buf) {
+    const dv = new DataView(buf);
+    let off = 0;
+    while (off + 8 <= buf.byteLength) {
+      let size = dv.getUint32(off);
+      const type = String.fromCharCode(dv.getUint8(off + 4), dv.getUint8(off + 5), dv.getUint8(off + 6), dv.getUint8(off + 7));
+      if (size === 1 && off + 16 <= buf.byteLength) size = Number(dv.getBigUint64(off + 8));
+      if (type === 'mdat') return null;          // mục lục ở cuối file: chưa hỗ trợ
+      if (type === 'moov') return off + size;
+      if (size < 8) return null;
+      off += size;
+    }
+    return null;
+  }
+  // Ước lượng số byte chứa MAX_SECONDS giây đầu rồi tải một lần.
   async function downloadHead(d) {
     const url = 'https://www.douyin.com/aweme/v1/play/?video_id=' + encodeURIComponent(d.playUri);
     const probe = await rangeFetch(url, 65535);
     const durS = d.durationMs ? d.durationMs / 1000 : null;
-    let end = 6 * 1024 * 1024 - 1;
-    if (probe.total && durS) end = Math.min(probe.total - 1, Math.ceil(probe.total * Math.min(1, (MAX_SECONDS + 5) / durS)) + 524288);
+    const head = headerEnd(probe.buf);
+    if (probe.total && head == null) throw new Error('video không có mục lục ở đầu file (chưa hỗ trợ)');
+    let end = (head || 0) + 6 * 1024 * 1024 - 1;
+    if (probe.total && durS) end = Math.min(probe.total - 1, head + Math.ceil((probe.total - head) * Math.min(1, (MAX_SECONDS + 5) / durS)) + 524288);
     if (probe.total && end <= 65535) return probe.buf;
     return (await rangeFetch(url, end)).buf;
   }
@@ -151,11 +169,12 @@
 
   const BADGE = {
     pending: ['#f5a623', 'VI · đang dịch…'],
-    skipped: ['#9b9b9b', 'VI · không có lời nói'],
+    skipped: ['#9b9b9b', 'VI · bỏ qua'],
     no_audio: ['#9b9b9b', 'VI · không có âm thanh'],
     error: ['#e74c3c', 'VI · lỗi'],
     ok: ['#2ecc71', 'VI'],
   };
+  const SKIP_WHY = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch lỗi' };
   function cueAt(cues, t) {
     for (const c of cues) { if (t >= c.start && t < c.end) return c; if (c.start > t) break; }
     return null;
@@ -179,7 +198,9 @@
     const st = res ? res.status : (items.has(currentId) ? 'pending' : null);
     if (st && BADGE[st]) {
       badgeDot.style.background = BADGE[st][0];
-      badgeTxt.textContent = st === 'error' ? BADGE.error[1] + ': ' + String(res.error || '').slice(0, 60) : BADGE[st][1];
+      badgeTxt.textContent = st === 'error' ? BADGE.error[1] + ': ' + String(res.error || '').slice(0, 60)
+        : st === 'skipped' ? 'VI · ' + (SKIP_WHY[res.label] || 'bỏ qua') + (res.seconds != null ? ` (${Math.round(res.seconds)} s đầu)` : '')
+        : BADGE[st][1];
       badgeEl.style.display = 'block';
     } else badgeEl.style.display = 'none';
     const c = res && res.status === 'ok' ? cueAt(res.cues, v.currentTime) : null;

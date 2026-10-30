@@ -165,7 +165,7 @@ const checks = {
   'nothing shown between lines (4.2 s)': atGap.sub === null,
   'second line at 5.2 s': atSecond.sub === 'Đi thôi!',
   'next videos prefetched (3 processed)': (status.counts.ok || 0) + (status.counts.skipped || 0) >= 3,
-  'song video skipped, no subtitle': song.sub === null && /không có lời nói/.test(song.badge || ''),
+  'song video skipped, no subtitle': song.sub === null && /bài hát/.test(song.badge || ''),
   'ASR called once per video (dedupe)': providerHits.funasr === 3,
   'no page errors': errors.length === 0,
 };

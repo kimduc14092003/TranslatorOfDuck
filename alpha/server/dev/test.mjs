@@ -1,7 +1,7 @@
 // Kiểm tra nhanh các hàm thuần của pipeline (không cần key, không cần mạng). Chạy: npm test
 // Kiểm thử toàn trình (extension + server + Douyin giả) nằm ở alpha/dev/e2e.mjs.
 import assert from 'node:assert/strict';
-import { classifySpeech, segmentCues, fixViText } from '../pipeline.mjs';
+import { classifySpeech, segmentCues, fixViText, splitSung } from '../pipeline.mjs';
 
 const W = (text, start, end) => ({ text, start, end });
 let n = 0;
@@ -37,6 +37,18 @@ t('nhận ra lời nói / tiếng hát / không có lời', () => {
   const song = { text: '自由是逃离这全世界', words: Array.from('自由是逃离这全世界').map((c, i) => W(c, i * 0.6, i * 0.6 + 0.55)) };
   assert.equal(classifySpeech({ desc: '#翻唱' }, song).label, 'singing');
   assert.equal(classifySpeech({}, { text: '', words: [] }).label, 'no_speech');
+});
+t('vlog có một câu hát: chỉ bỏ câu hát, giữ câu nói', () => {
+  const talk1 = Array.from('今天我们来到了稻城亚丁').map((c, i) => W(c, 0.2 + i * 0.2, 0.38 + i * 0.2));
+  const sing = Array.from('自由是逃离这全世界').map((c, i) => W(c, 5 + i * 0.6, 5.55 + i * 0.6));
+  const talk2 = Array.from('这里的风景真的太美了').map((c, i) => W(c, 12 + i * 0.2, 12.18 + i * 0.2));
+  const r = { text: '今天我们来到了稻城亚丁自由是逃离这全世界这里的风景真的太美了', words: [...talk1, ...sing, ...talk2], segments: [
+    { start: 0.2, end: 2.6, text: '今天我们来到了稻城亚丁' }, { start: 5, end: 10.4, text: '自由是逃离这全世界' }, { start: 12, end: 14, text: '这里的风景真的太美了' }] };
+  const s = splitSung(r);
+  assert.equal(s.total, 3);
+  assert.equal(s.sung, 1);
+  assert.equal(s.r.text, '今天我们来到了稻城亚丁这里的风景真的太美了');
+  assert.ok(segmentCues(s.r).every(c => !c.zh.includes('自由')));
 });
 t('sửa khoảng trắng câu tiếng Việt', () => {
   assert.equal(fixViText('  Chào  cả nhà ,hôm nay đi ăn lẩu . '), 'Chào cả nhà, hôm nay đi ăn lẩu.');

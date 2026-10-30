@@ -47,7 +47,7 @@ async function handleSubtitles(req, res) {
   if (!/^\d{6,25}$/.test(id) || typeof meta.b64 !== 'string') return send(res, 400, { error: 'need id (digits) and b64' });
   const key = `${id}.vi.${PIPELINE_VERSION}`;
   const file = path.join(CACHE, key + '.json');
-  if (fs.existsSync(file)) return send(res, 200, { ...JSON.parse(fs.readFileSync(file, 'utf8')), cached: true });
+  if (fs.existsSync(file)) { const { debug: _d, ...c } = JSON.parse(fs.readFileSync(file, 'utf8')); return send(res, 200, { ...c, cached: true }); }
   if (!inflight.has(key)) {
     inflight.set(key, withSlot(() => makeSubtitles({ desc: meta.desc, hashtags: meta.hashtags }, Buffer.from(meta.b64, 'base64')))
       .then((r) => { const out = { id, ...r }; if (r.status !== 'error') fs.writeFileSync(file, JSON.stringify(out)); return out; })
@@ -56,9 +56,13 @@ async function handleSubtitles(req, res) {
   try {
     const out = await inflight.get(key);
     const t = out.timings || {};
-    console.log(`${new Date().toLocaleTimeString()} ${id} ${out.status}${out.label ? ' (' + out.label + ')' : ''} ${out.cues ? out.cues.length + ' dòng' : ''} ` +
-      `âm thanh ${t.audioMs ?? '-'} ms · ASR ${t.asrMs ?? '-'} ms · dịch ${t.mtMs ?? '-'} ms`);
-    send(res, 200, out);
+    const why = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch không ra dòng nào' };
+    console.log(`${new Date().toLocaleTimeString()} ${id} ${out.status}${out.label && out.status !== 'ok' ? ' (' + (why[out.label] || out.label) + ')' : ''}` +
+      `${out.cues ? ' ' + out.cues.length + ' dòng' : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu, ${out.sung ?? 0} câu hát bị bỏ` +
+      ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${t.asrMs ?? '-'} ms, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : ''}` +
+      (out.heard ? `\n    nghe được: ${out.heard}` : ''));
+    const { debug: _d, ...reply } = out;
+    send(res, 200, reply);
   } catch (e) {
     console.log(`${new Date().toLocaleTimeString()} ${id} LỖI ${e.message}`);
     send(res, 502, { id, status: 'error', error: String(e.message).slice(0, 300) });
