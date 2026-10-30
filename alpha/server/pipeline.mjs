@@ -15,7 +15,7 @@ const GEMINI_MODEL = ENV.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 const DASHSCOPE_BASE = ENV.DASHSCOPE_BASE || 'https://dashscope-intl.aliyuncs.com';
 const FUNASR_MODEL = ENV.FUNASR_MODEL || 'fun-asr-flash-2026-06-15';
 export const MAX_SECONDS = Number(ENV.MAX_SECONDS || 60);
-export const PIPELINE_VERSION = 'alpha-2';
+export const PIPELINE_VERSION = 'alpha-3';
 
 function loadDotEnv(file) {
   if (!fs.existsSync(file)) return;
@@ -60,7 +60,10 @@ export async function extractAudio(videoBuf) {
   const out = path.join(dir, 'out.mp3');
   fs.writeFileSync(src, videoBuf);
   try {
+    // aresample first_pts=0: nếu track âm thanh bắt đầu muộn hơn mốc 0 của video (edit list), chèn khoảng lặng
+    // tương ứng; không thì mọi mốc thời gian bị sớm đúng bằng khoảng đó và sub hiện trước lời nói.
     await new Promise((resolve) => execFile(bin, ['-v', 'error', '-y', '-i', src, '-t', String(MAX_SECONDS), '-vn', '-ac', '1', '-ar', '16000',
+      '-af', 'aresample=async=1:first_pts=0',
       '-c:a', 'libmp3lame', '-b:a', '48k', out], () => resolve())); // file cắt ngắn nên ffmpeg hay báo lỗi ở cuối: vẫn dùng phần đã tách
     if (!fs.existsSync(out) || fs.statSync(out).size < 2000) return null;
     const mp3 = fs.readFileSync(out);

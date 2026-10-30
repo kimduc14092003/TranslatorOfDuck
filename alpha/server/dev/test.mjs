@@ -1,7 +1,11 @@
 // Kiểm tra nhanh các hàm thuần của pipeline (không cần key, không cần mạng). Chạy: npm test
 // Kiểm thử toàn trình (extension + server + Douyin giả) nằm ở alpha/dev/e2e.mjs.
 import assert from 'node:assert/strict';
-import { classifySpeech, segmentCues, fixViText, splitSung } from '../pipeline.mjs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { classifySpeech, segmentCues, fixViText, splitSung, extractAudio } from '../pipeline.mjs';
 
 const W = (text, start, end) => ({ text, start, end });
 let n = 0;
@@ -53,4 +57,23 @@ t('vlog có một câu hát: chỉ bỏ câu hát, giữ câu nói', () => {
 t('sửa khoảng trắng câu tiếng Việt', () => {
   assert.equal(fixViText('  Chào  cả nhà ,hôm nay đi ăn lẩu . '), 'Chào cả nhà, hôm nay đi ăn lẩu.');
 });
+// Track âm thanh bắt đầu muộn 0,4 s so với video (edit list): âm thanh tách ra phải giữ đúng khoảng đó,
+// không thì sub hiện sớm hơn lời nói.
+const ffmpeg = process.env.FFMPEG || (await import('ffmpeg-static').then(m => m.default).catch(() => null)) || 'ffmpeg';
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tod-test-'));
+try {
+  const f = (name) => path.join(dir, name);
+  execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=3,adelay=1000|1000',
+    '-t', '6', '-c:v', 'libx264', '-c:a', 'aac', f('a.mp4')]);
+  execFileSync(ffmpeg, ['-v', 'error', '-y', '-i', f('a.mp4'), '-itsoffset', '0.4', '-i', f('a.mp4'), '-map', '0:v', '-map', '1:a', '-c', 'copy', '-movflags', '+faststart', f('b.mp4')]);
+  const audio = await extractAudio(fs.readFileSync(f('b.mp4')));
+  fs.writeFileSync(f('o.mp3'), audio.mp3);
+  const log = spawnSync(ffmpeg, ['-i', f('o.mp3'), '-af', 'silencedetect=n=-30dB:d=0.2', '-f', 'null', '-'], { encoding: 'utf8' }).stderr;
+  t('âm thanh bắt đầu muộn: giữ đúng mốc thời gian', () => {
+    const onset = Number((/silence_end: ([\d.]+)/.exec(log) || [])[1]);
+    assert.ok(Math.abs(onset - 1.4) < 0.08, 'tiếng bắt đầu ở ' + onset + ' s, cần ≈ 1,4 s');
+  });
+} catch (e) {
+  if (e.code === 'ENOENT') console.log('BỎ QUA kiểm tra mốc âm thanh (không tìm thấy ffmpeg)'); else throw e;
+} finally { fs.rmSync(dir, { recursive: true, force: true }); }
 console.log(`\n${n} kiểm tra đều đạt.`);

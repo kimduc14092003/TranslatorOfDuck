@@ -152,18 +152,26 @@ const status = await pop.evaluate(async () => {
   for (const t of await chrome.tabs.query({})) { try { const r = await chrome.tabs.sendMessage(t.id, { type: 'status' }); if (r) return r; } catch (_) {} }
   return null;
 });
+// Phím ] ba lần: sub muộn hơn 0,3 s (câu 1 bắt đầu 1,0 s → giờ hiện từ 1,3 s).
+for (let i = 0; i < 3; i++) await page.keyboard.press(']');
+const delayed = { at12: await subAt(1.2), at135: await subAt(1.35) };
+const savedDelay = await pop.evaluate(async () => (await chrome.storage.local.get('settings')).settings.delay);
+await page.keyboard.press('['); await page.keyboard.press('['); await page.keyboard.press('[');
+await page.waitForTimeout(1600); // chờ thông báo lệch sub tắt
 // Chuyển sang video bài hát → phải bỏ qua, không hiện sub.
 await page.evaluate(() => window.activate(2));
 await page.waitForTimeout(800);
 const song = await subAt(2.0);
 
-console.log({ health, first, atGap, atSecond, status, song, providerHits });
+console.log({ health, first, atGap, atSecond, delayed, savedDelay, status, song, providerHits });
 console.log('server log:\n' + alphaLog.trim());
 const checks = {
   'popup sees the server': /Server chạy/.test(health),
   'first video subtitle shows Vietnamese at 1.2 s': first.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
   'nothing shown between lines (4.2 s)': atGap.sub === null,
   'second line at 5.2 s': atSecond.sub === 'Đi thôi!',
+  '] key delays subs by 0.3 s and saves it': delayed.at12.sub === null && /lệch sub \+0\.3 s/.test(delayed.at12.badge || '')
+    && delayed.at135.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.' && savedDelay === 0.3,
   'next videos prefetched (3 processed)': (status.counts.ok || 0) + (status.counts.skipped || 0) >= 3,
   'song video skipped, no subtitle': song.sub === null && /bài hát/.test(song.badge || ''),
   'ASR called once per video (dedupe)': providerHits.funasr === 3,

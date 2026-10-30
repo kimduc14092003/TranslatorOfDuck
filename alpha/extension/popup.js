@@ -1,6 +1,6 @@
 'use strict';
 const $ = (id) => document.getElementById(id);
-const DEFAULTS = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm' };
+const DEFAULTS = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0 };
 
 async function load() {
   const { settings = {} } = await chrome.storage.local.get('settings');
@@ -49,6 +49,16 @@ async function showStats() {
   $('position').addEventListener('change', (e) => save({ position: e.target.value }));
   $('size').addEventListener('change', (e) => save({ size: e.target.value }));
   $('server').addEventListener('change', (e) => save({ server: e.target.value.trim() || DEFAULTS.server }));
+  const showDelay = (d) => { $('delay').textContent = (d > 0 ? '+' : '') + d.toFixed(1) + ' s'; };
+  showDelay(Number(s.delay) || 0);
+  const nudge = async (step) => {
+    const cur = Number((await load()).delay) || 0;
+    const d = Math.max(-2, Math.min(2, Math.round((cur + step) * 10) / 10));
+    await save({ delay: d });
+    showDelay(d);
+  };
+  $('dminus').addEventListener('click', () => nudge(-0.1));
+  $('dplus').addEventListener('click', () => nudge(0.1));
   $('check').addEventListener('click', checkServer);
   checkServer();
   showStats();

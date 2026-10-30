@@ -54,6 +54,7 @@ Thấy dòng `TranslatorOfDuck Alpha server: http://127.0.0.1:8787` là được
   - **lỗi** (đỏ): kèm lý do ngắn.
 - Video đầu tiên mất vài giây. Các video sau thường đã dịch xong trước khi bạn lướt tới.
 - Popup cho đổi vị trí sub (dưới / giữa / trên), cỡ chữ, và xem thống kê của tab.
+- **Sub lệch so với lời nói:** trên trang Douyin bấm phím `]` (sub muộn hơn 0,1 s) hoặc `[` (sớm hơn 0,1 s), hoặc dùng nút − / + trong popup. Mức lệch được lưu cho mọi video.
 
 ## Giới hạn của bản Alpha
 

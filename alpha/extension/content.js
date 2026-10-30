@@ -10,7 +10,7 @@
   const PREFETCH = 2;            // số video kế tiếp được dịch sẵn
   const MAX_SECONDS = 60;        // bản Alpha chỉ dịch 60 giây đầu mỗi video
 
-  let settings = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm' };
+  let settings = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0 };
   const items = new Map();       // id -> metadata
   const order = [];              // thứ tự video theo feed
   const results = new Map();     // id -> { status, cues, error, seconds }
@@ -181,6 +181,21 @@
   }
   let act = null;
   let lastFind = 0;
+  let toastText = '';
+  let toastUntil = 0;
+  const fmtDelay = (d) => (d > 0 ? '+' : '') + d.toFixed(1) + ' s';
+  // Phím [ và ]: sub hiện sớm hơn / muộn hơn 0,1 s (lưu lại cho mọi video).
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== '[' && e.key !== ']') return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    const d = Math.round(((Number(settings.delay) || 0) + (e.key === ']' ? 0.1 : -0.1)) * 10) / 10;
+    settings.delay = Math.max(-2, Math.min(2, d));
+    if (alive()) chrome.storage.local.get('settings', (s) => chrome.storage.local.set({ settings: { ...(s.settings || {}), delay: settings.delay } }));
+    toastText = 'VI · lệch sub ' + fmtDelay(settings.delay) + (settings.delay > 0 ? ' (muộn hơn)' : settings.delay < 0 ? ' (sớm hơn)' : '');
+    toastUntil = performance.now() + 1500;
+  }, true);
   function frame(now) {
     if (!alive()) return;
     requestAnimationFrame(frame);
@@ -196,14 +211,18 @@
     host.style.left = r.left + 'px'; host.style.top = r.top + 'px'; host.style.width = r.width + 'px'; host.style.height = r.height + 'px';
     const res = results.get(currentId);
     const st = res ? res.status : (items.has(currentId) ? 'pending' : null);
-    if (st && BADGE[st]) {
+    if (now < toastUntil) {
+      badgeDot.style.background = BADGE.ok[0];
+      badgeTxt.textContent = toastText;
+      badgeEl.style.display = 'block';
+    } else if (st && BADGE[st]) {
       badgeDot.style.background = BADGE[st][0];
       badgeTxt.textContent = st === 'error' ? BADGE.error[1] + ': ' + String(res.error || '').slice(0, 60)
         : st === 'skipped' ? 'VI · ' + (SKIP_WHY[res.label] || 'bỏ qua') + (res.seconds != null ? ` (${Math.round(res.seconds)} s đầu)` : '')
         : BADGE[st][1];
       badgeEl.style.display = 'block';
     } else badgeEl.style.display = 'none';
-    const c = res && res.status === 'ok' ? cueAt(res.cues, v.currentTime) : null;
+    const c = res && res.status === 'ok' ? cueAt(res.cues, v.currentTime - (Number(settings.delay) || 0)) : null;
     if (!c) { subEl.style.display = 'none'; return; }
     const scale = { s: 0.034, m: 0.042, l: 0.052 }[settings.size] || 0.042;
     subEl.style.fontSize = Math.max(14, Math.min(40, r.height * scale)) + 'px';
