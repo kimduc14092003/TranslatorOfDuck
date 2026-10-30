@@ -75,6 +75,8 @@ const run = (...a) => new Promise((resolve, reject) => {
   }));
 });
 
+console.log(await run('all')); // chạy một lần không có đáp án
+console.log(fs.readFileSync(path.join(WORK, 'report.md'), 'utf8').split('\n').slice(4, 8).join('\n'));
 console.log(await run('prepare'));
 console.log(await run('asr'));
 console.log(await run('refs'));

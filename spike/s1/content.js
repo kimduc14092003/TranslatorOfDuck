@@ -259,6 +259,17 @@
     sampleQueue.push({ h, d: it.d });
     runSamples();
   }
+  function saveFile(name, blob) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    // Chặn click lan lên trang để router của Douyin không bắt nhầm; hành vi tải vẫn giữ nguyên.
+    a.addEventListener('click', (e) => e.stopPropagation());
+    document.documentElement.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  }
   async function rangeFetch(url, end) {
     const res = await fetch(url, { headers: { Range: 'bytes=0-' + end }, credentials: 'omit', cache: 'no-store' });
     if (res.status !== 206 && res.status !== 200) throw new Error('http_' + res.status);
@@ -276,15 +287,7 @@
     const full = probe.total && end <= 65535 ? probe : await rangeFetch(url, end);
     const scanned = scan(new Uint8Array(full.buf, 0, Math.min(full.buf.byteLength, 4 * 1024 * 1024)));
     const file = 'tod_s3_' + job.h + '.mp4';
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([full.buf], { type: 'video/mp4' }));
-    a.download = file;
-    // Chặn click lan lên trang để router của Douyin không bắt nhầm; hành vi tải vẫn giữ nguyên.
-    a.addEventListener('click', (e) => e.stopPropagation());
-    document.documentElement.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    saveFile(file, new Blob([full.buf], { type: 'video/mp4' }));
     return {
       h: job.h, file, durationMs: job.d.durationMs, bytes: full.buf.byteLength, totalBytes: probe.total,
       approxSeconds: durS && probe.total ? Math.min(durS, Math.round(durS * full.buf.byteLength / probe.total)) : null,
@@ -302,7 +305,12 @@
           const meta = await takeSample(job);
           sampleList = [...sampleList, meta];
           chrome.storage.local.set({ [SAMPLES]: sampleList });
-          if (sampleList.length >= sampling.target) chrome.storage.local.set({ [SAMPLING]: { ...sampling, on: false } });
+          if (sampleList.length >= sampling.target) {
+            chrome.storage.local.set({ [SAMPLING]: { ...sampling, on: false } });
+            // Đủ mẫu: tự lưu danh sách, người dùng không phải bấm thêm.
+            saveFile('tod_s3_manifest.json', new Blob([JSON.stringify({ kind: 'tod_s3_manifest', version: 1,
+              createdAt: new Date().toISOString(), samples: sampleList }, null, 1)], { type: 'application/json' }));
+          }
         } catch (e) {
           log('sample_fail', { message: String(e && e.message).slice(0, 80) });
         }

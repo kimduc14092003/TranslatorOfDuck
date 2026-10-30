@@ -195,7 +195,8 @@ await page.reload();
 await page.waitForTimeout(9000);
 const s3 = await pop.evaluate(() => chrome.storage.local.get(['s3_samples', 's3_sampling']));
 console.log('\nS3 samples:', JSON.stringify(s3.s3_samples.map(x => ({ file: x.file, bytes: x.bytes, faststart: x.faststart, hasMp4a: x.hasMp4a, hasDesc: x.desc !== undefined }))), 'downloads:', downloads, 'sampling:', JSON.stringify(s3.s3_sampling));
-checks['S3: 2 samples saved and downloaded'] = s3.s3_samples.length === 2 && downloads.filter(f => f.startsWith('tod_s3_')).length === 2;
+checks['S3: 2 samples saved and downloaded'] = s3.s3_samples.length === 2 && downloads.filter(f => /^tod_s3_[0-9a-f]{8}\.mp4$/.test(f)).length === 2;
+checks['S3: manifest saved automatically'] = downloads.includes('tod_s3_manifest.json');
 checks['S3: sampling stops at target'] = s3.s3_sampling.on === false;
 checks['S3: page still on douyin (no navigation)'] = new URL(page.url()).hostname === 'www.douyin.com';
 

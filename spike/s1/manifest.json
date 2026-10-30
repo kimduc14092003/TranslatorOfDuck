@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TranslatorOfDuck S1 spike (đo đạc)",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Chỉ đo: có đọc được JSON feed Douyin và tải thử được đầu file âm thanh/video không. Không gửi dữ liệu đi đâu.",
   "minimum_chrome_version": "111",
   "permissions": ["storage"],

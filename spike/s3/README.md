@@ -1,5 +1,17 @@
 # S3/S4: thử nhận dạng giọng nói và dịch trên mẫu Douyin
 
+## Cách nhanh (3 bước)
+
+1. **Thu mẫu:** trong popup extension (v0.3.1), bấm **Bắt đầu thu mẫu** rồi lướt tab 推荐 tới khi đủ 60 mẫu. Extension tự dừng và tự lưu `tod_s3_manifest.json`.
+2. **Điền key một lần:** chép `.env.example` thành `.env`, điền `GEMINI_API_KEY` và `DASHSCOPE_API_KEY`, rồi chạy `npm install`.
+3. **Chạy một lệnh:** `node bench.mjs all --samples "D:\Download"`. Lệnh này làm hết các bước (tách âm thanh, gọi các dịch vụ, dịch thử, báo cáo). Xong thì gửi mình `work\report.md`.
+
+Chưa có đáp án sửa tay thì báo cáo so các dịch vụ với Fun-ASR (cột "Lệch so với"). Muốn có CER thật, làm thêm phần "đáp án" bên dưới rồi chạy `node bench.mjs report`.
+
+Nếu bạn có Claude Code trên máy, mở thư mục repo và bảo nó "chạy spike/s3 theo README" là nó tự làm bước 2–3, chỉ cần bạn tự điền key vào `.env`.
+
+---
+
 Mục tiêu (xem `docs/PLAN.md` mục 6.7 và 14): so sánh các dịch vụ nhận dạng giọng nói (ASR) trên chính video Douyin. So về độ chính xác (CER), độ trễ, có mốc thời gian theo từng từ không, và có bịa chữ khi gặp nhạc nền không. Sau đó dịch thử sang tiếng Việt.
 
 Mọi thứ chạy **trên máy bạn**. API key nằm trong file `.env` ở máy bạn, không gửi cho ai và **không dán vào chat**.

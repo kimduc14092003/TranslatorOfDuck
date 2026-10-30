@@ -357,7 +357,9 @@ function report() {
   const samples = readJson(path.join(WORK, 'samples.json'), []);
   const refDir = path.join(WORK, 'refs');
   const lines = ['# Báo cáo S3/S4: nhận dạng giọng nói', '', `Mẫu: ${samples.length}, mỗi mẫu tối đa ${SECONDS} s. Đáp án có ở ${fs.existsSync(refDir) ? fs.readdirSync(refDir).filter(f => f.endsWith('.txt')).length : 0} mẫu.`, ''];
-  lines.push('| Provider | Model | OK / lỗi | Độ trễ p50 / p95 (ms) | Nhanh hơn thời gian thực | Có mốc theo từ | Nghi bịa chữ | CER trung bình / trung vị |', '|---|---|---|---|---|---|---|---|');
+  // Chưa có đáp án thì so mỗi dịch vụ với dịch vụ đứng đầu danh sách ưu tiên (chỉ để tham khảo).
+  const anchor = PRIORITY.find(n => samples.some(s => { const r = readJson(path.join(WORK, 'asr', n, s.h + '.json')); return r && !r.error; }));
+  lines.push(`| Provider | Model | OK / lỗi | Độ trễ p50 / p95 (ms) | Nhanh hơn thời gian thực | Có mốc theo từ | Nghi bịa chữ | CER trung bình / trung vị | Lệch so với ${anchor || '–'} |`, '|---|---|---|---|---|---|---|---|---|');
   const summary = {};
   for (const n of PRIORITY) {
     const recs = samples.map(s => ({ s, r: readJson(path.join(WORK, 'asr', n, s.h + '.json')) })).filter(x => x.r);
@@ -374,12 +376,20 @@ function report() {
       cers.push(editDistance(ref, normalize(r.text)) / ref.length);
     }
     const mean = cers.length ? cers.reduce((a, b) => a + b, 0) / cers.length : null;
+    const diffs = [];
+    if (anchor && anchor !== n) {
+      for (const { s, r } of ok) {
+        const a = readJson(path.join(WORK, 'asr', anchor, s.h + '.json'));
+        const ref = a && !a.error ? normalize(a.text) : [];
+        if (ref.length) diffs.push(editDistance(ref, normalize(r.text)) / ref.length);
+      }
+    }
     summary[n] = { model: ok[0] && ok[0].r.model, ok: ok.length, errors: recs.length - ok.length, p50: round(pct(lat, 0.5), 0), p95: round(pct(lat, 0.95), 0),
       rtfMedian: round(pct(rtf, 0.5), 0), wordTimes: ok.filter(x => x.r.words && x.r.words.length).length,
-      suspicious: ok.filter(x => suspicious(x.r)).length, cerMean: round(mean, 3), cerMedian: round(pct(cers, 0.5), 3), cerN: cers.length,
+      suspicious: ok.filter(x => suspicious(x.r)).length, cerMean: round(mean, 3), cerMedian: round(pct(cers, 0.5), 3), cerN: cers.length, diffVsAnchor: round(pct(diffs, 0.5), 3),
       firstError: (recs.find(x => x.r.error) || { r: {} }).r.error || null };
     const v = summary[n];
-    lines.push(`| ${n} | ${v.model || '–'} | ${v.ok} / ${v.errors} | ${v.p50 ?? '–'} / ${v.p95 ?? '–'} | ${v.rtfMedian ?? '–'}× | ${v.wordTimes}/${v.ok} | ${v.suspicious} | ${v.cerMean ?? '–'} / ${v.cerMedian ?? '–'} (n=${v.cerN}) |`);
+    lines.push(`| ${n} | ${v.model || '–'} | ${v.ok} / ${v.errors} | ${v.p50 ?? '–'} / ${v.p95 ?? '–'} | ${v.rtfMedian ?? '–'}× | ${v.wordTimes}/${v.ok} | ${v.suspicious} | ${v.cerMean ?? '–'} / ${v.cerMedian ?? '–'} (n=${v.cerN}) | ${n === anchor ? 'mốc' : (v.diffVsAnchor ?? '–')} |`);
   }
   const errs = Object.entries(summary).filter(([, v]) => v.firstError);
   if (errs.length) { lines.push('', '## Lỗi đầu tiên của từng provider', ''); for (const [n, v] of errs) lines.push(`- **${n}**: ${v.firstError.replace(/\n/g, ' ').slice(0, 300)}`); }
@@ -394,6 +404,7 @@ function report() {
       lines.push('');
     }
   }
+  lines.push('', `"Lệch so với ${anchor}" = trung vị tỉ lệ ký tự khác nhau so với dịch vụ mốc; chỉ để tham khảo khi chưa có đáp án, không phải độ chính xác.`);
   lines.push('', 'CER = tỉ lệ lỗi ký tự so với đáp án (bỏ dấu câu, khoảng trắng). "Nghi bịa chữ" = quá 12 chữ/giây hoặc lặp một cụm ≥ 4 lần.');
   fs.writeFileSync(path.join(WORK, 'report.md'), lines.join('\n') + '\n');
   writeJson(path.join(WORK, 'report.json'), summary);
@@ -402,9 +413,16 @@ function report() {
 }
 
 // ---------------------------------------------------------------- main
-const COMMANDS = { prepare, asr, refs, translate, report };
+async function all() {
+  prepare();
+  await asr();
+  refs();
+  if (ENV.GEMINI_API_KEY) await translate();
+  report();
+}
+const COMMANDS = { all, prepare, asr, refs, translate, report };
 if (!COMMANDS[CMD]) {
-  console.log('Dùng: node bench.mjs <prepare|asr|refs|translate|report> [--samples DIR] [--work DIR] [--providers funasr,qwen3,gemini,groq-v3,groq-turbo] [--limit N] [--force]');
+  console.log('Dùng: node bench.mjs <all|prepare|asr|refs|translate|report> [--samples DIR] [--work DIR] [--providers funasr,qwen3,gemini,groq-v3,groq-turbo] [--limit N] [--force]');
   process.exit(CMD ? 1 : 0);
 }
 try { await COMMANDS[CMD](); } catch (e) { console.error('Lỗi: ' + e.message); process.exit(1); }
