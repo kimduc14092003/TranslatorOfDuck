@@ -2,7 +2,11 @@
 
 Bản thử chạy trên máy bạn. Khi lướt Douyin, sub tiếng Việt hiện đè lên video, đúng lúc người nói.
 
-- Extension tải trước đoạn đầu (60 giây) của video đang xem và 2 video kế tiếp. Nó gửi đoạn đó tới **server chạy trên chính máy bạn**.
+- Video được chia thành từng đoạn 30 giây (video ngắn hơn 75 giây thì dịch một lần).
+  - Extension luôn dịch trước 30 giây so với chỗ bạn đang xem. Tua tới đâu dịch tới đó.
+  - Phần bạn không xem thì không dịch, nên không tốn tiền API.
+  - 2 video kế tiếp trong feed được dịch sẵn đoạn đầu.
+- Extension chỉ tải đúng phần cần của video, tự tách riêng âm thanh rồi gửi tới **server chạy trên chính máy bạn**.
 - Server tách âm thanh, nhận dạng giọng nói (Fun-ASR, hoặc Gemini nếu không có key Alibaba), chia câu, dịch bằng Gemini rồi trả sub về.
 - Video bài hát hoặc chỉ có nhạc sẽ bỏ qua. Video nói chuyện có xen đoạn hát thì chỉ bỏ những câu hát.
 - Key nằm trong file `.env` trên máy bạn, không gửi đi đâu ngoài nhà cung cấp AI.
@@ -58,11 +62,11 @@ Thấy dòng `TranslatorOfDuck Alpha server: http://127.0.0.1:8787` là được
 
 ## Giới hạn của bản Alpha
 
-- Chỉ dịch **60 giây đầu** mỗi video (đổi được bằng `MAX_SECONDS=` trong `.env`).
 - Chỉ hỗ trợ www.douyin.com: lướt feed, `?modal_id=` và trang `/video/...`.
 - Bộ lọc nói/hát còn đơn giản: thỉnh thoảng bỏ nhầm video có lời, hoặc dịch nhầm một bài hát. Gặp trường hợp sai, gửi dòng log của video đó trong cửa sổ `npm start`.
-- Video có mục lục nằm ở cuối file (hiếm) chưa hỗ trợ; nhãn đỏ sẽ ghi rõ.
-- Sub đã dịch được lưu ở `alpha\server\work\cache`. Xem lại video cũ sẽ không tốn thêm tiền API. Xóa thư mục này nếu muốn dịch lại.
+- Chưa hỗ trợ (nhãn đỏ sẽ ghi rõ): video có mục lục nằm ở cuối file, và âm thanh không phải AAC. Cả hai đều hiếm trên Douyin.
+- Sub đã dịch được lưu theo từng đoạn ở `alpha\server\work\cache`. Xem lại hay tua lại không tốn thêm tiền API. Xóa thư mục này nếu muốn dịch lại.
+- Tua tới chỗ chưa dịch thì mất vài giây mới có sub (nhãn vàng "đang dịch…").
 
 ## Gặp lỗi
 
@@ -79,4 +83,5 @@ Thấy dòng `TranslatorOfDuck Alpha server: http://127.0.0.1:8787` là được
 ## Cho người phát triển
 
 - `npm test` trong `alpha/server`: kiểm tra chia câu, mốc thời gian, lọc nói/hát (không cần key).
-- `node alpha/dev/e2e.mjs`: kiểm thử toàn trình. Chạy Chromium thật có extension, một Douyin giả, các dịch vụ AI giả và server thật. Cần playwright, ffmpeg và openssl.
+- `node alpha/dev/mp4audio-test.mjs`: kiểm tra phần đọc mp4 và cắt âm thanh của extension trên file thật do ffmpeg tạo (cần ffmpeg).
+- `node alpha/dev/e2e.mjs`: kiểm thử toàn trình, có cả video dài chia đoạn. Chạy Chromium thật có extension, một Douyin giả, các dịch vụ AI giả và server thật. Cần playwright, ffmpeg và openssl.

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "TranslatorOfDuck Alpha",
-  "version": "0.1.0",
-  "description": "Bản thử: sub tiếng Việt cho video Douyin, hiện đúng lúc người nói. Cần server chạy trên máy (alpha/server).",
+  "version": "0.2.0",
+  "description": "Bản thử: sub tiếng Việt cho video Douyin, hiện đúng lúc người nói, cả video dài. Cần server chạy trên máy (alpha/server).",
   "minimum_chrome_version": "116",
   "permissions": ["storage"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
@@ -10,6 +10,6 @@
   "action": { "default_title": "TranslatorOfDuck Alpha", "default_popup": "popup.html" },
   "content_scripts": [
     { "matches": ["https://www.douyin.com/*"], "js": ["tap.main.js"], "world": "MAIN", "run_at": "document_start" },
-    { "matches": ["https://www.douyin.com/*"], "js": ["content.js"], "run_at": "document_start" }
+    { "matches": ["https://www.douyin.com/*"], "js": ["mp4audio.js", "content.js"], "run_at": "document_start" }
   ]
 }

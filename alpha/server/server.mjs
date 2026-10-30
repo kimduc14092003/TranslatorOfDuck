@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Server Alpha chạy trên máy bạn: extension gửi đoạn đầu video Douyin, server trả sub tiếng Việt.
+// Server Alpha chạy trên máy bạn: extension gửi âm thanh từng đoạn video Douyin, server trả sub tiếng Việt.
 // Key nằm trong alpha/server/.env, không bao giờ vào extension.
 //   node server.mjs        (mặc định http://127.0.0.1:8787)
 import fs from 'node:fs';
@@ -16,7 +16,7 @@ const MAX_BODY = 40 * 1024 * 1024;
 const MAX_PARALLEL = 2;
 fs.mkdirSync(CACHE, { recursive: true });
 
-// Tối đa MAX_PARALLEL video xử lý cùng lúc; cùng một video thì dùng chung một lần xử lý.
+// Tối đa MAX_PARALLEL đoạn xử lý cùng lúc; cùng một đoạn thì dùng chung một lần xử lý.
 let running = 0;
 const waiting = [];
 const inflight = new Map();
@@ -44,27 +44,42 @@ async function handleSubtitles(req, res) {
   let meta;
   try { meta = JSON.parse((await readBody(req)).toString('utf8')); } catch (e) { return send(res, 400, { error: 'bad_body: ' + e.message }); }
   const id = String(meta.id || '');
-  if (!/^\d{6,25}$/.test(id) || typeof meta.b64 !== 'string') return send(res, 400, { error: 'need id (digits) and b64' });
-  const key = `${id}.vi.${PIPELINE_VERSION}`;
-  const file = path.join(CACHE, key + '.json');
+  const num = (x) => typeof x === 'number' && isFinite(x) && x >= 0;
+  const chunked = typeof meta.aac === 'string';
+  if (!/^\d{6,25}$/.test(id) || !(chunked || typeof meta.b64 === 'string')) return send(res, 400, { error: 'need id (digits) and aac or b64' });
+  if (chunked && !(num(meta.from) && num(meta.to) && meta.to > meta.from && num(meta.audioStart))) return send(res, 400, { error: 'need from < to and audioStart' });
+  const span = (a, b) => `${a}-${b}`;
+  const cacheFile = (sp) => path.join(CACHE, `${id}.${sp ? sp + '.' : ''}vi.${PIPELINE_VERSION}.json`);
+  const file = cacheFile(chunked ? span(meta.from, meta.to) : '');
+  const key = file;
   if (fs.existsSync(file)) { const { debug: _d, ...c } = JSON.parse(fs.readFileSync(file, 'utf8')); return send(res, 200, { ...c, cached: true }); }
   if (!inflight.has(key)) {
-    inflight.set(key, withSlot(() => makeSubtitles({ desc: meta.desc, hashtags: meta.hashtags }, Buffer.from(meta.b64, 'base64')))
-      .then((r) => { const out = { id, ...r }; if (r.status !== 'error') fs.writeFileSync(file, JSON.stringify(out)); return out; })
+    let opts = {};
+    if (chunked) {
+      // Ngữ cảnh: 3 dòng cuối của đoạn trước, nếu đoạn đó đã dịch xong.
+      let context = [];
+      const prev = Array.isArray(meta.prev) && meta.prev.length === 2 && meta.prev.every(num) ? cacheFile(span(meta.prev[0], meta.prev[1])) : null;
+      if (prev && fs.existsSync(prev)) { try { context = (JSON.parse(fs.readFileSync(prev, 'utf8')).cues || []).slice(-3).map(c => ({ zh: c.zh, vi: c.vi })); } catch (_) { /* bỏ qua */ } }
+      opts = { kind: 'aac', offset: meta.audioStart, from: meta.from, to: meta.to, context };
+    }
+    inflight.set(key, withSlot(() => makeSubtitles({ desc: meta.desc, hashtags: meta.hashtags }, Buffer.from(chunked ? meta.aac : meta.b64, 'base64'), opts))
+      .then((r) => { const out = { id, ...(chunked ? { from: meta.from, to: meta.to } : {}), ...r }; if (r.status !== 'error') fs.writeFileSync(file, JSON.stringify(out)); return out; })
       .finally(() => inflight.delete(key)));
   }
   try {
     const out = await inflight.get(key);
     const t = out.timings || {};
     const why = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch không ra dòng nào' };
-    console.log(`${new Date().toLocaleTimeString()} ${id} ${out.status}${out.label && out.status !== 'ok' ? ' (' + (why[out.label] || out.label) + ')' : ''}` +
+    const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
+    const where = chunked ? ` [${mmss(meta.from)}–${mmss(meta.to)}]` : '';
+    console.log(`${new Date().toLocaleTimeString()} ${id}${where} ${out.status}${out.label && out.status !== 'ok' ? ' (' + (why[out.label] || out.label) + ')' : ''}` +
       `${out.cues ? ' ' + out.cues.length + ' dòng' : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu, ${out.sung ?? 0} câu hát bị bỏ` +
       ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${t.asrMs ?? '-'} ms, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : ''}` +
       (out.heard ? `\n    nghe được: ${out.heard}` : ''));
     const { debug: _d, ...reply } = out;
     send(res, 200, reply);
   } catch (e) {
-    console.log(`${new Date().toLocaleTimeString()} ${id} LỖI ${e.message}`);
+    console.log(`${new Date().toLocaleTimeString()} ${id}${chunked ? ` [${meta.from}–${meta.to} s]` : ''} LỖI ${e.message}`);
     send(res, 502, { id, status: 'error', error: String(e.message).slice(0, 300) });
   }
 }
@@ -77,6 +92,6 @@ const server = http.createServer(async (req, res) => {
 });
 server.listen(PORT, HOST, () => {
   const c = config();
-  console.log(`TranslatorOfDuck Alpha server: http://${HOST}:${PORT}  (ASR: ${c.asr || 'CHƯA CÓ KEY'}, dịch: ${c.mt || 'CHƯA CÓ KEY'}, tối đa ${c.maxSeconds} s/video)`);
+  console.log(`TranslatorOfDuck Alpha server: http://${HOST}:${PORT}  (ASR: ${c.asr || 'CHƯA CÓ KEY'}, dịch: ${c.mt || 'CHƯA CÓ KEY'}, dịch theo từng đoạn 30 s)`);
   if (!c.mt) console.log('  → Điền GEMINI_API_KEY (và DASHSCOPE_API_KEY nếu có) vào alpha/server/.env rồi chạy lại.');
 });

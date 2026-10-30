@@ -21,7 +21,7 @@ async function checkServer() {
     const ok = h.ok && h.mt;
     $('health').className = ok ? 'ok' : 'bad';
     $('health').textContent = ok
-      ? `Server chạy. Nhận dạng: ${h.asr === 'funasr' ? 'Fun-ASR' : 'Gemini'}, dịch: Gemini, tối đa ${h.maxSeconds} s/video.`
+      ? `Server chạy. Nhận dạng: ${h.asr === 'funasr' ? 'Fun-ASR' : 'Gemini'}, dịch: Gemini.`
       : 'Server chạy nhưng thiếu GEMINI_API_KEY trong alpha/server/.env.';
   } catch (_) {
     $('health').className = 'bad';
@@ -33,7 +33,7 @@ async function showStats() {
   try {
     const st = await chrome.tabs.sendMessage(tab.id, { type: 'status' });
     const c = st.counts || {};
-    $('stats').textContent = `Trang này: thấy ${st.seen} video; đã dịch ${c.ok || 0}, không có lời ${c.skipped || 0}, đang xử lý ${c.pending || 0}, lỗi ${c.error || 0}.`;
+    $('stats').textContent = `Trang này: thấy ${st.seen} video; đã dịch ${c.ok || 0}, không có lời ${c.skipped || 0}, đang xử lý ${c.pending || 0}, lỗi ${c.error || 0} (${st.chunks || 0} đoạn).`;
   } catch (_) {
     $('stats').textContent = 'Mở một tab www.douyin.com để xem thống kê.';
   }

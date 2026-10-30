@@ -20,11 +20,18 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'tod-alpha-'));
 
 const ff = (args, out) => { execFileSync('ffmpeg', ['-loglevel', 'error', '-y', ...args, path.join(TMP, out)]); return fs.readFileSync(path.join(TMP, out)); };
 const video = (sec, freq) => ff(['-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=30', '-f', 'lavfi', '-i', `sine=frequency=${freq}`, '-t', String(sec),
-  '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-movflags', '+faststart'], `v${sec}.mp4`);
-const MEDIA = { speech12: video(12, 440), song6: video(6, 300) };
+  '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-movflags', '+faststart'], `v${sec}.mp4`);
+const MEDIA = { speech12: video(12, 440), song6: video(6, 300), long100: video(100, 500) };
 
-// ---- dịch vụ AI giả: Fun-ASR trả lời nói cho video 12 s, lời hát (kéo dài chữ) cho video 6 s
-const providerHits = { funasr: 0, gemini: 0 };
+// ---- dịch vụ AI giả. Fun-ASR trả lời theo độ dài âm thanh nhận được:
+//   < 8 s: lời hát (chữ kéo dài) · 8–20 s: 2 câu ở 1,0 s và 5,0 s · ≥ 20 s (một đoạn của video dài): 2 câu ở 2,0 s và 6,0 s
+const providerHits = { funasr: 0, gemini: 0, withContext: 0, longChunks: [] };
+const sentence = (text, b, e) => {
+  const chars = Array.from(text.replace(/[，。！]/g, ''));
+  const step = (e - b) / chars.length;
+  return { begin_time: b, end_time: e, text, words: chars.map((ch, i) => ({ text: ch, begin_time: Math.round(b + i * step), end_time: Math.round(b + (i + 1) * step),
+    punctuation: i === chars.length - 1 ? text.slice(-1) : (text.includes('，') && ch === '好' ? '，' : '') })) };
+};
 const providers = http.createServer((req, res) => {
   let body = '';
   req.on('data', c => { body += c; });
@@ -34,6 +41,10 @@ const providers = http.createServer((req, res) => {
       providerHits.funasr++;
       const b64 = JSON.parse(body).input.messages[0].content[0].input_audio.data;
       const seconds = (Buffer.from(b64.split(',')[1], 'base64').length * 8) / 48000;
+      if (seconds >= 20) {
+        providerHits.longChunks.push(Math.round(seconds));
+        return json({ output: { sentences: [sentence('大家好，今天我们去吃火锅。', 2000, 4100), sentence('走吧！', 6000, 6600)] } });
+      }
       if (seconds < 8) {
         return json({ output: { sentence: { begin_time: 500, end_time: 5500, text: '自由是逃离这全世界', words:
           Array.from('自由是逃离这全世界').map((ch, i) => ({ begin_time: 500 + i * 600, end_time: 1050 + i * 600, text: ch, punctuation: '' })) }, text: '自由是逃离这全世界' } });
@@ -45,6 +56,7 @@ const providers = http.createServer((req, res) => {
     if (req.url.includes(':generateContent')) {
       providerHits.gemini++;
       const text = JSON.parse(body).contents[0].parts[0].text;
+      if (text.includes('Các dòng ngay trước')) providerHits.withContext++;
       const lines = JSON.parse(text.match(/Các dòng: (.*)$/m)[1]);
       const vi = { '大家好，今天我们去吃火锅。': 'Chào cả nhà, hôm nay đi ăn lẩu.', '走吧！': 'Đi thôi!' };
       return json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ cues: lines.map(l => ({ id: l.id, vi: vi[l.zh] || 'Dòng ' + l.id })) }) }] } }] });
@@ -70,11 +82,12 @@ for (let i = 0; i < 50 && !alphaLog.includes('Alpha server'); i++) await new Pro
 // ---- Douyin giả
 execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=www.douyin.com',
   '-addext', 'subjectAltName=DNS:www.douyin.com,DNS:v3-web.douyinvod.com', '-keyout', path.join(TMP, 'k.pem'), '-out', path.join(TMP, 'c.pem')], { stdio: 'ignore' });
-const ids = ['7500000000000000001', '7500000000000000002', '7500000000000000003'];
-const fileFor = { [ids[0]]: 'speech12', [ids[1]]: 'speech12', [ids[2]]: 'song6' };
-const aweme = (id, desc) => ({ aweme_id: id, desc, duration: fileFor[id] === 'song6' ? 6000 : 12000, text_extra: [],
+const ids = ['7500000000000000001', '7500000000000000002', '7500000000000000003', '7500000000000000004'];
+const fileFor = { [ids[0]]: 'speech12', [ids[1]]: 'speech12', [ids[2]]: 'song6', [ids[3]]: 'long100' };
+const DUR = { speech12: 12000, song6: 6000, long100: 100000 };
+const aweme = (id, desc) => ({ aweme_id: id, desc, duration: DUR[fileFor[id]], text_extra: [],
   video: { play_addr: { uri: 'v0d00f' + id, url_list: [`https://v3-web.douyinvod.com/x/${fileFor[id]}.mp4`] }, bit_rate: [] } });
-const feed = { status_code: 0, aweme_list: [aweme(ids[0], '今天吃火锅'), aweme(ids[1], '日常vlog'), aweme(ids[2], '#翻唱 自由的你')] };
+const feed = { status_code: 0, aweme_list: [aweme(ids[0], '今天吃火锅'), aweme(ids[1], '日常vlog'), aweme(ids[2], '#翻唱 自由的你'), aweme(ids[3], '旅游vlog')] };
 const PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">
 <div id="feed">${ids.map((id, i) => `<div class="slide" ${i === 0 ? 'data-e2e="feed-active-video"' : ''} data-e2e-vid="${id}"><video muted playsinline style="width:640px;height:480px;display:block"></video></div>`).join('')}</div>
 <script>
@@ -101,7 +114,7 @@ const douyin = https.createServer({ key: fs.readFileSync(path.join(TMP, 'k.pem')
     if (!u.pathname.startsWith('/media/')) return send(404, {}, '');
   }
   // CDN giả, có hỗ trợ Range (video trên trang cũng cần Range để tua được).
-  const body = u.pathname.startsWith('/media/') ? MEDIA.speech12 : MEDIA[u.pathname.split('/').pop().replace('.mp4', '')];
+  const body = u.pathname.startsWith('/media/') ? MEDIA[fileFor[ids[Number(u.pathname.slice(7, -4))]]] : MEDIA[u.pathname.split('/').pop().replace('.mp4', '')];
   const h = { 'access-control-allow-origin': 'https://www.douyin.com', 'access-control-expose-headers': 'content-range', 'content-type': 'video/mp4', 'accept-ranges': 'bytes' };
   if (!body) return send(404, h, '');
   const m = /bytes=(\d+)-(\d*)/.exec(req.headers.range || '');
@@ -163,7 +176,19 @@ await page.evaluate(() => window.activate(2));
 await page.waitForTimeout(800);
 const song = await subAt(2.0);
 
-console.log({ health, first, atGap, atSecond, delayed, savedDelay, status, song, providerHits });
+// Video dài 100 s: chia đoạn [0,20) [20,50) [50,80) [80,101); dịch trước 30 s so với chỗ đang xem.
+await page.evaluate(() => window.activate(3));
+const waitSub = async (t, want) => { let r; for (let i = 0; i < 60; i++) { r = await subAt(t); if (r.sub === want) break; await page.waitForTimeout(250); } return r; };
+const long = {};
+long.at2 = await waitSub(2.2, 'Chào cả nhà, hôm nay đi ăn lẩu.');      // đoạn 1: câu ở 2,0 s
+long.at21 = await waitSub(21.0, 'Chào cả nhà, hôm nay đi ăn lẩu.');    // đoạn 2: âm thanh từ 18,5 s → câu ở 20,5 s
+await page.waitForTimeout(1000);
+long.chunksBeforeSeek = providerHits.longChunks.length;               // đoạn 1, 2, 3 (21 + 30 = 51 chạm đoạn 3), chưa đến đoạn 4
+long.at85 = await waitSub(85.0, 'Đi thôi!');                          // tua tới 85 s: đoạn 4, âm thanh từ 78,5 s → "走吧" ở 84,5 s
+long.at83 = await subAt(83.5);                                        // giữa 2 câu (câu 1 hết lúc 83,1 s): trống
+long.chunks = [...providerHits.longChunks];
+
+console.log({ health, first, atGap, atSecond, delayed, savedDelay, status, song, long, providerHits });
 console.log('server log:\n' + alphaLog.trim());
 const checks = {
   'popup sees the server': /Server chạy/.test(health),
@@ -174,7 +199,13 @@ const checks = {
     && delayed.at135.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.' && savedDelay === 0.3,
   'next videos prefetched (3 processed)': (status.counts.ok || 0) + (status.counts.skipped || 0) >= 3,
   'song video skipped, no subtitle': song.sub === null && /bài hát/.test(song.badge || ''),
-  'ASR called once per video (dedupe)': providerHits.funasr === 3,
+  'ASR called once per video (dedupe)': providerHits.funasr - providerHits.longChunks.length === 3,
+  'long video: chunk 1 line at 2.2 s': long.at2.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
+  'long video: chunk 2 line lands at 20.5 s (video time)': long.at21.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
+  'long video: only chunks within 30 s of playhead processed': long.chunksBeforeSeek === 3,
+  'long video: seek to 85 s translates that chunk': long.at85.sub === 'Đi thôi!' && long.at83.sub === null && long.chunks.length === 4,
+  'later chunks translated with previous lines as context': providerHits.withContext >= 2,
+  'audio-only upload: chunk audio ≈ 26/38/38/22 s': JSON.stringify([...long.chunks].sort((a, b) => a - b)) === '[22,26,38,38]',
   'no page errors': errors.length === 0,
 };
 console.log('\nCHECKS');
