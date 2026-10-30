@@ -88,7 +88,7 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 | `cd alpha/server && npm test` | Chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới (14 kiểm tra); hàng đợi khi tua liên tiếp: ưu tiên, huỷ, đẩy lên khi lướt tới, Gemini hết lượt trong ngày (7 kiểm tra); dịch bằng OpenAI giả (5 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms (4 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
-| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên (17 kiểm tra) |
+| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua (18 kiểm tra) |
 
 Cần cho các test: Node 18+, `playwright`, `ffmpeg`, `openssl`.
 
@@ -227,6 +227,18 @@ Lỗi nằm ở nội dung dịch:
 - **Câu ở ngay chỗ tua tới không bao giờ hiện.** Câu bắt đầu trước ranh giới thuộc đoạn trước, mà đoạn trước không còn cần nên không được dịch. Sửa: khi gửi dư 8 s, `windowAsr(..., keepCrossing)` giữ cả câu vắt qua đầu đoạn; `cues.js` bỏ bản trùng nếu sau này đoạn trước cũng dịch.
 - **Tua tới gần cuối một đoạn thì chờ 10–12 s:** đoạn đó dịch xong đã bị phát qua, rồi đoạn kế mới bắt đầu dịch. Sửa: đoạn bắt đầu trong 10 s tới cũng là "gấp" (`URGENT_AHEAD`), dịch song song. Sau sửa: 6,6–10,8 s, phần lớn là thời gian dịch của model đang dùng (3,5–7 s mỗi đoạn qua dịch vụ cùng kiểu API OpenAI chạy trên máy).
 - Log ghi `(ngữ cảnh 3 dòng ở đoạn xa, lời ngay trước N câu)`.
+
+**Mẩu nhanh khi tua (extension 0.2.10):**
+- Chỗ đang xem chưa có sub thì extension gửi ngay một mẩu ~10 s từ chỗ đó, kèm 4,5 s dư phía trước, song song với đoạn 30 s.
+- Server cache mẩu này riêng (`id.qFROM-TO…`), dùng ngữ cảnh của đoạn đã dịch gần nhất phía trước, và bỏ lượt rút gọn. Log ghi `[nhanh m:ss–m:ss]`.
+- Khi mọi đoạn 30 s phủ lên mẩu nhanh đã xong, sub chuyển sang bản đoạn 30 s.
+- Đo trên vlog, key OpenAI gốc (`gpt-4.1-mini`): chờ sau khi tua **3,3–3,7 s**; trước khi có mẩu nhanh là 6,3–7,9 s. Mẩu nhanh mất ~1–2 s nhận dạng và ~1,1–2,2 s dịch.
+- Đánh đổi:
+  - Khoảng 3 s đầu là bản của mẩu nhanh; khi đoạn 30 s xong, chữ có thể đổi giữa chừng.
+  - Bản nhanh đôi khi kém hơn vì nhận dạng trên âm thanh ngắn (tên riêng sai).
+  - Mỗi lần tua tốn thêm ~16 s nhận dạng và một lần dịch.
+- Mẩu nhanh bị bỏ qua ("quá ít lời", cửa sổ ngắn) thì không đổi nhãn: vẫn "đang dịch" tới khi đoạn 30 s xong.
+- Đo được trình phát Douyin có lúc trả `currentTime = 0` (đang dừng) giữa lúc phát rồi quay lại. Extension từng tin số đó và huỷ nhầm đoạn đang dịch. Giờ extension bỏ qua lần đọc khi `readyState < 1`, và cú nhảy về 0 lúc đang dừng phải lặp lại sau 250 ms mới tin.
 
 ## 7. Việc tiếp theo trên Mac
 

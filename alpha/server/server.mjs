@@ -79,7 +79,9 @@ async function handleSubtitles(req, res) {
   if (chunked && !(num(meta.from) && num(meta.to) && meta.to > meta.from && num(meta.audioStart))) return send(res, 400, { error: 'need from < to and audioStart' });
   const span = (a, b) => `${a}-${b}`;
   const cacheFile = (sp) => path.join(CACHE, `${id}.${sp ? sp + '.' : ''}vi.${PIPELINE_VERSION}.json`);
-  const file = cacheFile(chunked ? span(meta.from, meta.to) : '');
+  // Mẩu nhanh (quick): ~10 s ngay tại chỗ vừa tua tới, gửi song song với đoạn 30 s để sub đầu ra sớm. Cache riêng (tiền tố q).
+  const quick = chunked && meta.quick === true;
+  const file = cacheFile(chunked ? (quick ? 'q' : '') + span(meta.from, meta.to) : '');
   const key = file;
   if (fs.existsSync(file)) { const { debug: _d, ...c } = JSON.parse(fs.readFileSync(file, 'utf8')); return send(res, 200, { ...c, cached: true }); }
   let job = inflight.get(key);
@@ -97,22 +99,24 @@ async function handleSubtitles(req, res) {
       // đang chạy thì chờ nó dịch xong (chỉ chờ ở bước dịch, nhận dạng giọng nói vẫn chạy song song). Đoạn trước
       // còn xếp hàng thì không chờ, để hai đoạn không giữ chỗ chờ nhau.
       const prev = Array.isArray(meta.prev) && meta.prev.length === 2 && meta.prev.every(num) ? cacheFile(span(meta.prev[0], meta.prev[1])) : null;
+      const lastLines = (f) => { try { return (JSON.parse(fs.readFileSync(f, 'utf8')).cues || []).slice(-3).map(c => ({ zh: c.zh, vi: c.vi })); } catch (_) { return []; } };
       const context = async (signal) => {
-        if (!prev) return [];
-        const pj = inflight.get(prev);
-        if (pj && pj.started) {
-          await Promise.race([pj.promise.catch(() => {}), new Promise(r => { setTimeout(r, CONTEXT_WAIT_MS); signal?.addEventListener('abort', r, { once: true }); })]);
-        }
-        const lastLines = (f) => { try { return (JSON.parse(fs.readFileSync(f, 'utf8')).cues || []).slice(-3).map(c => ({ zh: c.zh, vi: c.vi })); } catch (_) { return []; } };
-        if (fs.existsSync(prev)) return lastLines(prev);
-        // Đoạn liền trước chưa dịch (vừa tua tới): lấy đoạn đã dịch gần nhất phía trước để giữ xưng hô, tên riêng.
+        if (prev) {
+          const pj = inflight.get(prev);
+          if (pj && pj.started) {
+            await Promise.race([pj.promise.catch(() => {}), new Promise(r => { setTimeout(r, CONTEXT_WAIT_MS); signal?.addEventListener('abort', r, { once: true }); })]);
+          }
+          if (fs.existsSync(prev)) return lastLines(prev);
+        } else if (!quick) return [];   // đoạn đầu video
+        // Đoạn liền trước chưa dịch (vừa tua tới), hoặc mẩu nhanh (không chờ gì): lấy đoạn đã dịch gần nhất phía trước
+        // để giữ xưng hô, tên riêng.
         const re = new RegExp(`^${id}\\.(\\d+)-(\\d+)\\.vi\\.${PIPELINE_VERSION}\\.json$`);
-        const near = fs.readdirSync(CACHE).map(f => [f, re.exec(f)]).filter(([, m]) => m && Number(m[2]) < meta.from)
+        const near = fs.readdirSync(CACHE).map(f => [f, re.exec(f)]).filter(([, m]) => m && Number(m[2]) <= meta.from)
           .sort((a, b) => Number(b[1][2]) - Number(a[1][2]))[0];
         const lines = near ? lastLines(path.join(CACHE, near[0])) : [];
         return lines.length ? { lines, far: true } : [];
       };
-      opts = { kind: 'aac', offset: meta.audioStart, from: meta.from, to: meta.to, context };
+      opts = { kind: 'aac', offset: meta.audioStart, from: meta.from, to: meta.to, context, condense: !quick };
     }
     const buf = Buffer.from(chunked ? meta.aac : meta.b64, 'base64');
     job = submit(key, meta.urgent, async (signal) => {
@@ -125,7 +129,7 @@ async function handleSubtitles(req, res) {
   job.waiters++;
   res.on('close', () => { if (!res.writableEnded && --job.waiters <= 0) job.cancel(); });
   const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
-  const where = chunked ? ` [${mmss(meta.from)}–${mmss(meta.to)}]` : '';
+  const where = chunked ? ` [${quick ? 'nhanh ' : ''}${mmss(meta.from)}–${mmss(meta.to)}]` : '';
   try {
     const out = await job.promise;
     const t = out.timings || {};

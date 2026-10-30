@@ -396,7 +396,8 @@ const CUE_SCHEMA = { type: 'OBJECT', properties: { cues: { type: 'ARRAY', items:
 const budget = (c) => Math.floor(Math.min(84, 17 * (c.end - c.start)));
 // context: dòng đã dịch ngay trước (hoặc ở đoạn đã dịch gần nhất phía trước, far = true). before: lời nói ngay trước
 // đoạn (chữ Hán, chưa dịch) khi đoạn trước chưa dịch, ví dụ vừa tua tới.
-export async function translate(meta, cues, context = [], signal, { far = false, before = [] } = {}) {
+// condense = false: bỏ lượt rút gọn dòng quá dài (mẩu nhanh: sub ra sớm hơn một lần gọi model).
+export async function translate(meta, cues, context = [], signal, { far = false, before = [], condense = true } = {}) {
   if (!mtProvider()) throw new Error('Chưa có OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env');
   const first = await mtJson([
     'Dịch phụ đề video Douyin từ tiếng Trung sang tiếng Việt tự nhiên, như phụ đề chuyên nghiệp.',
@@ -421,7 +422,7 @@ export async function translate(meta, cues, context = [], signal, { far = false,
     return { ...c, vi: text, flags };
   });
   const long = out.filter(c => c.flags.includes('too_long'));
-  if (long.length) {
+  if (long.length && condense) {
     try {
       const r = await mtJson([
         'Rút gọn các dòng phụ đề tiếng Việt sau cho vừa max_chars (đếm cả dấu cách). Giữ ý chính, giữ xưng hô và tên riêng, bỏ từ đệm và chi tiết phụ. Không thêm ý mới.',
@@ -474,7 +475,7 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   const context = Array.isArray(ctxRaw) ? ctxRaw : (ctxRaw.lines || []);
   const far = !Array.isArray(ctxRaw) && !!ctxRaw.far;
   opts.signal?.throwIfAborted();
-  const vi = cues.length ? await translate(meta, cues, context, opts.signal, { far, before: context.length && !far ? [] : before }) : [];
+  const vi = cues.length ? await translate(meta, cues, context, opts.signal, { far, before: context.length && !far ? [] : before, condense: opts.condense !== false }) : [];
   opts.signal?.throwIfAborted();   // huỷ giữa lượt rút gọn (lượt đó tự bắt lỗi): không trả kết quả dở
   const tMt = Date.now();
   return { status: vi.length ? 'ok' : 'skipped', label: vi.length ? 'speech' : 'untranslated', ...base, context: context.length,

@@ -210,7 +210,10 @@ const checks = {
   'next videos prefetched (3 processed)': (status.counts.ok || 0) + (status.counts.skipped || 0) >= 3,
   'liked video in the sidebar is not prefetched': !playRequested.has(FAV) && playRequested.has(ids[1]),
   'song video skipped, no subtitle': song.sub === null && /bài hát/.test(song.badge || ''),
-  'ASR called once per video (dedupe)': providerHits.funasr - providerHits.longChunks.length === 3,
+  // Mỗi video/đoạn chỉ xử lý một lần (mẩu nhanh "[nhanh …]" là yêu cầu riêng, không tính).
+  'ASR called once per video (dedupe)': (() => { const done = alphaLog.split('\n').map(l => /^\S+ \S+ (\d+)( \[[^\]]+\])? (ok|skipped)/.exec(l)).filter(m => m && !/nhanh/.test(m[2] || '')).map(m => m[1] + (m[2] || ''));
+    return done.length >= 4 && new Set(done).size === done.length; })(),
+  'seek: quick 10 s piece sent at the seek point': /\[nhanh 1:25–1:3\d\]/.test(alphaLog),
   'long video: chunk 1 line at 2.2 s': long.at2.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
   'long video: chunk 2 line lands at 20.5 s (video time)': long.at21.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
   'long video: only chunks within 30 s of playhead processed': long.chunksBeforeSeek === 3,

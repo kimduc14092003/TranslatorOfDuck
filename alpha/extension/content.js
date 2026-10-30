@@ -18,6 +18,10 @@
   // Đoạn trước chưa dịch (vừa tua tới): gửi dư 8 s phía trước. Server lấy lời nói phần đó làm mạch câu cho bước dịch
   // và giữ câu vắt qua đầu đoạn (đo trên vlog thật: 30% đoạn sau tua dịch không có ngữ cảnh, sai xưng hô, mất nửa câu).
   const PRE_SEEK = 8;
+  // Mẩu nhanh: chỗ đang xem chưa có sub (vừa tua tới, video chưa dịch sẵn) thì gửi ngay ~10 s âm thanh từ chỗ đó, song
+  // song với đoạn 30 s. Mẩu ngắn tải, nhận dạng, dịch đều nhanh hơn (đo trên vlog: chờ đoạn 30 s mất 6–8 s). Gửi dư
+  // 4,5 s phía trước để server giữ câu đang nói dở và lấy lời ngay trước làm mạch câu.
+  const QUICK = 10, PRE_QUICK = 4.5;
 
   let settings = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0 };
   const items = new Map();       // id -> metadata
@@ -78,7 +82,7 @@
   }
 
   // ---------------------------------------------------------------- dịch trước
-  const vid = (id) => { let v = vids.get(id); if (!v) { v = { chunks: new Map(), cues: [] }; vids.set(id, v); } return v; };
+  const vid = (id) => { let v = vids.get(id); if (!v) { v = { chunks: new Map(), quick: new Map(), cues: [] }; vids.set(id, v); } return v; };
   const eligible = (d) => d && d.kind === 'video' && d.playUri && !/^https?:/.test(d.playUri);
   // Lưới đoạn cố định theo thời lượng (cùng video thì luôn cùng lưới, để cache dùng lại được).
   function planFor(id) {
@@ -110,6 +114,7 @@
     lanes.current.queue = todo.filter(([id]) => id === currentId);
     lanes.prefetch.queue = todo.filter(([id]) => id !== currentId);
     cancelUnwanted();
+    maybeQuick(plan);
     pump(lanes.current);
     pump(lanes.prefetch);
   }
@@ -129,6 +134,10 @@
       for (const [k, c] of v.chunks) {
         if (c.status !== 'pending' || wanted.has(id + ':' + k)) continue;
         if (c.sent) { c.sent = false; keys.push(id + ':' + k); } else if (c.ctl) c.ctl.abort();
+      }
+      for (const [qa, q] of v.quick) {
+        if (q.status !== 'pending' || quickWanted(id, q)) continue;
+        if (q.sent) { q.sent = false; keys.push(id + ':q' + qa); } else q.ctl.abort();
       }
     }
     if (keys.length && alive()) chrome.runtime.sendMessage({ type: 'cancel', keys }).catch(() => {});
@@ -187,9 +196,54 @@
     return btoa(s);
   }
   // Gộp sub các đoạn đã xong (cues.js xử lý câu vắt qua ranh giới hai đoạn).
+  // Mẩu nhanh chỉ dùng tới khi mọi đoạn 30 s phủ lên nó đã dịch xong.
   function mergeCues(v) {
     const done = [...v.chunks.keys()].sort((a, b) => a - b).map(k => v.chunks.get(k)).filter(c => c.status === 'ok');
-    v.cues = TodCues.merge(done);
+    const quick = [...v.quick.values()].filter(q => q.status === 'ok' && !superseded(v, q));
+    v.cues = TodCues.merge([...done, ...quick].sort((a, b) => a.from - b.from));
+  }
+  const superseded = (v, q) => !!v.plan && v.plan.every(([a, b], k) => b <= q.from || a >= q.to || (v.chunks.get(k) || {}).status === 'ok');
+  const quickWanted = (id, q) => id === currentId && playhead >= q.from - 1 && playhead < q.to && !superseded(vid(id), q);
+  function maybeQuick(plan) {
+    if (!plan || !eligible(items.get(currentId))) return;
+    const v = vid(currentId);
+    const k = chunkAt(plan, playhead);
+    const c = v.chunks.get(k);
+    if (k < 0 || (c && c.status !== 'pending')) return;           // đã có kết quả (hoặc lỗi: đoạn 30 s tự thử lại)
+    if (c && c.sent && Date.now() - c.sentAt > 2000) return;      // đoạn 30 s đã ở server một lúc (vd. dịch sẵn): sắp xong
+    for (const q of v.quick.values()) {                            // đã có mẩu nhanh phủ chỗ này (lỗi thì 20 s sau mới thử lại)
+      if (playhead >= q.from - 0.5 && playhead < q.to - 2 && (q.status !== 'error' || Date.now() - q.at < 20000)) return;
+    }
+    const from = Math.floor(playhead), to = Math.min(from + QUICK, plan[plan.length - 1][1]);
+    if (to - from >= 3) runQuick(currentId, from, to);
+  }
+  async function runQuick(id, from, to) {
+    const v = vid(id);
+    const d = items.get(id);
+    const q = { status: 'pending', from, to, ctl: new AbortController() };
+    v.quick.set(from, q);
+    const done = (r) => {
+      if (v.quick.get(from) !== q) return;
+      if (r.status === 'cancelled') { v.quick.delete(from); return; }
+      Object.assign(q, r, { from, to, at: Date.now() });
+      mergeCues(v);
+    };
+    try {
+      const media = await ensureMedia(id);
+      const w = TodMp4.window(media, Math.max(0, from - PRE_QUICK), to + 2);
+      if (!w) return done({ status: 'no_audio' });
+      const aac = w.build(await fetchBytes(v, w.start, w.end - 1, q.ctl.signal));
+      if (!quickWanted(id, q)) { if (v.quick.get(from) === q) v.quick.delete(from); return; }
+      q.sent = true;
+      chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':q' + from, payload: {
+        id, desc: d.desc, hashtags: d.hashtags, durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
+        quick: true, urgent: true, aac: toBase64(aac) } })
+        .then((r) => done(r && r.status ? r : { status: 'error', error: (r && r.error) || 'không có phản hồi' }))
+        .catch((e) => done({ status: 'error', error: e.message }));
+    } catch (e) {
+      if (q.ctl.signal.aborted) { if (v.quick.get(from) === q) v.quick.delete(from); return; }
+      done({ status: 'error', error: e.message });
+    }
   }
   async function runChunk(id, k) {
     const v = vid(id);
@@ -215,7 +269,7 @@
       // Trong lúc tải, người xem đã tua/lướt đi chỗ khác: khỏi gửi (quay lại tới đây thì làm lại).
       if (!wanted.has(id + ':' + k)) { if (v.chunks.get(k) === entry) v.chunks.delete(k); return; }
       // Không chờ server xong mới tải đoạn tiếp theo. urgent: đoạn chứa (hoặc sắp tới) chỗ đang xem, server làm trước.
-      Object.assign(entry, { sent: true, from, to, urgent: urgentChunk(id, k, plan) });
+      Object.assign(entry, { sent: true, sentAt: Date.now(), from, to, urgent: urgentChunk(id, k, plan) });
       chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':' + k, payload: {
         id, desc: d.desc, hashtags: d.hashtags, durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
         prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, aac: toBase64(aac) } })
@@ -285,6 +339,7 @@
   const SKIP_WHY = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch lỗi' };
   let act = null;
   let lastFind = 0;
+  let zeroSeen = false;
   let toastText = '';
   let toastUntil = 0;
   let delayWrite = null;
@@ -313,18 +368,32 @@
       act = findActive();
       if (act && act.id !== currentId) { currentId = act.id; watched.add(currentId); }
       const pv = settings.enabled && act ? videoFor(act) : null;
-      playhead = pv ? pv.currentTime : 0;
-      schedule();                              // theo chỗ đang xem: tua tới đâu dịch tới đó
+      // Đo trên Douyin thật: giữa lúc phát, trình phát có lúc trả currentTime = 0 (đang dừng) rồi quay lại chỗ cũ. Tin
+      // con số đó thì huỷ nhầm đoạn đang dịch rồi phải gửi lại. Bỏ qua lần đọc khi video chưa sẵn sàng, và cú nhảy về 0
+      // lúc đang dừng phải lặp lại ở lần đọc sau (250 ms) mới tin.
+      const t = pv ? pv.currentTime : 0;
+      const glitch = pv && (pv.readyState < 1 || (t === 0 && pv.paused && playhead > 2 && !zeroSeen));
+      zeroSeen = !!pv && t === 0 && pv.paused;
+      if (!glitch) {
+        playhead = t;
+        schedule();                            // theo chỗ đang xem: tua tới đâu dịch tới đó
+      }
     }
     const v = settings.enabled && act ? videoFor(act) : null;
     if (!v) { host.style.width = '0'; subEl.style.display = 'none'; badgeEl.style.display = 'none'; return; }
     attachHost();
     const r = v.getBoundingClientRect();
     host.style.left = r.left + 'px'; host.style.top = r.top + 'px'; host.style.width = r.width + 'px'; host.style.height = r.height + 'px';
+    if (v.readyState < 1 || (zeroSeen && v.currentTime === 0)) { subEl.style.display = 'none'; return; }
     playhead = v.currentTime;
     const cv = vids.get(currentId);
     const plan = cv && cv.plan;
-    const res = cv && (plan ? cv.chunks.get(chunkAt(plan, playhead)) : cv.chunks.get(0));
+    let res = cv && (plan ? cv.chunks.get(chunkAt(plan, playhead)) : cv.chunks.get(0));
+    // Đoạn 30 s chưa xong mà mẩu nhanh ở chỗ này đã có sub: nhãn "VI". Mẩu nhanh bị bỏ qua thì chưa tin (cửa sổ 10 s
+    // ngắn, dễ thành "quá ít lời"): vẫn "đang dịch" tới khi đoạn 30 s xong.
+    if (cv && (!res || res.status === 'pending')) {
+      for (const q of cv.quick.values()) if (playhead >= q.from && playhead < q.to && q.status === 'ok') res = q;
+    }
     const st = res ? res.status : (eligible(items.get(currentId)) ? 'pending' : null);
     if (now < toastUntil) {
       badgeDot.style.background = BADGE.ok[0];
