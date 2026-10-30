@@ -442,6 +442,32 @@ async function translate() {
     } catch (e) {
       rec = { asrProvider: b.provider, error: String(e.message).slice(0, 500), latencyMs: Date.now() - t0 };
     }
+    // Lượt rút gọn (§7.5): chỉ gửi lại các dòng vượt giới hạn ký tự, kèm bản gốc để giữ ý.
+    if (rec.cues && rec.cues.some(c => c.flags.includes('too_long'))) {
+      const long = rec.cues.filter(c => c.flags.includes('too_long'));
+      await sleep(gemini.gapMs);
+      try {
+        const r = await httpJson(`${GEMINI_BASE}/models/${GEMINI_MODEL}:generateContent`, {
+          method: 'POST',
+          headers: { 'x-goog-api-key': ENV.GEMINI_API_KEY, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: [
+            'Rút gọn các dòng phụ đề tiếng Việt sau cho vừa max_chars (đếm cả dấu cách). Giữ ý chính, giữ xưng hô và tên riêng, bỏ từ đệm và chi tiết phụ. Không thêm ý mới.',
+            'Các dòng: ' + JSON.stringify(long.map(c => ({ id: c.id, max_chars: c.maxChars, zh: c.zh, vi: c.vi }))),
+          ].join('\n') }] }], generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature: 0.2 } }),
+        });
+        const t = r.candidates[0].content.parts.map(p => p.text || '').join('');
+        const short = new Map((JSON.parse(t).cues || []).map(c => [c.id, fixViText(c.vi)]));
+        for (const c of long) {
+          const v = short.get(c.id);
+          if (v && v.length < c.vi.length && !(v.match(HAN) || []).length) {
+            c.viFull = c.vi; c.vi = v;
+            c.flags = c.flags.filter(f => f !== 'too_long').concat(['condensed'], v.length > 1.1 * c.maxChars ? ['too_long'] : []);
+          }
+        }
+      } catch (e) {
+        rec.condenseError = String(e.message).slice(0, 300);
+      }
+    }
     writeJson(out, rec);
     if (rec.cues) {
       const srt = rec.cues.map((c, i) => `${i + 1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${c.vi}\n`).join('\n');
@@ -545,8 +571,10 @@ function report() {
     const cuesAll = all.flatMap(m => m.cues);
     const flagCount = (f) => cuesAll.filter(c => (c.flags || []).includes(f)).length;
     const durs = cuesAll.map(c => c.end - c.start);
-    lines.push('', '## Bản dịch', '', `${all.length} video được dịch, ${cuesAll.length} dòng sub; thời lượng dòng trung vị ${round(pct(durs, 0.5), 1) ?? '–'} s, dài nhất ${round(Math.max(0, ...durs), 1)} s. Dòng thiếu bản dịch: ${flagCount('missing')}, còn chữ Hán: ${flagCount('han_left')}, vượt giới hạn ký tự: ${flagCount('too_long')}.`);
-    summary.translation = { videos: all.length, cues: cuesAll.length, missing: flagCount('missing'), hanLeft: flagCount('han_left'), tooLong: flagCount('too_long') };
+    const cps = cuesAll.map(c => c.vi.length / Math.max(0.5, c.end - c.start));
+    lines.push('', '## Bản dịch', '', `${all.length} video được dịch, ${cuesAll.length} dòng sub; thời lượng dòng trung vị ${round(pct(durs, 0.5), 1) ?? '–'} s, dài nhất ${round(Math.max(0, ...durs), 1)} s. Dòng thiếu bản dịch: ${flagCount('missing')}, còn chữ Hán: ${flagCount('han_left')}, đã rút gọn: ${flagCount('condensed')}, vẫn vượt giới hạn ký tự: ${flagCount('too_long')}. Tốc độ đọc (ký tự/giây) trung vị ${round(pct(cps, 0.5), 1) ?? '–'}, p90 ${round(pct(cps, 0.9), 1) ?? '–'} (chuẩn Netflix tiếng Việt: 17).`);
+    summary.translation = { videos: all.length, cues: cuesAll.length, missing: flagCount('missing'), hanLeft: flagCount('han_left'),
+      condensed: flagCount('condensed'), tooLong: flagCount('too_long'), cpsMedian: round(pct(cps, 0.5), 1), cpsP90: round(pct(cps, 0.9), 1) };
     lines.push('', '## Dịch thử (Gemini) theo từng câu, 5 mẫu đầu có bản dịch', '');
     for (const s of samples.filter(x => { const m = readJson(path.join(mtDir, x.h + '.json')); return m && m.cues; }).slice(0, 5)) {
       const m = readJson(path.join(mtDir, s.h + '.json'));

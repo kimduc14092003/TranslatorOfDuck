@@ -59,6 +59,7 @@ const server = http.createServer((req, res) => {
         return json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ segments: [{ start: 0.5, end: 3.2, text: '大家好，今天我们去吃火锅' }] }) }] } }] });
       }
       const m = parts[0].text.match(/Các dòng: (.*)$/m);
+      if (parts[0].text.startsWith('Rút gọn')) return json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ cues: JSON.parse(m[1]).map(c => ({ id: c.id, vi: 'Chào cả nhà.' })) }) }] } }] });
       const cues = JSON.parse(m[1]).map(c => ({ id: c.id, vi: 'Chào cả nhà, hôm nay mình đi ăn lẩu.' }));
       return json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ cues }) }] } }] });
     }
@@ -96,6 +97,7 @@ const checks = {
   'refs drafts written': fs.existsSync(path.join(WORK, 'refs_draft', 'INDEX.md')),
   'Vietnamese SRT written': fs.existsSync(srt) && fs.readFileSync(srt, 'utf8').includes('00:00:00,500 --> '),
   'auth headers sent': seen.every(s => s.auth),
+  'over-budget lines condensed': rep.translation && rep.translation.condensed >= 1 && rep.translation.tooLong === 0,
 };
 console.log('\nCHECKS');
 for (const [k, v] of Object.entries(checks)) console.log((v ? 'PASS ' : 'FAIL ') + k);
