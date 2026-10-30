@@ -315,6 +315,7 @@ Item đã tải trước: bỏ bước 3–4, ≈ 1,8 s. Item N1: cue có sẵn 
 
 **7.2 Nguồn văn bản, LID, nhạc, làm sạch**
 - Thứ tự nguồn: caption có timing của nền tảng (TikTok) → ASR có timestamp ký tự → chữ trên màn hình (`ocr_content`, sau là OCR) để đối chiếu.
+- **Chỉ dịch lời nói (đã chốt 30/10/2026, §15).** Đo S3 cho thấy Fun-ASR chép cả lời bài hát và bịa chữ trên nhạc, nên bước dưới đây là bắt buộc trong MVP, không phải tùy chọn.
 - **LID, nhạc:** SenseVoice-Small (zh/yue/en/ja/ko, tag BGM — [SenseVoice](https://github.com/FunAudioLLM/SenseVoice)) chạy song song ASR ở media worker; không phải zh/yue với độ tin ≥ 0,8 → `unsupported_lang`; Fun-ASR/Qwen3 chép lời bài hát khá tốt nên không tự lọc được, đoạn gắn BGM/hát thì không dịch, không tính phút, tùy chọn nhãn [nhạc].
 - **Làm sạch:** OpenCC t2s, NFC; ct-punc khi thiếu dấu câu ([ct-punc](https://huggingface.co/funasr/ct-punc)); bỏ đoạn < 50 ms, > 12 ký tự/giây, n-gram ký tự lặp ≥ 4, cụm khớp "bag of hallucinations" tiếng Trung ([BoH](https://arxiv.org/abs/2501.11378), [Calm-Whisper](https://arxiv.org/abs/2505.12969v1)); Whisper thì `condition_on_previous_text=False`, ngưỡng 2,4/0,6/−1,0 ([faster-whisper](https://github.com/SYSTRAN/faster-whisper)); không tách giọng mặc định ([2506.15514](https://arxiv.org/abs/2506.15514), [2201.06685](https://arxiv.org/abs/2201.06685)).
 - **VAD (M2):** bỏ đoạn không lời ≥ 2 s, gửi `speech_map`, hít in-time về onset; CSP `extension_pages` = `script-src 'self' 'wasm-unsafe-eval'; object-src 'self'`, mọi `.wasm`/`.onnx` trong gói (tự tải từ CDN là remote code), `numThreads = 1`, dự phòng VAD năng lượng thuần JS.
@@ -462,6 +463,11 @@ Giả định: 1 dev full-stack toàn thời gian; gán nhãn, luật sư, kế 
 - **Cắt khi trễ:** gói thêm, pass 3/12 tháng → T2/T3 → VAD/caching → provider thứ hai chạy thật. Không bao giờ cắt: tuân thủ store, quyền riêng tư, quota ở server, bộ đánh giá tối thiểu.
 
 ## 15. Quyết định chủ dự án cần chốt
+
+**Đã chốt**
+- **30/10/2026: chỉ dịch lời nói, bỏ qua tiếng hát** (cover, MV, nhạc nền có lời, hát nhép). Đoạn bị nhận là hát hoặc nhạc thì không hiện sub và không tính phút. Bỏ sót một câu nói còn hơn hiện lời bài hát hay chữ bịa trên nhạc. Cách nhận biết cần đo ở M0 (xem §7.2): tag sự kiện của SenseVoice, tín hiệu từ metadata (`music` của bài, hashtag như 翻唱/对口型/手势舞/音乐分享), và dấu hiệu trong bản chép (lặp cụm, khác ngôn ngữ video, câu ngắn như "嗯。" trên đoạn dài).
+
+**Còn mở**
 1. **Cache chung?** Đề xuất: beta chỉ L1; L2 từ M3 nếu luật sư đồng ý.
 2. **Provider gốc Trung Quốc** (Alibaba SG, BytePlus) hay chỉ Mỹ/EU (Soniox, ElevenLabs)? Quyết định S2 hay S3/S4.
 3. **Giá hay hạn mức:** 300/650/1.300 phút ở 79k/149k/299k, hay 450/900/1.800 ở ≈ 102k/200k/396k? Đề xuất: giữ giá, nâng hạn mức theo `Q_max` khi số đo cho phép.
