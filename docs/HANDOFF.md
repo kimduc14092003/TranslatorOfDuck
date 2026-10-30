@@ -85,7 +85,7 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 
 | Lệnh | Kiểm tra gì |
 |---|---|
-| `cd alpha/server && npm test` | Chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh (13 kiểm tra) |
+| `cd alpha/server && npm test` | Chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh (13 kiểm tra); hàng đợi khi tua liên tiếp: ưu tiên, huỷ (5 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms (4 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
 | `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s (16 kiểm tra) |
@@ -141,7 +141,25 @@ Mọi thứ ở mục 4 mới chạy trên Douyin giả. Các điểm cần xem 
 - **Lặp lời để nhấn mạnh bị coi là hát**, bỏ cả đoạn 30 s ("投降了，投降了，投降了", "完了完了完了"). Sửa: lặp lời chỉ là hát khi chữ kéo dài (> 0,25 s/chữ).
 - **Gemini trả 429** (vượt hạn mức theo phút) khi nhiều đoạn gửi dồn. Sửa: server thử lại sau 2, 5, 15 s. Nếu key là gói miễn phí thì tua dồn dập vẫn có thể chạm hạn mức.
 
-Ghi chú: extension nạp bằng `--load-extension` trong Chrome for Testing bị tắt nếu gọi `chrome.runtime.reload()`; phải khởi động lại trình duyệt.
+## 6c. Tua liên tiếp: sub đến quá muộn, đã sửa (extension 0.2.4)
+
+Đo trên vlog thật, bấm thanh tiến trình 3–4 chỗ cách nhau ~3 s rồi dừng: trước khi sửa **25,5 s** mới có sub ở chỗ dừng; sau khi sửa **4,5–4,9 s** (bằng tua một lần).
+
+- **Server làm theo thứ tự đến**, 2 đoạn một lúc: dịch hết các chỗ đã tua qua rồi mới tới chỗ đang xem. Sửa (`server.mjs`): hàng đợi ưu tiên (đoạn chứa chỗ đang xem trước, rồi yêu cầu mới nhất), đoạn ưu tiên được thêm một chỗ; đoạn không còn ai chờ thì bỏ khỏi hàng hoặc dừng giữa chừng (huỷ cả lệnh gọi ASR, dịch). Log ghi "huỷ (đã tua đi chỗ khác …)". Kiểm thử: `alpha/server/dev/queue-test.mjs`.
+- **Extension báo huỷ** đoạn không còn cần (`background.js` ngắt request); tải xong mà người xem đã tua đi thì không gửi.
+- **Sau khi tua, chỉ gửi đoạn ở chỗ đang xem**; đoạn kế và video dịch sẵn chờ nó xong (đoạn kế thường còn 15–30 s mới cần).
+- **Hai hàng tải riêng**: video đang xem không chờ lượt tải dịch sẵn (đo được một lượt gặp CDN chậm 13 s).
+- **Gọi nhà cung cấp có hạn giờ**: dịch 10 s, ASR 20 s, quá hạn thì gọi lại ngay (đo được một lần dịch 24 s). Gặp 429 thì chờ theo `retryDelay` của Gemini và ghi log loại hạn mức (`quotaId`).
+
+Còn lại, chưa làm:
+- Mỗi đoạn tải ~12 MB để lấy ~0,6 MB âm thanh. Không tải riêng được phần tiếng: file Douyin xen hình/tiếng rất dày (trung bình 1,4 khung tiếng mỗi cụm, cách nhau ~1 KB).
+- Lượt "rút gọn dòng quá dài" chạy ở mọi đoạn đo được, thêm ~1–1,4 s mỗi đoạn (§8).
+- Đoạn vừa tua tới không có ngữ cảnh dịch (đoạn trước chưa dịch hoặc đã bị huỷ).
+- Khi thử nhiều, key Gemini chạm hạn mức theo phút: một câu ngắn mất 25 s vì thử lại. Chưa đọc được `quotaId` lúc đó (log mới sẽ ghi).
+
+Ghi chú môi trường test:
+- Extension nạp bằng `--load-extension` trong Chrome for Testing bị tắt nếu gọi `chrome.runtime.reload()`; phải khởi động lại trình duyệt.
+- Khởi động lại vẫn có thể **giữ service worker cũ** (`background.js` bản trước). Kiểm bằng `Debugger.getScriptSource` của service worker; nếu cũ thì tắt trình duyệt, dời thư mục `Default/Service Worker` của profile rồi mở lại. Người dùng bấm Reload ở `chrome://extensions` thì không gặp.
 
 Ghi chú cũ, giữ để tham khảo:
 

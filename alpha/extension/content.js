@@ -18,8 +18,9 @@
   const items = new Map();       // id -> metadata
   const order = [];              // thứ tự video theo feed
   const vids = new Map();        // id -> { plan, media, url, total, chunks: Map k -> kết quả, cues }
-  let queue = [];
-  let downloading = false;
+  // Hai hàng tải riêng: video đang xem, và video kế tiếp (dịch sẵn). Đo trên Douyin thật: một lượt tải dịch sẵn
+  // gặp CDN chậm mất 13 s, đoạn ở chỗ vừa tua tới phải chờ theo.
+  const lanes = { current: { queue: [], busy: false }, prefetch: { queue: [], busy: false } };
   let currentId = null;
   let playhead = 0;              // video.currentTime của video đang xem
 
@@ -96,8 +97,22 @@
     else want.push([currentId, 0]);
     const i = order.indexOf(currentId);
     for (const id of i >= 0 ? order.slice(i + 1, i + 1 + PREFETCH) : []) want.push([id, 0]);
-    queue = want.filter(([id, k]) => eligible(items.get(id)) && needsWork(id, k));
-    pump();
+    const todo = want.filter(([id, k]) => eligible(items.get(id)) && needsWork(id, k));
+    lanes.current.queue = todo.filter(([id]) => id === currentId);
+    lanes.prefetch.queue = todo.filter(([id]) => id !== currentId);
+    cancelUnwanted(want);
+    pump(lanes.current);
+    pump(lanes.prefetch);
+  }
+  // Đoạn đã gửi server mà không còn cần (tua đi chỗ khác, lướt sang video khác) thì huỷ: server bỏ nếu chưa xử lý,
+  // để chỗ đang xem không phải xếp hàng sau các chỗ đã tua qua.
+  function cancelUnwanted(want) {
+    const keep = new Set(want.map(([id, k]) => id + ':' + k));
+    const keys = [];
+    for (const [id, v] of vids) {
+      for (const [k, c] of v.chunks) if (c.status === 'pending' && c.sent && !keep.has(id + ':' + k)) { c.sent = false; keys.push(id + ':' + k); }
+    }
+    if (keys.length && alive()) chrome.runtime.sendMessage({ type: 'cancel', keys }).catch(() => {});
   }
   async function rangeFetch(url, a, b) {
     const res = await fetch(url, { headers: { Range: `bytes=${a}-${b}` }, credentials: 'omit', cache: 'no-store' });
@@ -108,9 +123,13 @@
     return { buf, total, url: res.url };
   }
   // Mục lục (moov) của video: tải một lần, giữ lại cho các đoạn sau.
-  async function ensureMedia(id) {
+  function ensureMedia(id) {
     const v = vid(id);
-    if (v.media) return v.media;
+    if (v.media) return Promise.resolve(v.media);
+    if (!v.mediaLoading) v.mediaLoading = loadMedia(id, v).finally(() => { v.mediaLoading = null; });   // hai hàng tải dùng chung
+    return v.mediaLoading;
+  }
+  async function loadMedia(id, v) {
     const api = 'https://www.douyin.com/aweme/v1/play/?video_id=' + encodeURIComponent(items.get(id).playUri);
     const probe = await rangeFetch(api, 0, 65535);
     const head = TodMp4.headerEnd(probe.buf);
@@ -146,8 +165,14 @@
   async function runChunk(id, k) {
     const v = vid(id);
     const d = items.get(id);
-    const done = (r) => { v.chunks.set(k, { ...r, at: Date.now() }); mergeCues(v); };
-    v.chunks.set(k, { status: 'pending' });
+    const entry = { status: 'pending' };
+    const done = (r) => {
+      if (v.chunks.get(k) !== entry) return;
+      if (r.status === 'cancelled') { v.chunks.delete(k); return; }   // tua lại tới đây thì gửi lại
+      v.chunks.set(k, { ...r, at: Date.now() });
+      mergeCues(v);
+    };
+    v.chunks.set(k, entry);
     try {
       const media = await ensureMedia(id);
       const plan = planFor(id);
@@ -156,25 +181,37 @@
       const w = TodMp4.window(media, Math.max(0, from - PRE), to + POST);
       if (!w) return done({ status: 'no_audio', from, to });
       const aac = w.build(await fetchBytes(v, w.start, w.end - 1));
-      // Không chờ server xong mới tải đoạn tiếp theo.
-      chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, payload: {
+      // Trong lúc tải, người xem đã tua đi chỗ khác: khỏi gửi (tua lại tới đây thì làm lại).
+      if (id === currentId && !(to > playhead && from < playhead + LOOKAHEAD)) { v.chunks.delete(k); return; }
+      // Không chờ server xong mới tải đoạn tiếp theo. urgent: đoạn chứa (hoặc sắp tới) chỗ đang xem, server làm trước.
+      entry.sent = true;
+      chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':' + k, payload: {
         id, desc: d.desc, hashtags: d.hashtags, durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
-        prev: k > 0 ? plan[k - 1] : null, aac: toBase64(aac) } })
+        prev: k > 0 ? plan[k - 1] : null, urgent: urgentChunk(id, k, plan), aac: toBase64(aac) } })
         .then((r) => done(r && r.status ? { ...r, from, to } : { status: 'error', error: (r && r.error) || 'không có phản hồi', from, to }))
         .catch((e) => done({ status: 'error', error: e.message, from, to }));
     } catch (e) {
       done({ status: 'error', error: e.message });
     }
   }
-  async function pump() {
-    if (downloading) return;
-    downloading = true;
+  // Đoạn ở chỗ đang xem chưa dịch xong thì chưa gửi đoạn khác (đoạn kế, video kế tiếp): sau khi tua, chỗ đang xem
+  // được server làm một mình. Đoạn kế thường còn 15–30 s mới cần; schedule() gửi nó ngay khi đoạn này xong.
+  const urgentChunk = (id, k, plan) => id === currentId && plan && plan[k] && plan[k][0] <= playhead + 5 && playhead < plan[k][1];
+  function holdBack(id, k) {
+    const plan = planFor(currentId);
+    if (!plan || urgentChunk(id, k, plan)) return false;
+    for (const [pk, c] of vid(currentId).chunks) if (c.status === 'pending' && urgentChunk(currentId, pk, plan)) return true;
+    return false;
+  }
+  async function pump(lane) {
+    if (lane.busy) return;
+    lane.busy = true;
     try {
-      while (queue.length && alive() && settings.enabled) {
-        const [id, k] = queue.shift();
-        if (needsWork(id, k)) await runChunk(id, k);
+      while (lane.queue.length && alive() && settings.enabled) {
+        const [id, k] = lane.queue.shift();
+        if (needsWork(id, k) && !holdBack(id, k)) await runChunk(id, k);
       }
-    } finally { downloading = false; }
+    } finally { lane.busy = false; }
   }
 
   // ---------------------------------------------------------------- vẽ sub

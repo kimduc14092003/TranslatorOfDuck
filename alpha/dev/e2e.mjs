@@ -163,10 +163,14 @@ for (let i = 0; i < 60; i++) { first = await subAt(1.2); if (first.sub) break; a
 const atGap = await subAt(4.2);      // giữa 2 câu (sau 3,6 s là hết câu 1, câu 2 bắt đầu 5,0 s)
 const atSecond = await subAt(5.2);
 // Extension không có quyền "tabs" nên không lọc tab theo URL được: hỏi từng tab, tab Douyin sẽ trả lời.
-const status = await pop.evaluate(async () => {
+// Thống kê của tab: chờ tới khi đủ 3 video xong (tối đa 8 s). Lần dịch đầu bị 429 giả rồi thử lại sau 2 s, lần đó
+// có thể rơi vào video dịch sẵn (hai hàng tải chạy song song).
+const readStatus = () => pop.evaluate(async () => {
   for (const t of await chrome.tabs.query({})) { try { const r = await chrome.tabs.sendMessage(t.id, { type: 'status' }); if (r) return r; } catch (_) {} }
   return null;
 });
+let status = await readStatus();
+for (let i = 0; i < 16 && status && (status.counts.ok || 0) + (status.counts.skipped || 0) < 3; i++) { await new Promise(r => setTimeout(r, 500)); status = await readStatus(); }
 // Phím ] ba lần: sub muộn hơn 0,3 s (câu 1 bắt đầu 1,0 s → giờ hiện từ 1,3 s).
 for (let i = 0; i < 3; i++) await page.keyboard.press(']');
 const delayed = { at12: await subAt(1.2), at135: await subAt(1.35) };

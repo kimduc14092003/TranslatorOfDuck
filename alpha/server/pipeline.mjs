@@ -77,19 +77,39 @@ export async function extractAudio(buf, kind = 'mp4') {
 // Tua nhiều chỗ thì nhiều đoạn gửi dồn một lúc: Gemini trả 429 (vượt hạn mức theo phút), thỉnh thoảng còn lỗi
 // mạng. Thử lại sau 2 s, 5 s rồi 15 s (hạn mức tính theo phút) trước khi báo lỗi; rẻ hơn để extension gửi lại cả đoạn.
 const RETRY_WAITS = [2000, 5000, 15000];
-const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-async function httpJson(url, init) {
+// signal: server huỷ đoạn đang chạy khi người xem đã tua đi (không còn ai chờ) → dừng cả lệnh gọi và lượt chờ thử lại.
+const sleep = (ms, signal) => new Promise((resolve, reject) => {
+  const t = setTimeout(resolve, ms);
+  signal?.addEventListener('abort', () => { clearTimeout(t); reject(signal.reason); }, { once: true });
+});
+// timeoutMs: mỗi lần gọi có hạn; quá hạn thì gọi lại ngay. Đo trên dữ liệu thật: lần dịch thường 1,5–2 s nhưng có lần 24 s.
+async function httpJson(url, init, timeoutMs = 20000) {
   for (let i = 0; ; i++) {
-    let res;
-    try { res = await fetch(url, init); } catch (e) {
-      if (i < RETRY_WAITS.length) { await sleep(RETRY_WAITS[i]); continue; }
+    let res, text;
+    try {
+      const limit = AbortSignal.timeout(timeoutMs);
+      res = await fetch(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, limit]) : limit });
+      text = await res.text();
+    } catch (e) {
+      if (init.signal?.aborted) throw e;
+      const timedOut = e.name === 'TimeoutError';
+      if (timedOut) console.log(`    · ${new URL(url).host} quá ${timeoutMs / 1000} s chưa trả lời: gọi lại`);
+      if (i < RETRY_WAITS.length) { if (!timedOut) await sleep(RETRY_WAITS[i], init.signal); continue; }
       throw e;
     }
-    const text = await res.text();
     let body = null;
     try { body = JSON.parse(text); } catch (_) { /* giữ text */ }
     if (!res.ok) {
-      if ((res.status === 429 || res.status >= 500) && i < RETRY_WAITS.length) { await sleep(RETRY_WAITS[i]); continue; }
+      if ((res.status === 429 || res.status >= 500) && i < RETRY_WAITS.length) {
+        // Gemini ghi loại hạn mức (quotaId) và thời gian nên chờ (retryDelay) trong lỗi 429: ghi log, chờ đúng chừng đó.
+        const details = (body && body.error && body.error.details) || [];
+        const quota = details.flatMap(d => d.violations || []).map(v => v.quotaId).filter(Boolean)[0];
+        const hint = Number((/^([\d.]+)s$/.exec((details.find(d => d.retryDelay) || {}).retryDelay || '') || [])[1]) * 1000 || 0;
+        const wait = Math.min(Math.max(RETRY_WAITS[i], hint), 20000);
+        if (res.status === 429) console.log(`    · ${new URL(url).host} báo 429${quota ? ' (' + quota + ')' : ''}: thử lại sau ${Math.round(wait / 1000)} s`);
+        await sleep(wait, init.signal);
+        continue;
+      }
       const err = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
       err.status = res.status;
       throw err;
@@ -97,11 +117,11 @@ async function httpJson(url, init) {
     return body;
   }
 }
-async function funasr(mp3) {
+async function funasr(mp3, signal) {
   try {
     const b = await httpJson(DASHSCOPE_BASE + '/api/v1/services/aigc/multimodal-generation/generation', {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + ENV.DASHSCOPE_API_KEY, 'Content-Type': 'application/json', 'X-DashScope-SSE': 'disable' },
+      signal, headers: { Authorization: 'Bearer ' + ENV.DASHSCOPE_API_KEY, 'Content-Type': 'application/json', 'X-DashScope-SSE': 'disable' },
       body: JSON.stringify({
         model: FUNASR_MODEL,
         input: { messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: 'data:audio/mp3;base64,' + mp3.toString('base64') } }] }] },
@@ -119,28 +139,28 @@ async function funasr(mp3) {
     throw e;
   }
 }
-async function geminiJson(parts, schema, temperature = 0) {
+async function geminiJson(parts, schema, temperature = 0, signal, timeoutMs = 10000) {
   const b = await httpJson(`${GEMINI_BASE}/models/${GEMINI_MODEL}:generateContent`, {
     method: 'POST',
-    headers: { 'x-goog-api-key': ENV.GEMINI_API_KEY, 'Content-Type': 'application/json' },
+    signal, headers: { 'x-goog-api-key': ENV.GEMINI_API_KEY, 'Content-Type': 'application/json' },
     body: JSON.stringify({ contents: [{ parts }], generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature } }),
-  });
+  }, timeoutMs);
   const t = b.candidates && b.candidates[0] && b.candidates[0].content && b.candidates[0].content.parts.map(p => p.text || '').join('');
   return JSON.parse(t || '{}');
 }
-async function geminiAsr(mp3) {
+async function geminiAsr(mp3, signal) {
   const schema = { type: 'OBJECT', properties: { segments: { type: 'ARRAY', items: { type: 'OBJECT', properties: {
     start: { type: 'NUMBER' }, end: { type: 'NUMBER' }, text: { type: 'STRING' } }, required: ['start', 'end', 'text'] } } }, required: ['segments'] };
   const r = await geminiJson([
     { text: 'Chép lại nguyên văn lời nói tiếng Trung trong đoạn âm thanh bằng chữ Hán giản thể, có dấu câu. Chia theo câu; mỗi câu có start và end tính bằng giây. Bỏ qua nhạc và lời bài hát. Không có lời nói thì trả về segments rỗng.' },
     { inlineData: { mimeType: 'audio/mp3', data: mp3.toString('base64') } },
-  ], schema);
+  ], schema, 0, signal, 30000);   // nhận dạng cả đoạn âm thanh: lâu hơn dịch
   const segments = (r.segments || []).map(x => ({ start: Number(x.start), end: Number(x.end), text: String(x.text || '') }));
   return { provider: 'gemini', text: segments.map(x => x.text).join(''), segments, words: [] };
 }
-export async function transcribe(mp3) {
-  if (ENV.DASHSCOPE_API_KEY) return funasr(mp3);
-  if (ENV.GEMINI_API_KEY) return geminiAsr(mp3);
+export async function transcribe(mp3, signal) {
+  if (ENV.DASHSCOPE_API_KEY) return funasr(mp3, signal);
+  if (ENV.GEMINI_API_KEY) return geminiAsr(mp3, signal);
   throw new Error('Chưa có key: đặt DASHSCOPE_API_KEY (Fun-ASR) hoặc GEMINI_API_KEY trong alpha/server/.env');
 }
 
@@ -294,7 +314,7 @@ export function fixViText(t) {
 const CUE_SCHEMA = { type: 'OBJECT', properties: { cues: { type: 'ARRAY', items: { type: 'OBJECT', properties: {
   id: { type: 'INTEGER' }, vi: { type: 'STRING' } }, required: ['id', 'vi'] } } }, required: ['cues'] };
 const budget = (c) => Math.floor(Math.min(84, 17 * (c.end - c.start)));
-export async function translate(meta, cues, context = []) {
+export async function translate(meta, cues, context = [], signal) {
   if (!ENV.GEMINI_API_KEY) throw new Error('Chưa có GEMINI_API_KEY trong alpha/server/.env');
   const first = await geminiJson([{ text: [
     'Dịch phụ đề video Douyin từ tiếng Trung sang tiếng Việt tự nhiên, như phụ đề chuyên nghiệp.',
@@ -306,7 +326,7 @@ export async function translate(meta, cues, context = []) {
     'Hashtag: ' + JSON.stringify(meta.hashtags || []),
     ...(context.length ? ['Các dòng ngay trước trong video (đã dịch, chỉ để giữ mạch và xưng hô, không dịch lại): ' + JSON.stringify(context)] : []),
     'Các dòng: ' + JSON.stringify(cues.map(c => ({ id: c.id, seconds: round(c.end - c.start, 1), max_chars: budget(c), zh: c.zh }))),
-  ].join('\n') }], CUE_SCHEMA, 0.2);
+  ].join('\n') }], CUE_SCHEMA, 0.2, signal);
   const vi = new Map((first.cues || []).map(c => [c.id, fixViText(c.vi)]));
   const out = cues.map(c => {
     const text = vi.get(c.id) || '';
@@ -322,7 +342,7 @@ export async function translate(meta, cues, context = []) {
       const r = await geminiJson([{ text: [
         'Rút gọn các dòng phụ đề tiếng Việt sau cho vừa max_chars (đếm cả dấu cách). Giữ ý chính, giữ xưng hô và tên riêng, bỏ từ đệm và chi tiết phụ. Không thêm ý mới.',
         'Các dòng: ' + JSON.stringify(long.map(c => ({ id: c.id, max_chars: budget(c), zh: c.zh, vi: c.vi }))),
-      ].join('\n') }], CUE_SCHEMA, 0.2);
+      ].join('\n') }], CUE_SCHEMA, 0.2, signal);
       const short = new Map((r.cues || []).map(c => [c.id, fixViText(c.vi)]));
       for (const c of long) {
         const v = short.get(c.id);
@@ -338,13 +358,13 @@ export async function translate(meta, cues, context = []) {
 }
 
 // ---------------------------------------------------------------- toàn bộ
-// opts (video dài, từng đoạn): { kind: 'aac', offset: giây bắt đầu của âm thanh, from, to, context }.
+// opts (video dài, từng đoạn): { kind: 'aac', offset: giây bắt đầu của âm thanh, from, to, context }; signal: huỷ giữa chừng.
 export async function makeSubtitles(meta, buf, opts = {}) {
   const t0 = Date.now();
   const audio = await extractAudio(buf, opts.kind);
   const tAudio = Date.now();
   if (!audio) return { status: 'no_audio', timings: { audioMs: tAudio - t0 } };
-  let asr = resplitSentences(await transcribe(audio.mp3));
+  let asr = resplitSentences(await transcribe(audio.mp3, opts.signal));
   const tAsr = Date.now();
   if (opts.from != null) asr = windowAsr(asr, opts.offset || 0, opts.from, opts.to);
   const cls = classifySpeech(meta, asr);
@@ -359,8 +379,10 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   if (((split.r.text || '').match(HAN) || []).length < 4) return skip('singing');
   const cues = segmentCues(split.r);
   // opts.context có thể là hàm: server chờ đoạn trước (đang chạy) dịch xong rồi mới lấy ngữ cảnh.
-  const context = typeof opts.context === 'function' ? await opts.context() : (opts.context || []);
-  const vi = cues.length ? await translate(meta, cues, context) : [];
+  const context = typeof opts.context === 'function' ? await opts.context(opts.signal) : (opts.context || []);
+  opts.signal?.throwIfAborted();
+  const vi = cues.length ? await translate(meta, cues, context, opts.signal) : [];
+  opts.signal?.throwIfAborted();   // huỷ giữa lượt rút gọn (lượt đó tự bắt lỗi): không trả kết quả dở
   const tMt = Date.now();
   return { status: vi.length ? 'ok' : 'skipped', label: vi.length ? 'speech' : 'untranslated', ...base, context: context.length,
     cues: vi.map(c => ({ start: c.start, end: c.end, se: c.se, vi: c.vi, zh: c.zh })),

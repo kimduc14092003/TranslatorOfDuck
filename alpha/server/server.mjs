@@ -16,16 +16,43 @@ const MAX_BODY = 40 * 1024 * 1024;
 const MAX_PARALLEL = 2;
 fs.mkdirSync(CACHE, { recursive: true });
 
-// Tối đa MAX_PARALLEL đoạn xử lý cùng lúc; cùng một đoạn thì dùng chung một lần xử lý.
+// Tối đa MAX_PARALLEL đoạn xử lý cùng lúc; cùng một đoạn thì dùng chung một lần xử lý (inflight).
+// Hàng đợi có ưu tiên: đoạn chứa chỗ đang xem (urgent) trước, rồi yêu cầu mới nhất trước. Tua liên tiếp nhiều chỗ
+// thì chỗ dừng cuối được làm ngay, không phải chờ các chỗ đã tua qua (đo trên Douyin thật: trước đây 25 s mới có sub).
+// Đoạn urgent được dùng thêm một chỗ. Đoạn không còn ai chờ (extension huỷ vì người xem đã tua đi): còn xếp hàng thì
+// bỏ, đang chạy thì dừng giữa chừng, để chỗ đang xem không phải chờ và khỏi tốn tiền API.
 let running = 0;
-const waiting = [];
-const inflight = new Map();
-const started = new Set();       // các đoạn đã có chỗ và đang chạy (không còn xếp hàng)
+let seq = 0;
+const queue = [];
+const inflight = new Map();      // key → job { promise, urgent, seq, started, waiters, cancel() }
+const cancelledError = () => Object.assign(new Error('cancelled'), { cancelled: true });
 const CONTEXT_WAIT_MS = 30000;
-async function withSlot(fn) {
-  if (running >= MAX_PARALLEL) await new Promise(r => waiting.push(r));
-  running++;
-  try { return await fn(); } finally { running--; const next = waiting.shift(); if (next) next(); }
+const canRun = (job) => running < MAX_PARALLEL || (job.urgent && running < MAX_PARALLEL + 1);
+function pumpQueue() {
+  queue.sort((a, b) => (b.urgent - a.urgent) || (b.seq - a.seq));
+  while (queue.length && canRun(queue[0])) { const job = queue.shift(); running++; job.start(); }
+}
+// fn(signal): signal bị huỷ khi không còn ai chờ đoạn đang chạy → dừng lệnh gọi ASR/dịch, nhường chỗ cho chỗ đang xem.
+function submit(key, urgent, fn) {
+  const job = { urgent: !!urgent, seq: ++seq, started: false, waiters: 0 };
+  const ctl = new AbortController();
+  job.promise = new Promise((resolve, reject) => {
+    job.start = () => {
+      job.started = true;
+      Promise.resolve().then(() => fn(ctl.signal))
+        .then(resolve, (e) => reject(ctl.signal.aborted ? cancelledError() : e))
+        .finally(() => { running--; pumpQueue(); });
+    };
+    job.cancel = () => {
+      const i = queue.indexOf(job);
+      if (i >= 0) { queue.splice(i, 1); reject(cancelledError()); } else if (job.started) ctl.abort(cancelledError());
+    };
+  });
+  job.promise.then(() => inflight.delete(key), () => inflight.delete(key));
+  inflight.set(key, job);
+  queue.push(job);
+  pumpQueue();
+  return job;
 }
 
 function send(res, status, obj) {
@@ -55,7 +82,9 @@ async function handleSubtitles(req, res) {
   const file = cacheFile(chunked ? span(meta.from, meta.to) : '');
   const key = file;
   if (fs.existsSync(file)) { const { debug: _d, ...c } = JSON.parse(fs.readFileSync(file, 'utf8')); return send(res, 200, { ...c, cached: true }); }
-  if (!inflight.has(key)) {
+  let job = inflight.get(key);
+  if (job && !job.started) { job.urgent = job.urgent || !!meta.urgent; job.seq = ++seq; pumpQueue(); }   // lại được hỏi: đẩy lên
+  if (!job) {
     // TOD_DUMP=1: giữ âm thanh nhận được ở work/dump (tên file kèm audioStart) để soi lỗi ASR, mốc thời gian. Chỉ để trên máy, xoá sau khi xong.
     if (process.env.TOD_DUMP) {
       const dir = path.join(CACHE, '..', 'dump');
@@ -68,24 +97,33 @@ async function handleSubtitles(req, res) {
       // đang chạy thì chờ nó dịch xong (chỉ chờ ở bước dịch, nhận dạng giọng nói vẫn chạy song song). Đoạn trước
       // còn xếp hàng thì không chờ, để hai đoạn không giữ chỗ chờ nhau.
       const prev = Array.isArray(meta.prev) && meta.prev.length === 2 && meta.prev.every(num) ? cacheFile(span(meta.prev[0], meta.prev[1])) : null;
-      const context = async () => {
+      const context = async (signal) => {
         if (!prev) return [];
-        if (inflight.has(prev) && started.has(prev)) await Promise.race([inflight.get(prev).catch(() => {}), new Promise(r => setTimeout(r, CONTEXT_WAIT_MS))]);
+        const pj = inflight.get(prev);
+        if (pj && pj.started) {
+          await Promise.race([pj.promise.catch(() => {}), new Promise(r => { setTimeout(r, CONTEXT_WAIT_MS); signal?.addEventListener('abort', r, { once: true }); })]);
+        }
         if (!fs.existsSync(prev)) return [];
         try { return (JSON.parse(fs.readFileSync(prev, 'utf8')).cues || []).slice(-3).map(c => ({ zh: c.zh, vi: c.vi })); } catch (_) { return []; }
       };
       opts = { kind: 'aac', offset: meta.audioStart, from: meta.from, to: meta.to, context };
     }
-    inflight.set(key, withSlot(() => { started.add(key); return makeSubtitles({ desc: meta.desc, hashtags: meta.hashtags }, Buffer.from(chunked ? meta.aac : meta.b64, 'base64'), opts); })
-      .then((r) => { const out = { id, ...(chunked ? { from: meta.from, to: meta.to } : {}), ...r }; if (r.status !== 'error') fs.writeFileSync(file, JSON.stringify(out)); return out; })
-      .finally(() => { inflight.delete(key); started.delete(key); }));
+    const buf = Buffer.from(chunked ? meta.aac : meta.b64, 'base64');
+    job = submit(key, meta.urgent, async (signal) => {
+      const r = await makeSubtitles({ desc: meta.desc, hashtags: meta.hashtags }, buf, { ...opts, signal });
+      const out = { id, ...(chunked ? { from: meta.from, to: meta.to } : {}), ...r };
+      if (r.status !== 'error') fs.writeFileSync(file, JSON.stringify(out));
+      return out;
+    });
   }
+  job.waiters++;
+  res.on('close', () => { if (!res.writableEnded && --job.waiters <= 0) job.cancel(); });
+  const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
+  const where = chunked ? ` [${mmss(meta.from)}–${mmss(meta.to)}]` : '';
   try {
-    const out = await inflight.get(key);
+    const out = await job.promise;
     const t = out.timings || {};
     const why = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch không ra dòng nào' };
-    const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
-    const where = chunked ? ` [${mmss(meta.from)}–${mmss(meta.to)}]` : '';
     console.log(`${new Date().toLocaleTimeString()} ${id}${where} ${out.status}${out.label && out.status !== 'ok' ? ' (' + (why[out.label] || out.label) + ')' : ''}` +
       `${out.cues ? ' ' + out.cues.length + ' dòng' : ''}${chunked && meta.from > 0 && out.status === 'ok' && !out.cached ? ` (ngữ cảnh ${out.context || 0} dòng)` : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu, ${out.sung ?? 0} câu hát bị bỏ` +
       ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${t.asrMs ?? '-'} ms, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : ''}` +
@@ -93,6 +131,11 @@ async function handleSubtitles(req, res) {
     const { debug: _d, ...reply } = out;
     send(res, 200, reply);
   } catch (e) {
+    if (e.cancelled) {
+      console.log(`${new Date().toLocaleTimeString()} ${id}${where} huỷ (đã tua đi chỗ khác${job.started ? ', dừng giữa chừng' : ', chưa xử lý'})`);
+      if (!res.writableEnded && !res.destroyed) send(res, 200, { id, status: 'cancelled' });
+      return;
+    }
     console.log(`${new Date().toLocaleTimeString()} ${id}${chunked ? ` [${meta.from}–${meta.to} s]` : ''} LỖI ${e.message}`);
     send(res, 502, { id, status: 'error', error: String(e.message).slice(0, 300) });
   }
