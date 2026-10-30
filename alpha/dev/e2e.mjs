@@ -85,7 +85,8 @@ for (let i = 0; i < 50 && !alphaLog.includes('Alpha server'); i++) await new Pro
 execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=www.douyin.com',
   '-addext', 'subjectAltName=DNS:www.douyin.com,DNS:v3-web.douyinvod.com', '-keyout', path.join(TMP, 'k.pem'), '-out', path.join(TMP, 'c.pem')], { stdio: 'ignore' });
 const ids = ['7500000000000000001', '7500000000000000002', '7500000000000000003', '7500000000000000004'];
-const fileFor = { [ids[0]]: 'speech12', [ids[1]]: 'speech12', [ids[2]]: 'song6', [ids[3]]: 'long100' };
+const FAV = '7500000000000000009';   // video đã thích ở cột bên, không nằm trong feed
+const fileFor = { [ids[0]]: 'speech12', [ids[1]]: 'speech12', [ids[2]]: 'song6', [ids[3]]: 'long100', [FAV]: 'speech12' };
 const DUR = { speech12: 12000, song6: 6000, long100: 100000 };
 const aweme = (id, desc) => ({ aweme_id: id, desc, duration: DUR[fileFor[id]], text_extra: [],
   video: { play_addr: { uri: 'v0d00f' + id, url_list: [`https://v3-web.douyinvod.com/x/${fileFor[id]}.mp4`] }, bit_rate: [] } });
@@ -93,7 +94,7 @@ const feed = { status_code: 0, aweme_list: [aweme(ids[0], '今天吃火锅'), aw
 const PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">
 <div id="feed">${ids.map((id, i) => `<div class="slide" ${i === 0 ? 'data-e2e="feed-active-video"' : ''} data-e2e-vid="${id}"><video muted playsinline style="width:640px;height:480px;display:block"></video></div>`).join('')}</div>
 <script>
-  fetch('/aweme/v1/web/tab/feed/?count=3').then(r => r.json());
+  fetch('/aweme/v1/web/aweme/favorite/?count=2').then(r => r.json()).then(() => fetch('/aweme/v1/web/tab/feed/?count=3')).then(r => r.json());
   const slides = [...document.querySelectorAll('.slide')];
   window.activate = (i) => {
     slides.forEach((s, j) => { if (j === i) s.setAttribute('data-e2e', 'feed-active-video'); else s.removeAttribute('data-e2e'); s.style.display = j === i ? 'block' : 'none'; });
@@ -103,14 +104,17 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body styl
   };
   window.activate(0);
 </script></body></html>`;
+const playRequested = new Set();
 const douyin = https.createServer({ key: fs.readFileSync(path.join(TMP, 'k.pem')), cert: fs.readFileSync(path.join(TMP, 'c.pem')) }, (req, res) => {
   const u = new URL(req.url, 'https://' + req.headers.host);
   const send = (s, h, b) => { res.writeHead(s, h); res.end(b); };
   if (req.headers.host.startsWith('www.douyin.com')) {
     if (u.pathname === '/') return send(200, { 'content-type': 'text/html; charset=utf-8' }, PAGE);
     if (u.pathname.startsWith('/aweme/v1/web/tab/feed')) return send(200, { 'content-type': 'application/json' }, JSON.stringify(feed));
+    if (u.pathname.startsWith('/aweme/v1/web/aweme/favorite')) return send(200, { 'content-type': 'application/json' }, JSON.stringify({ status_code: 0, aweme_list: [aweme(ids[0], '今天吃火锅'), aweme(FAV, '收藏')] }));
     if (u.pathname.startsWith('/aweme/v1/play/')) {
       const id = u.searchParams.get('video_id').replace('v0d00f', '');
+      playRequested.add(id);
       return send(302, { location: `https://v3-web.douyinvod.com/x/${fileFor[id]}.mp4` }, '');
     }
     if (!u.pathname.startsWith('/media/')) return send(404, {}, '');
@@ -204,6 +208,7 @@ const checks = {
   '] key delays subs by 0.3 s and saves it': delayed.at12.sub === null && /lệch sub \+0\.3 s/.test(delayed.at12.badge || '')
     && delayed.at135.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.' && savedDelay === 0.3,
   'next videos prefetched (3 processed)': (status.counts.ok || 0) + (status.counts.skipped || 0) >= 3,
+  'liked video in the sidebar is not prefetched': !playRequested.has(FAV) && playRequested.has(ids[1]),
   'song video skipped, no subtitle': song.sub === null && /bài hát/.test(song.badge || ''),
   'ASR called once per video (dedupe)': providerHits.funasr - providerHits.longChunks.length === 3,
   'long video: chunk 1 line at 2.2 s': long.at2.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',

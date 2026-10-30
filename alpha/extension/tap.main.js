@@ -117,6 +117,9 @@
   function handleJson(data, info, via) {
     const items = [];
     walk(data, items, via, 0);
+    // feed: lấy từ API danh sách video (PATHS). Video từ API khác (vd. /aweme/favorite/: video đã thích ở cột bên)
+    // không phải video sẽ lướt tới, không dùng để đoán video kế tiếp.
+    for (const it of items) it.feed = info.known;
     emit('endpoint', { path: info.path, known: info.known, via, items: items.length });
     if (items.length) emit('items', items);
   }

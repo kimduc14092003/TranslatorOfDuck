@@ -16,6 +16,7 @@ const aac = (sec) => { const f = path.join(TMP, `${sec}.aac`); execFileSync(ffmp
 
 const asrOrder = [];
 let geminiCalls = 0;
+let dayQuota = false;              // Gemini giả trả 429: hết lượt trong ngày
 const providers = http.createServer((req, res) => {
   let body = '';
   req.on('data', c => { body += c; });
@@ -31,6 +32,12 @@ const providers = http.createServer((req, res) => {
     }
     if (req.url.includes(':generateContent')) {
       geminiCalls++;
+      if (dayQuota) {
+        res.writeHead(429, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', details: [
+          { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }] },
+          { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '20s' }] } }));
+      }
       const lines = JSON.parse(JSON.parse(body).contents[0].parts[0].text.match(/Các dòng: (.*)$/m)[1]);
       return json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ cues: lines.map(l => ({ id: l.id, vi: 'Chào cả nhà, hôm nay đi ăn lẩu.' })) }) }] } }] });
     }
@@ -51,9 +58,9 @@ server.stderr.on('data', d => { log += d; });
 while (!/Alpha server/.test(log)) await new Promise(r => setTimeout(r, 50));
 
 // Âm thanh dài 21..26 s: dịch vụ giả nhận ra đoạn nào qua độ dài.
-const SEC = { a: 21, b: 22, c: 23, d: 24, e: 25, f: 26, g: 27 };
+const SEC = { a: 21, b: 22, c: 23, d: 24, e: 25, f: 26, g: 27, k: 28, l: 29, m: 30, o: 31, h: 32, i: 33 };
 const audio = Object.fromEntries(Object.entries(SEC).map(([k, s]) => [k, aac(s)]));
-const FROM = { a: 0, b: 20, c: 50, d: 80, e: 110, f: 140, g: 170 };
+const FROM = { a: 0, b: 20, c: 50, d: 80, e: 110, f: 140, g: 170, k: 230, l: 260, m: 290, o: 320, h: 350, i: 380 };
 function post(name, urgent) {
   const ctl = new AbortController();
   const body = JSON.stringify({ id: '7500000000000000099', from: FROM[name], to: FROM[name] + 30, audioStart: FROM[name], urgent, aac: audio[name] });
@@ -98,6 +105,33 @@ try {
     assert.match(log, /huỷ \(đã tua đi chỗ khác, dừng giữa chừng\)/);
     assert.equal(geminiCalls, calls);
     assert.ok(!fs.readdirSync(path.join(TMP, 'work', 'cache')).some(f => f.includes('.170-200.')));
+  });
+  // Lướt tới video đã gửi dịch sẵn (không gấp): extension báo /v1/bump, đoạn đó vượt lên trước đoạn gửi sau nó.
+  const k = post('k', false), l = post('l', false);
+  await wait(300);
+  const m = post('m', false);
+  await wait(100);
+  const o = post('o', false);
+  await wait(100);
+  const bump = await fetch(`http://127.0.0.1:${port}/v1/bump`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: '7500000000000000099', from: FROM.m, to: FROM.m + 30 }) }).then(r => r.json());
+  await Promise.all([k.p, l.p, m.p, o.p]);
+  t('đoạn được đẩy lên (bump) chạy trước đoạn gửi sau nó', () => {
+    assert.ok(bump.found && bump.queued, JSON.stringify(bump));
+    assert.ok(asrOrder.indexOf(SEC.m) < asrOrder.indexOf(SEC.o), 'thứ tự ASR: ' + asrOrder.join(','));
+  });
+  // Gemini hết lượt trong ngày: báo lỗi ngay (không chờ 20 s gọi lại), đoạn sau không gọi cả nhận dạng giọng nói.
+  dayQuota = true;
+  const t0 = Date.now();
+  const h = await post('h', true).p;
+  const hMs = Date.now() - t0;
+  const asrBefore = asrOrder.length, gemBefore = geminiCalls;
+  const i = await post('i', true).p;
+  t('Gemini hết lượt trong ngày: báo lỗi ngay, tạm không gọi dịch vụ', () => {
+    assert.equal(h.status, 'error'); assert.match(h.error, /hết lượt/);
+    assert.ok(hMs < 5000, 'mất ' + hMs + ' ms');
+    assert.equal(i.status, 'error'); assert.ok(i.retryAfterMs > 60000, JSON.stringify(i));
+    assert.equal(asrOrder.length, asrBefore); assert.equal(geminiCalls, gemBefore);
   });
 } finally {
   server.kill(); providers.close();

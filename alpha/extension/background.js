@@ -8,10 +8,15 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     for (const k of msg.keys || []) { const c = pending.get(tab + ':' + k); if (c) c.abort(); }
     return false;
   }
-  if (!msg || msg.type !== 'subtitles') return false;
+  if (!msg || (msg.type !== 'subtitles' && msg.type !== 'bump')) return false;
   const base = String(msg.server || 'http://127.0.0.1:8787').replace(/\/+$/, '');
   if (!/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(base)) {
     reply({ status: 'error', error: 'Bản Alpha chỉ gọi server trên máy (127.0.0.1 hoặc localhost).' });
+    return false;
+  }
+  // Video được dịch sẵn vừa thành video đang xem: báo server làm đoạn đó trước.
+  if (msg.type === 'bump') {
+    fetch(base + '/v1/bump', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(msg.payload) }).catch(() => {});
     return false;
   }
   const pk = tab + ':' + msg.key;
@@ -20,7 +25,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   fetch(base + '/v1/subtitles', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(msg.payload), signal: ctl.signal })
     .then(async (res) => {
       const body = await res.json().catch(() => ({}));
-      reply(res.ok ? body : { status: 'error', error: body.error || 'HTTP ' + res.status });
+      reply(res.ok ? body : { ...body, status: 'error', error: body.error || 'HTTP ' + res.status });
     })
     .catch((e) => reply(e.name === 'AbortError' ? { status: 'cancelled' }
       : { status: 'error', error: 'không kết nối được server (đã chạy "npm start" trong alpha/server chưa?)' }))

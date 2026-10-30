@@ -34,11 +34,11 @@ function pumpQueue() {
 }
 // fn(signal): signal bị huỷ khi không còn ai chờ đoạn đang chạy → dừng lệnh gọi ASR/dịch, nhường chỗ cho chỗ đang xem.
 function submit(key, urgent, fn) {
-  const job = { urgent: !!urgent, seq: ++seq, started: false, waiters: 0 };
+  const job = { urgent: !!urgent, seq: ++seq, started: false, waiters: 0, at: Date.now() };
   const ctl = new AbortController();
   job.promise = new Promise((resolve, reject) => {
     job.start = () => {
-      job.started = true;
+      job.started = true; job.startedAt = Date.now();
       Promise.resolve().then(() => fn(ctl.signal))
         .then(resolve, (e) => reject(ctl.signal.aborted ? cancelledError() : e))
         .finally(() => { running--; pumpQueue(); });
@@ -127,24 +127,40 @@ async function handleSubtitles(req, res) {
     console.log(`${new Date().toLocaleTimeString()} ${id}${where} ${out.status}${out.label && out.status !== 'ok' ? ' (' + (why[out.label] || out.label) + ')' : ''}` +
       `${out.cues ? ' ' + out.cues.length + ' dòng' : ''}${chunked && meta.from > 0 && out.status === 'ok' && !out.cached ? ` (ngữ cảnh ${out.context || 0} dòng)` : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu, ${out.sung ?? 0} câu hát bị bỏ` +
       ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${t.asrMs ?? '-'} ms, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : ''}` +
+      (job.startedAt - job.at > 300 ? ` · xếp hàng ${job.startedAt - job.at} ms` : '') +
       (out.heard ? `\n    nghe được: ${out.heard}` : ''));
     const { debug: _d, ...reply } = out;
     send(res, 200, reply);
   } catch (e) {
     if (e.cancelled) {
-      console.log(`${new Date().toLocaleTimeString()} ${id}${where} huỷ (đã tua đi chỗ khác${job.started ? ', dừng giữa chừng' : ', chưa xử lý'})`);
+      const sec = (ms) => (ms / 1000).toFixed(1) + ' s';
+      console.log(`${new Date().toLocaleTimeString()} ${id}${where} huỷ (đã tua đi chỗ khác${job.started ? ', dừng giữa chừng' : ', chưa xử lý'})` +
+        (job.started ? ` · xếp hàng ${sec(job.startedAt - job.at)}, chạy ${sec(Date.now() - job.startedAt)}` : ` · xếp hàng ${sec(Date.now() - job.at)}`));
       if (!res.writableEnded && !res.destroyed) send(res, 200, { id, status: 'cancelled' });
       return;
     }
     console.log(`${new Date().toLocaleTimeString()} ${id}${chunked ? ` [${meta.from}–${meta.to} s]` : ''} LỖI ${e.message}`);
-    send(res, 502, { id, status: 'error', error: String(e.message).slice(0, 300) });
+    send(res, 502, { id, status: 'error', error: String(e.message).slice(0, 300), ...(e.retryAfterMs ? { retryAfterMs: e.retryAfterMs } : {}) });
   }
+}
+
+// Người xem vừa lướt tới video đã được gửi dịch sẵn (lúc đó chưa gấp): đoạn còn xếp hàng thì đẩy lên đầu.
+async function handleBump(req, res) {
+  let meta;
+  try { meta = JSON.parse((await readBody(req)).toString('utf8')); } catch (e) { return send(res, 400, { error: 'bad_body: ' + e.message }); }
+  const id = String(meta.id || '');
+  if (!/^\d{6,25}$/.test(id) || !(typeof meta.from === 'number' && typeof meta.to === 'number')) return send(res, 400, { error: 'need id, from, to' });
+  const job = inflight.get(path.join(CACHE, `${id}.${meta.from}-${meta.to}.vi.${PIPELINE_VERSION}.json`));
+  const queued = !!(job && !job.started);
+  if (queued) { job.urgent = true; job.seq = ++seq; pumpQueue(); }
+  send(res, 200, { ok: true, found: !!job, queued });
 }
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://local');
-  if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, version: PIPELINE_VERSION, ...config() });
+  if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, version: PIPELINE_VERSION, ...config(), running, queued: queue.length });
   if (req.method === 'POST' && url.pathname === '/v1/subtitles') return handleSubtitles(req, res);
+  if (req.method === 'POST' && url.pathname === '/v1/bump') return handleBump(req, res);
   send(res, 404, { error: 'not_found' });
 });
 server.listen(PORT, HOST, () => {

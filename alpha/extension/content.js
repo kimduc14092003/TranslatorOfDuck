@@ -11,18 +11,22 @@
   const PREFETCH = 2;            // số video kế tiếp được dịch sẵn đoạn đầu
   const LOOKAHEAD = 30;          // luôn dịch trước chỗ đang xem bấy nhiêu giây
   const FIRST = 20, STEP = 30;   // đoạn đầu ngắn để sub đầu ra nhanh, sau đó mỗi đoạn 30 s
-  const SINGLE_MAX = 75;         // video ngắn hơn thế thì dịch một lần
+  // Video ngắn hơn thế thì dịch một lần. Dài hơn thì đoạn đầu chỉ 20 s: đo khi lướt, /aweme/v1/play có lúc chuyển
+  // sang máy chủ video chỉ tải được ~0,3 MB/s, tải trọn video 60 s mất cả chục giây mới có sub đầu.
+  const SINGLE_MAX = 30;
   const PRE = 1.5, POST = 6;     // âm thanh gửi dư hai đầu để câu vắt qua ranh giới không bị cắt
 
   let settings = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0 };
   const items = new Map();       // id -> metadata
-  const order = [];              // thứ tự video theo feed
+  const order = [];              // thứ tự video theo các API feed (không tính video chỉ thấy ở API khác hay ở player)
+  const watched = new Set();     // video đã từng là video đang xem
   const vids = new Map();        // id -> { plan, media, url, total, chunks: Map k -> kết quả, cues }
   // Hai hàng tải riêng: video đang xem, và video kế tiếp (dịch sẵn). Đo trên Douyin thật: một lượt tải dịch sẵn
   // gặp CDN chậm mất 13 s, đoạn ở chỗ vừa tua tới phải chờ theo.
   const lanes = { current: { queue: [], busy: false }, prefetch: { queue: [], busy: false } };
   let currentId = null;
   let playhead = 0;              // video.currentTime của video đang xem
+  let wanted = new Set();        // "id:k" các đoạn đang cần (schedule() tính lại 4 lần/giây)
 
   const alive = () => { try { return !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; } };
 
@@ -32,7 +36,7 @@
       if (!d || !d.id || d.id === 'undefined') continue;
       const prev = items.get(d.id);
       if (!prev || (d.gears.length + d.audio.length) > (prev.gears.length + prev.audio.length)) items.set(d.id, d);
-      if (!prev) order.push(d.id);
+      if (d.feed && !order.includes(d.id)) order.push(d.id);
     }
     schedule();
   }
@@ -87,7 +91,8 @@
   const chunkAt = (plan, t) => plan.findIndex(([a, b]) => t >= a && t < b);
   function needsWork(id, k) {
     const c = vid(id).chunks.get(k);
-    return !c || (c.status === 'error' && Date.now() - (c.at || 0) > 20000);
+    // Lỗi thì thử lại sau 20 s, hoặc sau thời gian server báo (vd. dịch hết lượt trong ngày: server tạm nghỉ vài phút).
+    return !c || (c.status === 'error' && Date.now() - (c.at || 0) > Math.max(20000, c.retryAfterMs || 0));
   }
   function schedule() {
     if (!settings.enabled || !currentId) return;
@@ -95,27 +100,48 @@
     const plan = planFor(currentId);
     if (plan) plan.forEach(([a, b], k) => { if (b > playhead && a < playhead + LOOKAHEAD) want.push([currentId, k]); });
     else want.push([currentId, 0]);
-    const i = order.indexOf(currentId);
-    for (const id of i >= 0 ? order.slice(i + 1, i + 1 + PREFETCH) : []) want.push([id, 0]);
+    for (const id of upcoming()) want.push([id, 0]);
+    wanted = new Set(want.map(([id, k]) => id + ':' + k));
+    bumpCurrent(plan);
     const todo = want.filter(([id, k]) => eligible(items.get(id)) && needsWork(id, k));
     lanes.current.queue = todo.filter(([id]) => id === currentId);
     lanes.prefetch.queue = todo.filter(([id]) => id !== currentId);
-    cancelUnwanted(want);
+    cancelUnwanted();
     pump(lanes.current);
     pump(lanes.prefetch);
   }
-  // Đoạn đã gửi server mà không còn cần (tua đi chỗ khác, lướt sang video khác) thì huỷ: server bỏ nếu chưa xử lý,
-  // để chỗ đang xem không phải xếp hàng sau các chỗ đã tua qua.
-  function cancelUnwanted(want) {
-    const keep = new Set(want.map(([id, k]) => id + ':' + k));
+  // Video sắp lướt tới: các video sau video đang xem trong feed. Video đang xem không có trong feed (đo khi vào
+  // trang: 1–2 video đầu chỉ thấy qua player, feed tới sau) thì lấy các video feed chưa xem.
+  function upcoming() {
+    const i = order.indexOf(currentId);
+    const next = i >= 0 ? order.slice(i + 1) : order.filter(id => !watched.has(id));
+    return next.filter(id => eligible(items.get(id))).slice(0, PREFETCH);
+  }
+  // Đoạn không còn cần (tua đi chỗ khác, lướt sang video khác): đang tải thì ngắt (đo khi lướt: lượt tải của video
+  // vừa lướt qua gặp máy chủ chậm làm video mới phải chờ thêm), đã gửi server thì huỷ (server bỏ nếu chưa xử lý),
+  // để chỗ đang xem không phải xếp hàng sau các chỗ đã bỏ qua.
+  function cancelUnwanted() {
     const keys = [];
     for (const [id, v] of vids) {
-      for (const [k, c] of v.chunks) if (c.status === 'pending' && c.sent && !keep.has(id + ':' + k)) { c.sent = false; keys.push(id + ':' + k); }
+      for (const [k, c] of v.chunks) {
+        if (c.status !== 'pending' || wanted.has(id + ':' + k)) continue;
+        if (c.sent) { c.sent = false; keys.push(id + ':' + k); } else if (c.ctl) c.ctl.abort();
+      }
     }
     if (keys.length && alive()) chrome.runtime.sendMessage({ type: 'cancel', keys }).catch(() => {});
   }
-  async function rangeFetch(url, a, b) {
-    const res = await fetch(url, { headers: { Range: `bytes=${a}-${b}` }, credentials: 'omit', cache: 'no-store' });
+  // Lướt tới video đã được gửi dịch sẵn (lúc gửi chưa gấp): báo server làm nó trước các video kế tiếp.
+  function bumpCurrent(plan) {
+    const v = vids.get(currentId);
+    if (!v || !plan) return;
+    for (const [k, c] of v.chunks) {
+      if (c.status !== 'pending' || !c.sent || c.urgent || !urgentChunk(currentId, k, plan) || !alive()) continue;
+      c.urgent = true;
+      chrome.runtime.sendMessage({ type: 'bump', server: settings.server, payload: { id: currentId, from: c.from, to: c.to } }).catch(() => {});
+    }
+  }
+  async function rangeFetch(url, a, b, signal) {
+    const res = await fetch(url, { headers: { Range: `bytes=${a}-${b}` }, credentials: 'omit', cache: 'no-store', signal });
     if (res.status !== 206 && res.status !== 200) throw new Error('tải video: HTTP ' + res.status);
     const total = Number(((res.headers.get('content-range') || '').match(/\/(\d+)$/) || [])[1]) || null;
     let buf = await res.arrayBuffer();
@@ -142,14 +168,14 @@
     for (const [, x] of withMedia.slice(0, Math.max(0, withMedia.length - 20))) x.media = null;
     return v.media;
   }
-  async function fetchBytes(v, a, b) {
+  async function fetchBytes(v, a, b, signal) {
     for (const url of v.url === v.api ? [v.api] : [v.url, v.api]) {   // link CDN đã chuyển hướng hết hạn thì quay về /aweme/v1/play/
       try {
-        const r = await rangeFetch(url, a, b);
+        const r = await rangeFetch(url, a, b, signal);
         if (v.total && r.total && r.total !== v.total) throw new Error('file video đã đổi');
         if (r.url) v.url = r.url;
         return r.buf;
-      } catch (e) { if (url === v.api) throw e; }
+      } catch (e) { if (url === v.api || signal.aborted) throw e; }
     }
   }
   function toBase64(u8) {
@@ -165,7 +191,7 @@
   async function runChunk(id, k) {
     const v = vid(id);
     const d = items.get(id);
-    const entry = { status: 'pending' };
+    const entry = { status: 'pending', ctl: new AbortController() };
     const done = (r) => {
       if (v.chunks.get(k) !== entry) return;
       if (r.status === 'cancelled') { v.chunks.delete(k); return; }   // tua lại tới đây thì gửi lại
@@ -180,26 +206,28 @@
       const [from, to] = plan[k];
       const w = TodMp4.window(media, Math.max(0, from - PRE), to + POST);
       if (!w) return done({ status: 'no_audio', from, to });
-      const aac = w.build(await fetchBytes(v, w.start, w.end - 1));
-      // Trong lúc tải, người xem đã tua đi chỗ khác: khỏi gửi (tua lại tới đây thì làm lại).
-      if (id === currentId && !(to > playhead && from < playhead + LOOKAHEAD)) { v.chunks.delete(k); return; }
+      const aac = w.build(await fetchBytes(v, w.start, w.end - 1, entry.ctl.signal));
+      // Trong lúc tải, người xem đã tua/lướt đi chỗ khác: khỏi gửi (quay lại tới đây thì làm lại).
+      if (!wanted.has(id + ':' + k)) { if (v.chunks.get(k) === entry) v.chunks.delete(k); return; }
       // Không chờ server xong mới tải đoạn tiếp theo. urgent: đoạn chứa (hoặc sắp tới) chỗ đang xem, server làm trước.
-      entry.sent = true;
+      Object.assign(entry, { sent: true, from, to, urgent: urgentChunk(id, k, plan) });
       chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':' + k, payload: {
         id, desc: d.desc, hashtags: d.hashtags, durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
-        prev: k > 0 ? plan[k - 1] : null, urgent: urgentChunk(id, k, plan), aac: toBase64(aac) } })
+        prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, aac: toBase64(aac) } })
         .then((r) => done(r && r.status ? { ...r, from, to } : { status: 'error', error: (r && r.error) || 'không có phản hồi', from, to }))
         .catch((e) => done({ status: 'error', error: e.message, from, to }));
     } catch (e) {
+      if (entry.ctl.signal.aborted) { if (v.chunks.get(k) === entry) v.chunks.delete(k); return; }
       done({ status: 'error', error: e.message });
     }
   }
-  // Đoạn ở chỗ đang xem chưa dịch xong thì chưa gửi đoạn khác (đoạn kế, video kế tiếp): sau khi tua, chỗ đang xem
-  // được server làm một mình. Đoạn kế thường còn 15–30 s mới cần; schedule() gửi nó ngay khi đoạn này xong.
+  // Đoạn ở chỗ đang xem chưa dịch xong thì chưa làm đoạn kế của cùng video: sau khi tua, chỗ đang xem được server
+  // làm trước. Đoạn kế thường còn 15–30 s mới cần; schedule() gửi nó ngay khi đoạn này xong. Video kế tiếp thì không
+  // hoãn (đo khi vào trang: hoãn thì lướt sang video 2 cũng phải chờ dịch từ đầu); server vẫn ưu tiên đoạn gấp.
   const urgentChunk = (id, k, plan) => id === currentId && plan && plan[k] && plan[k][0] <= playhead + 5 && playhead < plan[k][1];
   function holdBack(id, k) {
     const plan = planFor(currentId);
-    if (!plan || urgentChunk(id, k, plan)) return false;
+    if (id !== currentId || !plan || urgentChunk(id, k, plan)) return false;
     for (const [pk, c] of vid(currentId).chunks) if (c.status === 'pending' && urgentChunk(currentId, pk, plan)) return true;
     return false;
   }
@@ -275,7 +303,7 @@
     if (!lastFind || now - lastFind > 250) {   // dò video đang xem 4 lần/giây là đủ; vẽ sub thì mỗi khung hình
       lastFind = now;
       act = findActive();
-      if (act && act.id !== currentId) currentId = act.id;
+      if (act && act.id !== currentId) { currentId = act.id; watched.add(currentId); }
       const pv = settings.enabled && act ? videoFor(act) : null;
       playhead = pv ? pv.currentTime : 0;
       schedule();                              // theo chỗ đang xem: tua tới đâu dịch tới đó

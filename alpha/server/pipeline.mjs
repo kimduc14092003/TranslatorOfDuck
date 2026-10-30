@@ -83,7 +83,20 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
   signal?.addEventListener('abort', () => { clearTimeout(t); reject(signal.reason); }, { once: true });
 });
 // timeoutMs: mỗi lần gọi có hạn; quá hạn thì gọi lại ngay. Đo trên dữ liệu thật: lần dịch thường 1,5–2 s nhưng có lần 24 s.
+// Hết lượt gọi trong ngày (vd. Gemini gói miễn phí: quotaId ...PerDay...): gọi lại vô ích, chỉ làm video kẹt
+// "đang dịch" mỗi lần 20–60 s. Nhớ lại DAY_QUOTA_PAUSE_MS, trong lúc đó báo lỗi ngay, không gọi dịch vụ.
+const DAY_QUOTA_PAUSE_MS = 10 * 60 * 1000;
+const dayQuotaUntil = new Map();   // host → thời điểm thử lại
+const hostName = (host) => /generativelanguage/.test(host) ? 'Gemini' : host;
+function dayQuotaError(host) {
+  const err = new Error(`${hostName(host)} đã hết lượt gọi trong ngày (gói miễn phí)`);
+  err.quotaDay = true;
+  err.retryAfterMs = Math.max(0, (dayQuotaUntil.get(host) || 0) - Date.now());
+  return err;
+}
 async function httpJson(url, init, timeoutMs = 20000) {
+  const host = new URL(url).host;
+  if ((dayQuotaUntil.get(host) || 0) > Date.now()) throw dayQuotaError(host);
   for (let i = 0; ; i++) {
     let res, text;
     try {
@@ -104,6 +117,11 @@ async function httpJson(url, init, timeoutMs = 20000) {
         // Gemini ghi loại hạn mức (quotaId) và thời gian nên chờ (retryDelay) trong lỗi 429: ghi log, chờ đúng chừng đó.
         const details = (body && body.error && body.error.details) || [];
         const quota = details.flatMap(d => d.violations || []).map(v => v.quotaId).filter(Boolean)[0];
+        if (res.status === 429 && /PerDay/i.test(quota || '')) {
+          dayQuotaUntil.set(host, Date.now() + DAY_QUOTA_PAUSE_MS);
+          console.log(`    · ${host} báo 429 (${quota}): hết lượt trong ngày, tạm không gọi ${DAY_QUOTA_PAUSE_MS / 60000} phút`);
+          throw dayQuotaError(host);
+        }
         const hint = Number((/^([\d.]+)s$/.exec((details.find(d => d.retryDelay) || {}).retryDelay || '') || [])[1]) * 1000 || 0;
         const wait = Math.min(Math.max(RETRY_WAITS[i], hint), 20000);
         if (res.status === 429) console.log(`    · ${new URL(url).host} báo 429${quota ? ' (' + quota + ')' : ''}: thử lại sau ${Math.round(wait / 1000)} s`);
@@ -360,6 +378,9 @@ export async function translate(meta, cues, context = [], signal) {
 // ---------------------------------------------------------------- toàn bộ
 // opts (video dài, từng đoạn): { kind: 'aac', offset: giây bắt đầu của âm thanh, from, to, context }; signal: huỷ giữa chừng.
 export async function makeSubtitles(meta, buf, opts = {}) {
+  // Dịch đang hết lượt trong ngày: báo ngay, khỏi tốn tiền nhận dạng giọng nói cho đoạn không dịch được.
+  const mtHost = new URL(GEMINI_BASE).host;
+  if ((dayQuotaUntil.get(mtHost) || 0) > Date.now()) throw dayQuotaError(mtHost);
   const t0 = Date.now();
   const audio = await extractAudio(buf, opts.kind);
   const tAudio = Date.now();

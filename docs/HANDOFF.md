@@ -85,10 +85,10 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 
 | Lệnh | Kiểm tra gì |
 |---|---|
-| `cd alpha/server && npm test` | Chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh (13 kiểm tra); hàng đợi khi tua liên tiếp: ưu tiên, huỷ (5 kiểm tra) |
+| `cd alpha/server && npm test` | Chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh (13 kiểm tra); hàng đợi khi tua liên tiếp: ưu tiên, huỷ, đẩy lên khi lướt tới, Gemini hết lượt trong ngày (7 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms (4 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
-| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s (16 kiểm tra) |
+| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên (17 kiểm tra) |
 
 Cần cho các test: Node 18+, `playwright`, `ffmpeg`, `openssl`.
 
@@ -156,6 +156,34 @@ Còn lại, chưa làm:
 - Lượt "rút gọn dòng quá dài" chạy ở mọi đoạn đo được, thêm ~1–1,4 s mỗi đoạn (§8).
 - Đoạn vừa tua tới không có ngữ cảnh dịch (đoạn trước chưa dịch hoặc đã bị huỷ).
 - Khi thử nhiều, key Gemini chạm hạn mức theo phút: một câu ngắn mất 25 s vì thử lại. Chưa đọc được `quotaId` lúc đó (log mới sẽ ghi).
+
+## 6d. Lướt video: dính "đang dịch" lâu, đã sửa một phần (extension 0.2.5)
+
+Đo bằng `ArrowDown` qua 5–6 video ở 推荐, mỗi video 8–12 s, ghi nhãn mỗi 200 ms cùng các request tải.
+- **Lướt khi đã ở trang một lúc:** 6/6 video có kết quả ngay khi lướt tới (đã dịch sẵn), cả trước khi sửa.
+- **Vừa vào trang (tải lại):** đây là chỗ dính.
+  - Trước khi sửa: video 1 không ra trong 12 s, video 2 và 4 chờ hết 8–12 s.
+  - Sau khi sửa: video 1 ra sau 3,8–6,5 s (3 lần đo); từ video 3 trở đi có ngay.
+
+Nguyên nhân và cách sửa:
+- **Dịch sẵn nhầm video.**
+  - Khi vào trang, Douyin tải `/aweme/v1/web/aweme/favorite/` (20 video đã thích ở cột bên). Extension xếp chúng vào hàng "video kế tiếp" và dịch sẵn, vừa tốn API vừa bỏ sót video thật.
+  - Sửa: `tap.main.js` đánh dấu `feed` cho video lấy từ các API trong `PATHS`, và `content.js` chỉ đoán video kế tiếp từ đó.
+  - Video đang xem không có trong feed (1–2 video đầu chỉ thấy qua player) thì lấy các video feed chưa xem.
+  - e2e có kiểm tra cho trường hợp này.
+- **Lượt tải của video đã lướt qua chặn video mới.** Sửa: tải đoạn không còn cần thì ngắt bằng `AbortController`; tải xong mà không còn cần (kể cả video dịch sẵn) thì không gửi.
+- **Video kế tiếp bị hoãn** tới khi video đang xem dịch xong (luật của §6c). Sửa: chỉ hoãn đoạn kế của cùng video; video kế tiếp tải và gửi ngay, server vẫn làm đoạn gấp trước.
+- **Video dịch sẵn vẫn xếp hàng như việc không gấp khi đã lướt tới.** Sửa: extension gọi `POST /v1/bump`, server đẩy đoạn đó lên đầu.
+- **Video 31–75 s dịch một lần cả video**, nên phải tải trọn file mới có sub đầu. Sửa: `SINGLE_MAX` giảm từ 75 xuống 30. Video dài hơn 30 s được chia đoạn đầu 20 s như video dài; cache cũ của các video này không dùng lại.
+- **Gemini hết lượt trong ngày** (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`, key đang ở **gói miễn phí**).
+  - Trước đây mỗi đoạn có lời thử lại 20–60 s (đo được một lần dịch mất 63 s), nên video kẹt "đang dịch".
+  - Sửa: gặp `quotaId` có `PerDay` thì tạm không gọi Gemini 10 phút, cũng không gọi ASR trong thời gian đó. Nhãn hiện ngay "lỗi: Gemini đã hết lượt gọi trong ngày (gói miễn phí)", và extension chờ đúng thời gian server báo rồi mới thử lại.
+- Log server ghi thêm thời gian xếp hàng và thời gian chạy của đoạn bị huỷ; `/health` có `running`, `queued`.
+
+Còn lại, chưa làm:
+- **Key Gemini gói miễn phí** không đủ cho việc lướt bình thường: hết lượt trong ngày sau vài chục video. Lượt rút gọn (§8) gọi thêm một lần mỗi đoạn có dòng dài. Cần chủ dự án chọn: bật trả phí, đổi model, hay bỏ lượt rút gọn.
+- **Máy chủ video chậm.** `/aweme/v1/play/` có lúc chuyển sang `v5-hl-mly-ov.zjcdn.com`, chỉ tải 0,3–0,9 MB/s (các máy khác trên 3 MB/s), nên đoạn đầu 2–4 MB mất 5–11 s. Có thể tải song song nhiều khoảng byte, nhưng như thế là lách giới hạn tốc độ của CDN, cần chủ dự án quyết theo quy tắc ở §2.
+- **Feed tới muộn.** Khi vào trang, `/aweme/v1/web/tab/feed` tới sau ~12 s. Video 1–2 chỉ thấy qua player nên chưa dịch sẵn được video 2. Có thể tìm metadata của chúng trong `self.__pace_f` (hiện chỉ đếm, chưa đọc).
 
 Ghi chú môi trường test:
 - Extension nạp bằng `--load-extension` trong Chrome for Testing bị tắt nếu gọi `chrome.runtime.reload()`; phải khởi động lại trình duyệt.
