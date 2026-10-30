@@ -103,8 +103,14 @@ async function handleSubtitles(req, res) {
         if (pj && pj.started) {
           await Promise.race([pj.promise.catch(() => {}), new Promise(r => { setTimeout(r, CONTEXT_WAIT_MS); signal?.addEventListener('abort', r, { once: true }); })]);
         }
-        if (!fs.existsSync(prev)) return [];
-        try { return (JSON.parse(fs.readFileSync(prev, 'utf8')).cues || []).slice(-3).map(c => ({ zh: c.zh, vi: c.vi })); } catch (_) { return []; }
+        const lastLines = (f) => { try { return (JSON.parse(fs.readFileSync(f, 'utf8')).cues || []).slice(-3).map(c => ({ zh: c.zh, vi: c.vi })); } catch (_) { return []; } };
+        if (fs.existsSync(prev)) return lastLines(prev);
+        // Đoạn liền trước chưa dịch (vừa tua tới): lấy đoạn đã dịch gần nhất phía trước để giữ xưng hô, tên riêng.
+        const re = new RegExp(`^${id}\\.(\\d+)-(\\d+)\\.vi\\.${PIPELINE_VERSION}\\.json$`);
+        const near = fs.readdirSync(CACHE).map(f => [f, re.exec(f)]).filter(([, m]) => m && Number(m[2]) < meta.from)
+          .sort((a, b) => Number(b[1][2]) - Number(a[1][2]))[0];
+        const lines = near ? lastLines(path.join(CACHE, near[0])) : [];
+        return lines.length ? { lines, far: true } : [];
       };
       opts = { kind: 'aac', offset: meta.audioStart, from: meta.from, to: meta.to, context };
     }
@@ -125,7 +131,7 @@ async function handleSubtitles(req, res) {
     const t = out.timings || {};
     const why = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch không ra dòng nào' };
     console.log(`${new Date().toLocaleTimeString()} ${id}${where} ${out.status}${out.label && out.status !== 'ok' ? ' (' + (why[out.label] || out.label) + ')' : ''}` +
-      `${out.cues ? ' ' + out.cues.length + ' dòng' : ''}${chunked && meta.from > 0 && out.status === 'ok' && !out.cached ? ` (ngữ cảnh ${out.context || 0} dòng)` : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu, ${out.sung ?? 0} câu hát bị bỏ` +
+      `${out.cues ? ' ' + out.cues.length + ' dòng' : ''}${chunked && meta.from > 0 && out.status === 'ok' && !out.cached ? ` (ngữ cảnh ${out.context || 0} dòng${out.contextFar ? ' ở đoạn xa' : ''}${out.before ? `, lời ngay trước ${out.before} câu` : ''})` : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu, ${out.sung ?? 0} câu hát bị bỏ` +
       ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${t.asrMs ?? '-'} ms, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : ''}` +
       (job.startedAt - job.at > 300 ? ` · xếp hàng ${job.startedAt - job.at} ms` : '') +
       (out.heard ? `\n    nghe được: ${out.heard}` : ''));

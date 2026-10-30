@@ -15,6 +15,9 @@
   // sang máy chủ video chỉ tải được ~0,3 MB/s, tải trọn video 60 s mất cả chục giây mới có sub đầu.
   const SINGLE_MAX = 30;
   const PRE = 1.5, POST = 6;     // âm thanh gửi dư hai đầu để câu vắt qua ranh giới không bị cắt
+  // Đoạn trước chưa dịch (vừa tua tới): gửi dư 8 s phía trước. Server lấy lời nói phần đó làm mạch câu cho bước dịch
+  // và giữ câu vắt qua đầu đoạn (đo trên vlog thật: 30% đoạn sau tua dịch không có ngữ cảnh, sai xưng hô, mất nửa câu).
+  const PRE_SEEK = 8;
 
   let settings = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0 };
   const items = new Map();       // id -> metadata
@@ -204,7 +207,9 @@
       const plan = planFor(id);
       if (!plan[k]) { v.chunks.delete(k); return; }
       const [from, to] = plan[k];
-      const w = TodMp4.window(media, Math.max(0, from - PRE), to + POST);
+      // Đoạn trước đã dịch hoặc đang dịch (phát liền mạch: server chờ nó để lấy ngữ cảnh) thì chỉ gửi dư 1,5 s.
+      const prevDone = k === 0 || ['ok', 'pending'].includes((v.chunks.get(k - 1) || {}).status);
+      const w = TodMp4.window(media, Math.max(0, from - (prevDone ? PRE : PRE_SEEK)), to + POST);
       if (!w) return done({ status: 'no_audio', from, to });
       const aac = w.build(await fetchBytes(v, w.start, w.end - 1, entry.ctl.signal));
       // Trong lúc tải, người xem đã tua/lướt đi chỗ khác: khỏi gửi (quay lại tới đây thì làm lại).
@@ -224,7 +229,10 @@
   // Đoạn ở chỗ đang xem chưa dịch xong thì chưa làm đoạn kế của cùng video: sau khi tua, chỗ đang xem được server
   // làm trước. Đoạn kế thường còn 15–30 s mới cần; schedule() gửi nó ngay khi đoạn này xong. Video kế tiếp thì không
   // hoãn (đo khi vào trang: hoãn thì lướt sang video 2 cũng phải chờ dịch từ đầu); server vẫn ưu tiên đoạn gấp.
-  const urgentChunk = (id, k, plan) => id === currentId && plan && plan[k] && plan[k][0] <= playhead + 5 && playhead < plan[k][1];
+  // Đoạn kế bắt đầu trong 10 s tới cũng là gấp (dịch song song): đo trên vlog thật, tua tới gần cuối một đoạn thì đoạn
+  // đó dịch xong (6–9 s) đã bị phát qua, đoạn kế mới bắt đầu dịch, chờ 10–12 s mới có sub.
+  const URGENT_AHEAD = 10;
+  const urgentChunk = (id, k, plan) => id === currentId && plan && plan[k] && plan[k][0] <= playhead + URGENT_AHEAD && playhead < plan[k][1];
   function holdBack(id, k) {
     const plan = planFor(currentId);
     if (id !== currentId || !plan || urgentChunk(id, k, plan)) return false;

@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { classifySpeech, segmentCues, fixViText, splitSung, extractAudio, windowAsr, resplitSentences } from '../pipeline.mjs';
+import { classifySpeech, segmentCues, fixViText, splitSung, extractAudio, windowAsr, resplitSentences, speechBefore } from '../pipeline.mjs';
 
 const W = (text, start, end) => ({ text, start, end });
 let n = 0;
@@ -65,6 +65,15 @@ t('đoạn video dài: đổi về thời gian video, chỉ giữ câu bắt đ�
   const cues = segmentCues(w);
   assert.equal(cues[0].start, 21.5);
   assert.equal(cues[0].se, 23.5);
+});
+t('vừa tua tới (gửi dư 8 s): giữ câu vắt qua đầu đoạn, lời trước đó làm mạch câu', () => {
+  // Âm thanh của đoạn [20, 50) bắt đầu ở 12 s. Câu 1 (12,2–14 s) ở sát đầu phần gửi dư: bỏ. Câu 2 (15–17 s) nằm trọn
+  // trước đoạn: làm mạch câu. Câu 3 (18–21 s) vắt qua đầu đoạn: giữ (đoạn trước chưa dịch thì không ai hiện câu này).
+  const r = { text: '', segments: [{ start: 0.2, end: 2, text: '甲乙。' }, { start: 3, end: 5, text: '丙丁。' },
+    { start: 6, end: 9, text: '戊己庚。' }, { start: 10, end: 12, text: '辛壬。' }], words: [] };
+  assert.deepEqual(windowAsr(r, 12, 20, 50, true).segments.map(x => x.text), ['戊己庚。', '辛壬。']);
+  assert.deepEqual(windowAsr(r, 12, 20, 50).segments.map(x => x.text), ['辛壬。']);   // phát liền mạch: như cũ
+  assert.deepEqual(speechBefore(r, 12, 20), ['丙丁。']);
 });
 t('Fun-ASR trả cả đoạn thành một câu: chia lại theo từ, đoạn sau vẫn có lời', () => {
   // Như đoạn [20, 50) của một vlog thật: âm thanh bắt đầu ở 18,5 s, "câu" duy nhất bắt đầu ở 0,1 s (18,6 s).

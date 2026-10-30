@@ -85,7 +85,7 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 
 | Lệnh | Kiểm tra gì |
 |---|---|
-| `cd alpha/server && npm test` | Chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh (13 kiểm tra); hàng đợi khi tua liên tiếp: ưu tiên, huỷ, đẩy lên khi lướt tới, Gemini hết lượt trong ngày (7 kiểm tra); dịch bằng OpenAI giả (5 kiểm tra) |
+| `cd alpha/server && npm test` | Chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới (14 kiểm tra); hàng đợi khi tua liên tiếp: ưu tiên, huỷ, đẩy lên khi lướt tới, Gemini hết lượt trong ngày (7 kiểm tra); dịch bằng OpenAI giả (5 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms (4 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
 | `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên (17 kiểm tra) |
@@ -211,6 +211,22 @@ Ghi chú cũ, giữ để tham khảo:
 - **c. Lỗi tải hoặc đọc file.** Nhãn đỏ.
 
 Cách làm đề xuất: tái hiện trên Douyin thật, xem nhãn, log và `debug`, rồi chỉnh theo dữ liệu. Có thể thêm nút "Dịch cả bài hát" trong popup để tạm tắt bộ lọc.
+
+## 6e. Sau khi tua: dịch thiếu ngữ cảnh, mất câu ở chỗ tua tới (`alpha-7`, extension 0.2.8)
+
+Kiểm trên vlog 34 phút bằng cách bấm thanh tiến trình như người dùng, ghi mỗi 100 ms (`scratchpad/seekcheck.mjs`, chỉ để trên máy):
+- **Sub hiện đúng thời điểm.** 0 câu hiện nhầm trong 534 mẫu sau 4 lần tua; số còn lại là đang chờ dịch hoặc khung hình đầu câu.
+- **Extension đọc đúng video.** Trang có 3–4 thẻ `<video>`, các thẻ kia ẩn hoặc nhỏ.
+- **Không cần bắt riêng sự kiện tua.** Mỗi khung hình extension đọc `currentTime`, và 4 lần/giây lên lịch dịch theo nó.
+
+Lỗi nằm ở nội dung dịch:
+- **30% đoạn sau đoạn đầu (26/87) dịch không có ngữ cảnh**, chủ yếu là đoạn vừa tua tới: xưng hô đổi giữa chừng, câu bị cắt đôi ở ranh giới dịch lệch nghĩa.
+  - Sửa 1: đoạn liền trước chưa dịch thì server lấy 3 dòng cuối của đoạn đã dịch gần nhất phía trước trong cùng video. Prompt ghi rõ là "cách một quãng".
+  - Sửa 2: đoạn liền trước chưa có (chưa dịch, chưa gửi) thì extension gửi dư 8 s âm thanh phía trước, thay vì 1,5 s. Server lấy lời nói trọn trong phần đó (`speechBefore`) làm mạch câu cho bước dịch.
+  - Đo khi dịch lại 3 đoạn: rõ nhất ở câu bị cắt đôi ("用不了" thành "Không dùng được" thay vì "Không được") và câu thiếu chủ ngữ.
+- **Câu ở ngay chỗ tua tới không bao giờ hiện.** Câu bắt đầu trước ranh giới thuộc đoạn trước, mà đoạn trước không còn cần nên không được dịch. Sửa: khi gửi dư 8 s, `windowAsr(..., keepCrossing)` giữ cả câu vắt qua đầu đoạn; `cues.js` bỏ bản trùng nếu sau này đoạn trước cũng dịch.
+- **Tua tới gần cuối một đoạn thì chờ 10–12 s:** đoạn đó dịch xong đã bị phát qua, rồi đoạn kế mới bắt đầu dịch. Sửa: đoạn bắt đầu trong 10 s tới cũng là "gấp" (`URGENT_AHEAD`), dịch song song. Sau sửa: 6,6–10,8 s, phần lớn là thời gian dịch của model đang dùng (3,5–7 s mỗi đoạn qua dịch vụ cùng kiểu API OpenAI chạy trên máy).
+- Log ghi `(ngữ cảnh 3 dòng ở đoạn xa, lời ngay trước N câu)`.
 
 ## 7. Việc tiếp theo trên Mac
 
