@@ -54,6 +54,12 @@ async function handleSubtitles(req, res) {
   const key = file;
   if (fs.existsSync(file)) { const { debug: _d, ...c } = JSON.parse(fs.readFileSync(file, 'utf8')); return send(res, 200, { ...c, cached: true }); }
   if (!inflight.has(key)) {
+    // TOD_DUMP=1: giữ âm thanh nhận được ở work/dump (tên file kèm audioStart) để soi lỗi ASR, mốc thời gian. Chỉ để trên máy, xoá sau khi xong.
+    if (process.env.TOD_DUMP) {
+      const dir = path.join(CACHE, '..', 'dump');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, path.basename(file, '.json') + (chunked ? `.at${meta.audioStart}.aac` : '.mp4')), Buffer.from(chunked ? meta.aac : meta.b64, 'base64'));
+    }
     let opts = {};
     if (chunked) {
       // Ngữ cảnh: 3 dòng cuối của đoạn trước, nếu đoạn đó đã dịch xong.

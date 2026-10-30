@@ -15,7 +15,7 @@ const GEMINI_MODEL = ENV.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 const DASHSCOPE_BASE = ENV.DASHSCOPE_BASE || 'https://dashscope-intl.aliyuncs.com';
 const FUNASR_MODEL = ENV.FUNASR_MODEL || 'fun-asr-flash-2026-06-15';
 export const MAX_SECONDS = Number(ENV.MAX_SECONDS || 60);
-export const PIPELINE_VERSION = 'alpha-4';
+export const PIPELINE_VERSION = 'alpha-5';
 
 function loadDotEnv(file) {
   if (!fs.existsSync(file)) return;
@@ -133,8 +133,33 @@ export async function transcribe(mp3) {
   throw new Error('Chưa có key: đặt DASHSCOPE_API_KEY (Fun-ASR) hoặc GEMINI_API_KEY trong alpha/server/.env');
 }
 
+// Fun-ASR có khi trả cả đoạn âm thanh thành một "câu" (Douyin thật: 37 s lời nói liên tục, 1 câu), khiến
+// windowAsr bỏ cả đoạn và lọc hát theo câu thành lọc cả đoạn. Chia lại câu từ danh sách từ: hết câu ở dấu
+// 。！？…, ở khoảng lặng ≥ 0,8 s, ở dấu phẩy khi câu đã dài ≥ 6 s; dài quá 12 s thì cắt cứng.
+export function resplitSentences(r) {
+  const words = (r.words || []).filter(w => w.text && w.end > w.start);
+  if (!words.length) return r;
+  const segments = [];
+  let cur = [];
+  const flush = () => {
+    if (cur.length) segments.push({ start: cur[0].start, end: cur[cur.length - 1].end, text: cur.map(w => w.text).join('') });
+    cur = [];
+  };
+  for (const w of words) {
+    if (cur.length && (w.start - cur[cur.length - 1].end >= 0.8 || w.end - cur[0].start > 12)) flush();
+    cur.push(w);
+    if (/[。！？；…!?;]$/.test(w.text) || (/[，、,：:]$/.test(w.text) && w.end - cur[0].start >= 6)) flush();
+  }
+  flush();
+  return { ...r, segments, words, text: segments.map(x => x.text).join('') };
+}
+
 // ---------------------------------------------------------------- nói hay hát (§7.2, §15: chỉ dịch lời nói)
 const MUSIC_TAGS = /(翻唱|对口型|手势舞|音乐|歌|唱|舞|mv|cover|bgm|卡点|伴奏|旋律|前奏|dj)/i;
+// Lời lặp kiểu điệp khúc: một cụm 2–8 chữ Hán lặp liền nhau `times` lần. Bỏ số và chữ Latin trước ("25000"
+// có "000" không phải lời lặp), gộp một chữ lặp liền nhau ("哈哈哈", "对对对" là lời nói).
+const repeated = (t, times) => new RegExp(`(.{2,8})\\1{${times - 1},}`, 'u')
+  .test(normalize(t).filter(c => /\p{Script=Han}/u.test(c)).join('').replace(/(.)\1+/gu, '$1'));
 export function classifySpeech(meta, r) {
   const text = (r && r.text) || '';
   const han = (text.match(HAN) || []).length;
@@ -150,7 +175,7 @@ export function classifySpeech(meta, r) {
     han, latinShare: han + latin ? round(latin / (han + latin), 2) : 0, medCharDur: round(pct(perChar, 0.5), 3),
     cps: span > 0 ? round(han / span, 1) : null,
     tagMusic: MUSIC_TAGS.test((meta.desc || '') + ' ' + (meta.hashtags || []).join(' ')),
-    repeat: /(.{1,8})\1{3,}/u.test(normalize(text).join('')),
+    repeat: repeated(text, 4),
   };
   let label;
   if (!f.han && f.latinShare === 0) label = 'no_speech';
@@ -175,7 +200,7 @@ export function splitSung(r) {
     const perChar = [];
     for (const w of ws) { const n = (w.text.match(HAN) || []).length; for (let i = 0; i < n; i++) perChar.push((w.end - w.start) / n); }
     const med = pct(perChar, 0.5);
-    const sung = (perChar.length >= 4 && med > 0.33) || /(.{1,8})\1{2,}/u.test(normalize(x.text).join(''));
+    const sung = (perChar.length >= 4 && med > 0.33) || repeated(x.text, 3);
     return { start: x.start, end: x.end, text: x.text, medCharDur: round(med, 3), sung, words: ws };
   });
   const kept = sentences.filter(x => !x.sung);
@@ -305,7 +330,7 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   const audio = await extractAudio(buf, opts.kind);
   const tAudio = Date.now();
   if (!audio) return { status: 'no_audio', timings: { audioMs: tAudio - t0 } };
-  let asr = await transcribe(audio.mp3);
+  let asr = resplitSentences(await transcribe(audio.mp3));
   const tAsr = Date.now();
   if (opts.from != null) asr = windowAsr(asr, opts.offset || 0, opts.from, opts.to);
   const cls = classifySpeech(meta, asr);
@@ -314,8 +339,9 @@ export async function makeSubtitles(meta, buf, opts = {}) {
     debug: { features: cls, sentences: split.sentences } };
   const skip = (label) => ({ status: 'skipped', label, ...base, timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio } });
   if (cls.label !== 'speech' && cls.label !== 'singing') return skip(cls.label);
-  // Cả video là bài hát khi: lặp lời, hoặc nhận ra "hát" kèm hashtag nhạc, hoặc quá nửa số câu là câu hát.
-  if (cls.label === 'singing' && (cls.repeat || cls.tagMusic || split.sung * 2 > split.total)) return skip('singing');
+  // Cả đoạn là bài hát khi: lặp lời, hoặc quá nửa số câu là câu hát, hoặc chữ kéo dài kèm hashtag nhạc.
+  // Hashtag nhạc cộng nói thưa (vlog có nhạc nền, nhiều khoảng lặng) thì không đủ: chỉ lọc từng câu.
+  if (cls.label === 'singing' && (cls.repeat || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33))) return skip('singing');
   if (((split.r.text || '').match(HAN) || []).length < 4) return skip('singing');
   const cues = segmentCues(split.r);
   const vi = cues.length ? await translate(meta, cues, opts.context || []) : [];

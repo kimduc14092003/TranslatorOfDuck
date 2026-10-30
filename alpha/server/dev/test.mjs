@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { classifySpeech, segmentCues, fixViText, splitSung, extractAudio, windowAsr } from '../pipeline.mjs';
+import { classifySpeech, segmentCues, fixViText, splitSung, extractAudio, windowAsr, resplitSentences } from '../pipeline.mjs';
 
 const W = (text, start, end) => ({ text, start, end });
 let n = 0;
@@ -65,6 +65,39 @@ t('đoạn video dài: đổi về thời gian video, chỉ giữ câu bắt đ�
   const cues = segmentCues(w);
   assert.equal(cues[0].start, 21.5);
   assert.equal(cues[0].se, 23.5);
+});
+t('Fun-ASR trả cả đoạn thành một câu: chia lại theo từ, đoạn sau vẫn có lời', () => {
+  // Như đoạn [20, 50) của một vlog thật: âm thanh bắt đầu ở 18,5 s, "câu" duy nhất bắt đầu ở 0,1 s (18,6 s).
+  const words = [W('还剩', 0.1, 0.6), W('五块。', 0.6, 1.2), W('早啊，', 6.3, 6.6), W('朋友们！', 6.6, 7.1),
+    W('到了', 9.4, 9.7), W('发生活费', 9.8, 10.7), W('的时间', 10.7, 11.3), W('了哈！', 11.3, 11.7),
+    ...Array.from('我分三轮拍卖每一轮付钱最多的得到生活费其他人付过的钱不退回').map((c, i) => W(c, 12 + i * 0.2, 12.18 + i * 0.2))];
+  const r = { provider: 'funasr', text: words.map(w => w.text).join(''), segments: [{ start: 0.1, end: 17.6, text: words.map(w => w.text).join('') }], words };
+  assert.equal(windowAsr(r, 18.5, 20, 50).segments.length, 0);          // trước khi sửa: mất cả đoạn
+  const s = resplitSentences(r);
+  assert.deepEqual(s.segments.map(x => x.text).slice(0, 3), ['还剩五块。', '早啊，朋友们！', '到了发生活费的时间了哈！']);
+  assert.ok(s.segments.every(x => x.end - x.start <= 12));
+  const w = windowAsr(s, 18.5, 20, 50);
+  assert.equal(w.segments[0].start, 24.8);                             // câu "还剩五块。" (18,6 s) thuộc đoạn trước
+  assert.ok(w.text.includes('朋友们') && w.text.includes('不退回'));
+  const sp = splitSung(w);
+  assert.equal(sp.sung, 0);
+  assert.equal(classifySpeech({}, w).label, 'speech');
+});
+t('số và tiếng cười không bị coi là lời hát lặp', () => {
+  const speech = (text) => ({ text, words: [], segments: [{ start: 0, end: 3, text }] });
+  assert.equal(splitSung({ ...speech('我们还将乘坐票价25000美元的私人飞机'), words: [W('我们', 0, 0.3)] }).sung, 0);
+  assert.equal(splitSung({ ...speech('哈哈哈哈哈，对对对，太好吃了'), words: [W('哈哈', 0, 0.3)] }).sung, 0);
+  assert.equal(classifySpeech({}, { text: '哈哈哈哈哈哈哈哈这个100000块钱' }).repeat, false);
+  assert.equal(splitSung({ ...speech('爱你爱你爱你'), words: [W('爱你', 0, 0.3)] }).sung, 1);   // điệp khúc thật vẫn bị lọc
+});
+t('vlog có hashtag nhạc, nói thưa: không bỏ cả đoạn', () => {
+  // Nói tốc độ thường (0,2 s/chữ) nhưng nhiều khoảng lặng → cps thấp; hashtag có chữ "歌".
+  const words = ['今天带大家去', '看看这家店', '真的很好吃', '下次还来'].flatMap((p, k) => Array.from(p).map((c, i) => W(c, k * 8 + i * 0.2, k * 8 + i * 0.2 + 0.18)));
+  const r = resplitSentences({ text: '', words, segments: [] });
+  const cls = classifySpeech({ hashtags: ['#唱歌'] }, r);
+  assert.ok(cls.cps < 2.5 && cls.tagMusic && cls.medCharDur <= 0.33);
+  const sp = splitSung(r);
+  assert.ok(!(cls.repeat || sp.sung * 2 > sp.total || (cls.tagMusic && cls.medCharDur > 0.33)));
 });
 t('sửa khoảng trắng câu tiếng Việt', () => {
   assert.equal(fixViText('  Chào  cả nhà ,hôm nay đi ăn lẩu . '), 'Chào cả nhà, hôm nay đi ăn lẩu.');

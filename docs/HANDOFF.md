@@ -106,7 +106,32 @@ Mọi thứ ở mục 4 mới chạy trên Douyin giả. Các điểm cần xem 
    - hoặc hỏi chủ dự án mức chỉnh `[ ]` đã chọn, rồi đặt làm mặc định.
 4. Trang video dài (ví dụ `/video/{id}`, có chương) có đúng thẻ `<video>` đang phát không. Trang có thể có thêm video xem trước khi rê chuột lên thanh tiến trình.
 
-## 6. Vấn đề đang mở (ưu tiên cao nhất)
+### Đã kiểm trên Douyin thật (30/10, Chromium trên Mac, đã đăng nhập)
+
+- **Điểm 1:** `mp4audio.js` đọc được file thật, kể cả vlog 34 phút. Các đoạn từ 0:00 tới 8:50 đều cắt và giải mã được, không có nhãn đỏ.
+- **Điểm 2:** không gặp lỗi tải nào ở các đoạn sau. Chưa tách riêng xem lần nào dùng link CDN, lần nào phải lùi về `/aweme/v1/play/`.
+- **Điểm 3: sub không còn sớm.**
+  - Trình phát dùng MSE với **luồng âm thanh khác**: HE-AAC v2, mono, lõi 22,05 kHz, edit list bỏ 7106/44100 ≈ 0,161 s đầu. Chrome có áp edit list này (đo qua `SourceBuffer.buffered`).
+  - So tương quan chéo âm thanh MSE với âm thanh extension gửi (tương quan 0,997): hai thước thời gian lệch nhau khoảng **0,5 ms**.
+  - So mốc chữ của Fun-ASR với lúc giọng nói bắt đầu (82 điểm): ASR **muộn hơn** trung vị 0,08 s, sớm nhất 0,23 s.
+  - Kết luận: để lệch mặc định là 0.
+- **Điểm 4:** mới thử dạng `?modal_id=`, chưa thử trang `/video/{id}`.
+
+## 6. Vấn đề "vlog nói nhiều không có sub": đã sửa (`alpha-5`)
+
+**Nguyên nhân chính** (bắt được trên Douyin thật nhờ `TOD_DUMP=1`):
+- Fun-ASR có khi trả **cả đoạn âm thanh thành một câu**. Ví dụ đoạn [20, 50) của vlog: 1 câu dài 0,08–37,5 s.
+- Câu đó bắt đầu trong phần âm thanh gửi dư trước đoạn (18,5–20 s), nên `windowAsr` bỏ cả câu. Kết quả: nhãn "không nghe thấy lời" cho mọi đoạn sau đoạn đầu.
+- Ở đoạn đầu, cùng hiện tượng một câu khiến lọc hát theo câu thành lọc cả đoạn.
+
+**Cách sửa:**
+- `resplitSentences` chia lại câu từ danh sách từ: dấu câu, khoảng lặng ≥ 0,8 s, dấu phẩy khi câu ≥ 6 s, cắt cứng khi quá 12 s.
+- Luật "lời lặp" bỏ chữ số, Latin và chữ lặp liền nhau trước khi dò. Trước đây video MrBeast lồng tiếng bị coi là "bài hát" vì "25000" có "000"; "哈哈哈" cũng từng bị coi là lời lặp.
+- Hashtag nhạc cộng nói thưa không còn đủ để bỏ cả đoạn, phải có thêm chữ kéo dài.
+
+**Kết quả:** sau khi sửa, 18 đoạn mới xử lý trên Douyin thật chỉ bỏ 1 đoạn, và bỏ đúng (video chỉ có "嗯").
+
+Ghi chú cũ, giữ để tham khảo:
 
 **Vlog nói nhiều nhưng không có sub.** Chưa có log nên chưa rõ nguyên nhân. Các khả năng:
 
