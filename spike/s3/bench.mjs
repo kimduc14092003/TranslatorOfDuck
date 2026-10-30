@@ -225,6 +225,8 @@ const PROVIDERS = [funasr, qwen3, gemini, groq('whisper-large-v3'), groq('whispe
 async function runWithRetry(p, s) {
   for (let attempt = 0; ; attempt++) {
     try { return await p.run(s); } catch (e) {
+      // Fun-ASR trả HTTP 400 ASR_RESPONSE_HAVE_NO_WORDS khi đoạn âm thanh không có lời nói: không phải lỗi.
+      if (e.status === 400 && /ASR_RESPONSE_HAVE_NO_WORDS/.test(e.message)) return { model: p.name === 'funasr' ? FUNASR_MODEL : p.name, text: '', segments: [], words: [], noSpeech: true };
       if (e.status === 429 && attempt < 3) { await sleep((e.retryAfter || 20) * 1000); continue; }
       if (e.status >= 500 && attempt < 1) { await sleep(3000); continue; }
       throw e;
