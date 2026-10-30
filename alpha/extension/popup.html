@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>TranslatorOfDuck Alpha</title>
+<style>
+  body { font: 13px/1.45 system-ui, sans-serif; margin: 0; padding: 12px; width: 300px; color: #1b1b1b; background: #fff; }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 7px 0; }
+  input[type=text] { width: 170px; font: inherit; padding: 3px 5px; }
+  select { font: inherit; }
+  button { font: inherit; padding: 5px 10px; border: 1px solid #bbb; border-radius: 6px; background: #f6f6f6; cursor: pointer; }
+  .muted { color: #666; font-size: 12px; }
+  #health, #stats { margin-top: 6px; min-height: 1.2em; }
+  .ok { color: #188038; } .bad { color: #c5221f; }
+</style>
+</head>
+<body>
+  <h1>TranslatorOfDuck · Alpha</h1>
+  <label>Bật sub tiếng Việt <input type="checkbox" id="enabled"></label>
+  <label>Vị trí sub
+    <select id="position"><option value="bottom">Dưới</option><option value="middle">Giữa</option><option value="top">Trên</option></select>
+  </label>
+  <label>Cỡ chữ
+    <select id="size"><option value="s">Nhỏ</option><option value="m">Vừa</option><option value="l">Lớn</option></select>
+  </label>
+  <label>Server <input type="text" id="server"></label>
+  <button id="check">Kiểm tra server</button>
+  <div id="health" class="muted"></div>
+  <div id="stats" class="muted"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

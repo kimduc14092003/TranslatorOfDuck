@@ -1,0 +1,14 @@
+{
+  "name": "tod-alpha-server",
+  "private": true,
+  "type": "module",
+  "description": "Server chạy trên máy cho bản Alpha: nhận đoạn đầu video Douyin, trả sub tiếng Việt.",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node dev/test.mjs"
+  },
+  "optionalDependencies": {
+    "ffmpeg-static": "^5.2.0"
+  },
+  "engines": { "node": ">=18" }
+}
