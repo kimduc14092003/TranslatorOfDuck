@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>TOD S1 spike</title>
+<style>
+  body { font: 13px/1.45 system-ui, sans-serif; margin: 0; padding: 12px; width: 360px; color: #1b1b1b; background: #fff; }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  .muted { color: #666; font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+  td { padding: 3px 0; border-bottom: 1px solid #eee; vertical-align: top; }
+  td:last-child { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  button { font: inherit; padding: 6px 10px; border: 1px solid #bbb; border-radius: 6px; background: #f6f6f6; cursor: pointer; }
+  button.primary { background: #0b6bcb; border-color: #0b6bcb; color: #fff; }
+  label { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+  #status { margin-top: 6px; min-height: 1.2em; color: #0b6bcb; }
+</style>
+</head>
+<body>
+  <h1>TranslatorOfDuck · S1 spike</h1>
+  <div class="muted">Chỉ đo đạc. Không gửi dữ liệu đi đâu; báo cáo nằm trong trình duyệt của bạn.</div>
+  <table id="summary"><tr><td>Chưa có số liệu. Mở www.douyin.com và lướt feed.</td><td></td></tr></table>
+  <label><input type="checkbox" id="loggedIn"> Tôi đang đăng nhập Douyin</label>
+  <div class="row">
+    <button class="primary" id="copy">Sao chép báo cáo</button>
+    <button id="save">Lưu file báo cáo</button>
+    <button id="reset">Xóa số liệu</button>
+  </div>
+  <div class="row">
+    <button id="hook">Hook: …</button>
+  </div>
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

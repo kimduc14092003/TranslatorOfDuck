@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "TranslatorOfDuck S1 spike (đo đạc)",
+  "version": "0.1.0",
+  "description": "Chỉ đo: có đọc được JSON feed Douyin và tải thử được đầu file âm thanh/video không. Không gửi dữ liệu đi đâu.",
+  "minimum_chrome_version": "111",
+  "permissions": ["storage"],
+  "action": {
+    "default_title": "TOD S1 spike",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.douyin.com/*"],
+      "js": ["tap.main.js"],
+      "world": "MAIN",
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": ["https://www.douyin.com/*"],
+      "js": ["mp4scan.js", "content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}
