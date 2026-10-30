@@ -85,9 +85,10 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 
 | Lệnh | Kiểm tra gì |
 |---|---|
-| `cd alpha/server && npm test` | Chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh (9 kiểm tra) |
+| `cd alpha/server && npm test` | Chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh (13 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms (4 kiểm tra) |
-| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s (15 kiểm tra) |
+| `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
+| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s (16 kiểm tra) |
 
 Cần cho các test: Node 18+, `playwright`, `ffmpeg`, `openssl`.
 
@@ -130,6 +131,17 @@ Mọi thứ ở mục 4 mới chạy trên Douyin giả. Các điểm cần xem 
 - Hashtag nhạc cộng nói thưa không còn đủ để bỏ cả đoạn, phải có thêm chữ kéo dài.
 
 **Kết quả:** sau khi sửa, 18 đoạn mới xử lý trên Douyin thật chỉ bỏ 1 đoạn, và bỏ đúng (video chỉ có "嗯").
+
+## 6b. Tua tới, tua lui nhiều chỗ: dịch kém, đã sửa (`alpha-6`, extension 0.2.1)
+
+Đo bằng cách tua 11 chỗ trên vlog thật rồi so sub hiện ra với cache: phần hiển thị đúng giờ (351/355 mẫu; 4 mẫu lệch chỉ là khung hình ngay lúc tua). Lỗi nằm ở nội dung:
+
+- **Chỗ nối hai đoạn mất nửa câu.** Hai đoạn chạy ASR riêng, câu vắt qua ranh giới có ở cả hai, mỗi bên nghe một kiểu. Extension luôn giữ bản của đoạn trước, kể cả khi bản đó thiếu ("花了5.5元。" thay cho "花了5.5块买了一把鞋刷子和一块肥皂，"). Sửa: `alpha/extension/cues.js` giữ bản dài hơn, cắt ngắn hoặc bỏ dòng trước; kiểm thử ở `alpha/dev/cues-test.mjs`.
+- **Dịch thiếu ngữ cảnh khi tua.** Đoạn đang xem và đoạn kế được gửi cùng lúc, nên đoạn kế không có 3 dòng trước làm ngữ cảnh (xưng hô, tên riêng lệch). Sửa: server chờ đoạn trước *đang chạy* dịch xong rồi mới dịch (chỉ chờ ở bước dịch). Log ghi "(ngữ cảnh N dòng)". Đoạn vừa tua tới vẫn không có ngữ cảnh.
+- **Lặp lời để nhấn mạnh bị coi là hát**, bỏ cả đoạn 30 s ("投降了，投降了，投降了", "完了完了完了"). Sửa: lặp lời chỉ là hát khi chữ kéo dài (> 0,25 s/chữ).
+- **Gemini trả 429** (vượt hạn mức theo phút) khi nhiều đoạn gửi dồn. Sửa: server thử lại sau 2, 5, 15 s. Nếu key là gói miễn phí thì tua dồn dập vẫn có thể chạm hạn mức.
+
+Ghi chú: extension nạp bằng `--load-extension` trong Chrome for Testing bị tắt nếu gọi `chrome.runtime.reload()`; phải khởi động lại trình duyệt.
 
 Ghi chú cũ, giữ để tham khảo:
 

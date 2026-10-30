@@ -88,7 +88,21 @@ t('số và tiếng cười không bị coi là lời hát lặp', () => {
   assert.equal(splitSung({ ...speech('我们还将乘坐票价25000美元的私人飞机'), words: [W('我们', 0, 0.3)] }).sung, 0);
   assert.equal(splitSung({ ...speech('哈哈哈哈哈，对对对，太好吃了'), words: [W('哈哈', 0, 0.3)] }).sung, 0);
   assert.equal(classifySpeech({}, { text: '哈哈哈哈哈哈哈哈这个100000块钱' }).repeat, false);
-  assert.equal(splitSung({ ...speech('爱你爱你爱你'), words: [W('爱你', 0, 0.3)] }).sung, 1);   // điệp khúc thật vẫn bị lọc
+  assert.equal(splitSung({ ...speech('爱你爱你爱你'), words: [W('爱你', 0, 1.2)] }).sung, 1);   // điệp khúc thật (hát chậm) vẫn bị lọc
+});
+t('nói nhấn mạnh lặp lời ở tốc độ nói: không phải hát, không bỏ cả đoạn', () => {
+  // Vlog thật: cả đoạn 30 s từng bị bỏ là "bài hát" vì "投降了，投降了，投降了，投降了" và "完了完了完了完了".
+  const lines = ['我给你们提示，一共10个字。', '算了，投降了，投降了，投降了，投降了。', '哎呦，我完了完了完了完了完了。'];
+  let t0 = 0;
+  const words = lines.flatMap((l) => { const ws = Array.from(l).map((c, i) => W(c, t0 + i * 0.15, t0 + i * 0.15 + 0.14)); t0 += l.length * 0.15 + 1; return ws; });
+  const r = resplitSentences({ text: '', words, segments: [] });
+  const cls = classifySpeech({}, r);
+  assert.equal(cls.repeat, true);
+  assert.equal(cls.label, 'speech');
+  assert.equal(splitSung(r).sung, 0);
+  // Cũng những câu đó mà hát (0,6 s/chữ) thì vẫn là hát.
+  const slow = resplitSentences({ text: '', words: Array.from('投降了投降了投降了投降了').map((c, i) => W(c, i * 0.6, i * 0.6 + 0.55)), segments: [] });
+  assert.equal(classifySpeech({}, slow).label, 'singing');
 });
 t('vlog có hashtag nhạc, nói thưa: không bỏ cả đoạn', () => {
   // Nói tốc độ thường (0,2 s/chữ) nhưng nhiều khoảng lặng → cps thấp; hashtag có chữ "歌".

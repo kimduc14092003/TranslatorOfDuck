@@ -84,5 +84,6 @@ Thấy dòng `TranslatorOfDuck Alpha server: http://127.0.0.1:8787` là được
 
 - `npm test` trong `alpha/server`: kiểm tra chia câu, mốc thời gian, lọc nói/hát (không cần key).
 - `node alpha/dev/mp4audio-test.mjs`: kiểm tra phần đọc mp4 và cắt âm thanh của extension trên file thật do ffmpeg tạo (cần ffmpeg).
+- `node alpha/dev/cues-test.mjs`: kiểm tra phần gộp sub các đoạn ở extension, nhất là câu vắt qua ranh giới hai đoạn.
 - `TOD_DUMP=1 npm start`: server giữ lại âm thanh nhận được ở `work/dump`, tên file kèm mốc bắt đầu (`.at<giây>.aac`), để soi lỗi nhận dạng hay lệch thời gian. Đây là âm thanh video có bản quyền: chỉ để trên máy, xoá sau khi xong.
 - `node alpha/dev/e2e.mjs`: kiểm thử toàn trình, có cả video dài chia đoạn. Chạy Chromium thật có extension, một Douyin giả, các dịch vụ AI giả và server thật. Cần playwright, ffmpeg và openssl.

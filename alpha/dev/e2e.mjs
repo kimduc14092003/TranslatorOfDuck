@@ -25,7 +25,7 @@ const MEDIA = { speech12: video(12, 440), song6: video(6, 300), long100: video(1
 
 // ---- dịch vụ AI giả. Fun-ASR trả lời theo độ dài âm thanh nhận được:
 //   < 8 s: lời hát (chữ kéo dài) · 8–20 s: 2 câu ở 1,0 s và 5,0 s · ≥ 20 s (một đoạn của video dài): 2 câu ở 2,0 s và 6,0 s
-const providerHits = { funasr: 0, gemini: 0, withContext: 0, longChunks: [] };
+const providerHits = { funasr: 0, gemini: 0, withContext: 0, longChunks: [], rateLimited: 0 };
 const sentence = (text, b, e) => {
   const chars = Array.from(text.replace(/[，。！]/g, ''));
   const step = (e - b) / chars.length;
@@ -54,6 +54,8 @@ const providers = http.createServer((req, res) => {
       return json({ output: { sentence: { begin_time: 1000, end_time: 5600, text: '大家好，今天我们去吃火锅。走吧！', words }, text: '大家好，今天我们去吃火锅。走吧！' } });
     }
     if (req.url.includes(':generateContent')) {
+      // Lần gọi dịch đầu tiên trả 429 (vượt hạn mức theo phút): server phải tự thử lại.
+      if (!providerHits.rateLimited++) { res.writeHead(429, { 'content-type': 'application/json' }); return res.end('{"error":{"code":429}}'); }
       providerHits.gemini++;
       const text = JSON.parse(body).contents[0].parts[0].text;
       if (text.includes('Các dòng ngay trước')) providerHits.withContext++;
@@ -204,7 +206,9 @@ const checks = {
   'long video: chunk 2 line lands at 20.5 s (video time)': long.at21.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
   'long video: only chunks within 30 s of playhead processed': long.chunksBeforeSeek === 3,
   'long video: seek to 85 s translates that chunk': long.at85.sub === 'Đi thôi!' && long.at83.sub === null && long.chunks.length === 4,
-  'later chunks translated with previous lines as context': providerHits.withContext >= 2,
+  // Đoạn 2 được gửi cùng lúc với đoạn 1 (cả hai nằm trong 30 s đầu): server chờ đoạn 1 dịch xong để lấy ngữ cảnh.
+  'later chunks translated with previous lines as context (chunks 2–4)': providerHits.withContext >= 3,
+  'first translation got HTTP 429, server retried (first video still has subs)': providerHits.rateLimited > 1 && first.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
   'audio-only upload: chunk audio ≈ 26/38/38/22 s': JSON.stringify([...long.chunks].sort((a, b) => a - b)) === '[22,26,38,38]',
   'no page errors': errors.length === 0,
 };

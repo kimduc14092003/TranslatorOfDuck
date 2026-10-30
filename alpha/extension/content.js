@@ -138,21 +138,10 @@
     for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
     return btoa(s);
   }
-  // Gộp sub các đoạn đã xong. Câu ở đầu đoạn sau mà bắt đầu trước khi người nói dứt câu cuối của đoạn trước
-  // là phần lặp (nghe dư ở ranh giới) thì bỏ; dòng trước kéo dài sang đoạn sau thì cắt cho khỏi chồng.
+  // Gộp sub các đoạn đã xong (cues.js xử lý câu vắt qua ranh giới hai đoạn).
   function mergeCues(v) {
-    const out = [];
-    for (const k of [...v.chunks.keys()].sort((a, b) => a - b)) {
-      const c = v.chunks.get(k);
-      if (c.status !== 'ok') continue;
-      for (const cue of c.cues) {
-        const last = out[out.length - 1];
-        if (last && cue.start < (last.se || last.end) - 0.1) continue;
-        if (last && cue.start < last.end) last.end = Math.max(last.se || last.start, cue.start - 2 / 30);
-        out.push({ ...cue });
-      }
-    }
-    v.cues = out;
+    const done = [...v.chunks.keys()].sort((a, b) => a - b).map(k => v.chunks.get(k)).filter(c => c.status === 'ok');
+    v.cues = TodCues.merge(done);
   }
   async function runChunk(id, k) {
     const v = vid(id);
@@ -221,10 +210,6 @@
   };
   const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
   const SKIP_WHY = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch lỗi' };
-  function cueAt(cues, t) {
-    for (const c of cues) { if (t >= c.start && t < c.end) return c; if (c.start > t) break; }
-    return null;
-  }
   let act = null;
   let lastFind = 0;
   let toastText = '';
@@ -279,7 +264,7 @@
         : BADGE[st][1];
       badgeEl.style.display = 'block';
     } else badgeEl.style.display = 'none';
-    const c = cv ? cueAt(cv.cues, playhead - (Number(settings.delay) || 0)) : null;
+    const c = cv ? TodCues.at(cv.cues, playhead - (Number(settings.delay) || 0)) : null;
     if (!c) { subEl.style.display = 'none'; return; }
     const scale = { s: 0.034, m: 0.042, l: 0.052 }[settings.size] || 0.042;
     subEl.style.fontSize = Math.max(14, Math.min(40, r.height * scale)) + 'px';

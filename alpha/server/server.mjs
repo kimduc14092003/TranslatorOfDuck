@@ -20,6 +20,8 @@ fs.mkdirSync(CACHE, { recursive: true });
 let running = 0;
 const waiting = [];
 const inflight = new Map();
+const started = new Set();       // các đoạn đã có chỗ và đang chạy (không còn xếp hàng)
+const CONTEXT_WAIT_MS = 30000;
 async function withSlot(fn) {
   if (running >= MAX_PARALLEL) await new Promise(r => waiting.push(r));
   running++;
@@ -62,15 +64,21 @@ async function handleSubtitles(req, res) {
     }
     let opts = {};
     if (chunked) {
-      // Ngữ cảnh: 3 dòng cuối của đoạn trước, nếu đoạn đó đã dịch xong.
-      let context = [];
+      // Ngữ cảnh: 3 dòng cuối của đoạn trước. Khi tua, đoạn đang xem và đoạn kế được gửi cùng lúc: nếu đoạn trước
+      // đang chạy thì chờ nó dịch xong (chỉ chờ ở bước dịch, nhận dạng giọng nói vẫn chạy song song). Đoạn trước
+      // còn xếp hàng thì không chờ, để hai đoạn không giữ chỗ chờ nhau.
       const prev = Array.isArray(meta.prev) && meta.prev.length === 2 && meta.prev.every(num) ? cacheFile(span(meta.prev[0], meta.prev[1])) : null;
-      if (prev && fs.existsSync(prev)) { try { context = (JSON.parse(fs.readFileSync(prev, 'utf8')).cues || []).slice(-3).map(c => ({ zh: c.zh, vi: c.vi })); } catch (_) { /* bỏ qua */ } }
+      const context = async () => {
+        if (!prev) return [];
+        if (inflight.has(prev) && started.has(prev)) await Promise.race([inflight.get(prev).catch(() => {}), new Promise(r => setTimeout(r, CONTEXT_WAIT_MS))]);
+        if (!fs.existsSync(prev)) return [];
+        try { return (JSON.parse(fs.readFileSync(prev, 'utf8')).cues || []).slice(-3).map(c => ({ zh: c.zh, vi: c.vi })); } catch (_) { return []; }
+      };
       opts = { kind: 'aac', offset: meta.audioStart, from: meta.from, to: meta.to, context };
     }
-    inflight.set(key, withSlot(() => makeSubtitles({ desc: meta.desc, hashtags: meta.hashtags }, Buffer.from(chunked ? meta.aac : meta.b64, 'base64'), opts))
+    inflight.set(key, withSlot(() => { started.add(key); return makeSubtitles({ desc: meta.desc, hashtags: meta.hashtags }, Buffer.from(chunked ? meta.aac : meta.b64, 'base64'), opts); })
       .then((r) => { const out = { id, ...(chunked ? { from: meta.from, to: meta.to } : {}), ...r }; if (r.status !== 'error') fs.writeFileSync(file, JSON.stringify(out)); return out; })
-      .finally(() => inflight.delete(key)));
+      .finally(() => { inflight.delete(key); started.delete(key); }));
   }
   try {
     const out = await inflight.get(key);
@@ -79,7 +87,7 @@ async function handleSubtitles(req, res) {
     const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
     const where = chunked ? ` [${mmss(meta.from)}–${mmss(meta.to)}]` : '';
     console.log(`${new Date().toLocaleTimeString()} ${id}${where} ${out.status}${out.label && out.status !== 'ok' ? ' (' + (why[out.label] || out.label) + ')' : ''}` +
-      `${out.cues ? ' ' + out.cues.length + ' dòng' : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu, ${out.sung ?? 0} câu hát bị bỏ` +
+      `${out.cues ? ' ' + out.cues.length + ' dòng' : ''}${chunked && meta.from > 0 && out.status === 'ok' && !out.cached ? ` (ngữ cảnh ${out.context || 0} dòng)` : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu, ${out.sung ?? 0} câu hát bị bỏ` +
       ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${t.asrMs ?? '-'} ms, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : ''}` +
       (out.heard ? `\n    nghe được: ${out.heard}` : ''));
     const { debug: _d, ...reply } = out;

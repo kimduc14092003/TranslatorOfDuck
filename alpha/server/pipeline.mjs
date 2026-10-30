@@ -15,7 +15,7 @@ const GEMINI_MODEL = ENV.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 const DASHSCOPE_BASE = ENV.DASHSCOPE_BASE || 'https://dashscope-intl.aliyuncs.com';
 const FUNASR_MODEL = ENV.FUNASR_MODEL || 'fun-asr-flash-2026-06-15';
 export const MAX_SECONDS = Number(ENV.MAX_SECONDS || 60);
-export const PIPELINE_VERSION = 'alpha-5';
+export const PIPELINE_VERSION = 'alpha-6';
 
 function loadDotEnv(file) {
   if (!fs.existsSync(file)) return;
@@ -74,17 +74,28 @@ export async function extractAudio(buf, kind = 'mp4') {
 }
 
 // ---------------------------------------------------------------- gọi dịch vụ
+// Tua nhiều chỗ thì nhiều đoạn gửi dồn một lúc: Gemini trả 429 (vượt hạn mức theo phút), thỉnh thoảng còn lỗi
+// mạng. Thử lại sau 2 s, 5 s rồi 15 s (hạn mức tính theo phút) trước khi báo lỗi; rẻ hơn để extension gửi lại cả đoạn.
+const RETRY_WAITS = [2000, 5000, 15000];
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function httpJson(url, init) {
-  const res = await fetch(url, init);
-  const text = await res.text();
-  let body = null;
-  try { body = JSON.parse(text); } catch (_) { /* giữ text */ }
-  if (!res.ok) {
-    const err = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
-    err.status = res.status;
-    throw err;
+  for (let i = 0; ; i++) {
+    let res;
+    try { res = await fetch(url, init); } catch (e) {
+      if (i < RETRY_WAITS.length) { await sleep(RETRY_WAITS[i]); continue; }
+      throw e;
+    }
+    const text = await res.text();
+    let body = null;
+    try { body = JSON.parse(text); } catch (_) { /* giữ text */ }
+    if (!res.ok) {
+      if ((res.status === 429 || res.status >= 500) && i < RETRY_WAITS.length) { await sleep(RETRY_WAITS[i]); continue; }
+      const err = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
+      err.status = res.status;
+      throw err;
+    }
+    return body;
   }
-  return body;
 }
 async function funasr(mp3) {
   try {
@@ -160,6 +171,9 @@ const MUSIC_TAGS = /(翻唱|对口型|手势舞|音乐|歌|唱|舞|mv|cover|bgm|
 // có "000" không phải lời lặp), gộp một chữ lặp liền nhau ("哈哈哈", "对对对" là lời nói).
 const repeated = (t, times) => new RegExp(`(.{2,8})\\1{${times - 1},}`, 'u')
   .test(normalize(t).filter(c => /\p{Script=Han}/u.test(c)).join('').replace(/(.)\1+/gu, '$1'));
+// Lặp lời mà chữ ngắn như nói (≤ 0,25 s/chữ) là nói nhấn mạnh ("投降了，投降了，投降了", "完了完了完了"), không phải hát.
+// Không có mốc từng chữ (Gemini) thì vẫn coi lặp lời là hát.
+const slowChars = (med) => med == null || med > 0.25;
 export function classifySpeech(meta, r) {
   const text = (r && r.text) || '';
   const han = (text.match(HAN) || []).length;
@@ -181,7 +195,7 @@ export function classifySpeech(meta, r) {
   if (!f.han && f.latinShare === 0) label = 'no_speech';
   else if (f.latinShare > 0.5) label = 'not_zh';
   else if (f.han < 4) label = 'too_short';
-  else if (f.repeat) label = 'singing';
+  else if (f.repeat && slowChars(f.medCharDur)) label = 'singing';
   else {
     const score = (f.medCharDur != null && f.medCharDur > 0.33 ? 2 : 0) + (f.tagMusic ? 1 : 0) + (f.cps != null && f.cps < 2.5 ? 1 : 0);
     label = score >= 2 ? 'singing' : 'speech';
@@ -200,7 +214,7 @@ export function splitSung(r) {
     const perChar = [];
     for (const w of ws) { const n = (w.text.match(HAN) || []).length; for (let i = 0; i < n; i++) perChar.push((w.end - w.start) / n); }
     const med = pct(perChar, 0.5);
-    const sung = (perChar.length >= 4 && med > 0.33) || repeated(x.text, 3);
+    const sung = (perChar.length >= 4 && med > 0.33) || (repeated(x.text, 3) && slowChars(med));
     return { start: x.start, end: x.end, text: x.text, medCharDur: round(med, 3), sung, words: ws };
   });
   const kept = sentences.filter(x => !x.sung);
@@ -341,12 +355,14 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   if (cls.label !== 'speech' && cls.label !== 'singing') return skip(cls.label);
   // Cả đoạn là bài hát khi: lặp lời, hoặc quá nửa số câu là câu hát, hoặc chữ kéo dài kèm hashtag nhạc.
   // Hashtag nhạc cộng nói thưa (vlog có nhạc nền, nhiều khoảng lặng) thì không đủ: chỉ lọc từng câu.
-  if (cls.label === 'singing' && (cls.repeat || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33))) return skip('singing');
+  if (cls.label === 'singing' && ((cls.repeat && slowChars(cls.medCharDur)) || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33))) return skip('singing');
   if (((split.r.text || '').match(HAN) || []).length < 4) return skip('singing');
   const cues = segmentCues(split.r);
-  const vi = cues.length ? await translate(meta, cues, opts.context || []) : [];
+  // opts.context có thể là hàm: server chờ đoạn trước (đang chạy) dịch xong rồi mới lấy ngữ cảnh.
+  const context = typeof opts.context === 'function' ? await opts.context() : (opts.context || []);
+  const vi = cues.length ? await translate(meta, cues, context) : [];
   const tMt = Date.now();
-  return { status: vi.length ? 'ok' : 'skipped', label: vi.length ? 'speech' : 'untranslated', ...base,
+  return { status: vi.length ? 'ok' : 'skipped', label: vi.length ? 'speech' : 'untranslated', ...base, context: context.length,
     cues: vi.map(c => ({ start: c.start, end: c.end, se: c.se, vi: c.vi, zh: c.zh })),
     timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio, mtMs: tMt - tAsr, totalMs: tMt - t0 } };
 }
