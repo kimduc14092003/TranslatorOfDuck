@@ -17,6 +17,8 @@ const GEMINI_MODEL = ENV.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 // Dịch: có OPENAI_API_KEY thì dùng OpenAI, không thì Gemini.
 const OPENAI_BASE = ENV.OPENAI_BASE || 'https://api.openai.com/v1';
 const OPENAI_MODEL = ENV.OPENAI_MODEL || 'gpt-4.1-mini';
+// Mức suy luận cho model suy luận (none/minimal/low/…). Dịch phụ đề không cần nghĩ sâu: mức thấp nhanh hơn nhiều.
+const OPENAI_REASONING_EFFORT = ENV.OPENAI_REASONING_EFFORT || '';
 const DASHSCOPE_BASE = ENV.DASHSCOPE_BASE || 'https://dashscope-intl.aliyuncs.com';
 const FUNASR_MODEL = ENV.FUNASR_MODEL || 'fun-asr-flash-2026-06-15';
 export const MAX_SECONDS = Number(ENV.MAX_SECONDS || 60);
@@ -44,7 +46,8 @@ const mtProvider = () => (ENV.OPENAI_API_KEY ? 'openai' : ENV.GEMINI_API_KEY ? '
 export function config() {
   const mt = mtProvider();
   return { asr: ENV.DASHSCOPE_API_KEY ? 'funasr' : (ENV.GEMINI_API_KEY ? 'gemini' : null), mt,
-    model: mt === 'openai' ? OPENAI_MODEL : GEMINI_MODEL, maxSeconds: MAX_SECONDS };
+    model: mt === 'openai' ? OPENAI_MODEL : GEMINI_MODEL, ...(mt === 'openai' && OPENAI_REASONING_EFFORT ? { effort: OPENAI_REASONING_EFFORT } : {}),
+    maxSeconds: MAX_SECONDS };
 }
 
 const round = (x, d = 2) => (x == null || !isFinite(x) ? null : Math.round(x * 10 ** d) / 10 ** d);
@@ -201,11 +204,12 @@ const toJsonSchema = (x) => {
   return out;
 };
 async function openaiJson(text, schema, temperature, signal, timeoutMs = 10000) {
-  const reasoning = /^(o\d|gpt-5)/.test(OPENAI_MODEL);   // model suy luận không nhận temperature
+  const reasoning = OPENAI_REASONING_EFFORT || /^(o\d|gpt-([5-9]|\d\d))/.test(OPENAI_MODEL);   // model suy luận không nhận temperature
   const b = await httpJson(`${OPENAI_BASE}/chat/completions`, {
     method: 'POST',
     signal, headers: { Authorization: 'Bearer ' + ENV.OPENAI_API_KEY, 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: OPENAI_MODEL, messages: [{ role: 'user', content: text }], ...(reasoning ? {} : { temperature }),
+      ...(OPENAI_REASONING_EFFORT ? { reasoning_effort: OPENAI_REASONING_EFFORT } : {}),
       response_format: { type: 'json_schema', json_schema: { name: 'subtitles', strict: true, schema: toJsonSchema(schema) } } }),
   }, timeoutMs);
   const m = b.choices && b.choices[0] && b.choices[0].message;

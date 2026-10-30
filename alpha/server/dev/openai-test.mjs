@@ -47,7 +47,7 @@ const PROV = `http://127.0.0.1:${providers.address().port}`;
 const port = 20787 + Math.floor(Math.random() * 1000);
 const server = spawn(process.execPath, [path.join(HERE, '..', 'server.mjs')], {
   env: { ...process.env, PORT: String(port), TOD_WORK: path.join(TMP, 'work'), FFMPEG: ffmpeg,
-    DASHSCOPE_API_KEY: 'test', GEMINI_API_KEY: 'test', OPENAI_API_KEY: 'test-openai',
+    DASHSCOPE_API_KEY: 'test', GEMINI_API_KEY: 'test', OPENAI_API_KEY: 'test-openai', OPENAI_MODEL: 'test-model', OPENAI_REASONING_EFFORT: 'none',
     DASHSCOPE_BASE: PROV, GEMINI_BASE: PROV + '/v1beta', OPENAI_BASE: PROV + '/v1' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -75,6 +75,11 @@ try {
     assert.equal(rf.type, 'json_schema'); assert.equal(rf.json_schema.strict, true);
     assert.equal(rf.json_schema.schema.type, 'object'); assert.equal(rf.json_schema.schema.additionalProperties, false);
     assert.equal(rf.json_schema.schema.properties.cues.items.properties.id.type, 'integer');
+  });
+  t('có OPENAI_REASONING_EFFORT: gửi reasoning_effort, không gửi temperature', () => {
+    assert.equal(openaiBodies[0].model, 'test-model');
+    assert.equal(openaiBodies[0].reasoning_effort, 'none');
+    assert.ok(!('temperature' in openaiBodies[0]));
   });
   mode = 'rate';
   const t0 = Date.now();

@@ -185,6 +185,9 @@ Nguyên nhân và cách sửa:
 - 429 theo phút: chờ theo header `retry-after-ms` rồi gọi lại. 429 `insufficient_quota` (hết tiền): tạm ngừng 10 phút như Gemini hết lượt trong ngày.
 - Test (`dev/queue-test.mjs`, `alpha/dev/e2e.mjs`) đặt `OPENAI_API_KEY=''` để server không nạp key thật từ `.env`. `loadDotEnv` giữ nguyên biến đã đặt, kể cả biến rỗng.
 - Đã chạy với key thật (31/10). Tải lại trang rồi lướt 7 video: video 1–2 có kết quả sau 5,4–5,5 s, video 3–7 có ngay khi lướt tới. Dịch mất 1,2–4,6 s mỗi đoạn, không gặp 429.
+- `OPENAI_BASE` trỏ được sang dịch vụ khác cùng kiểu API. `OPENAI_REASONING_EFFORT` gửi `reasoning_effort` cho model suy luận, và khi đó server không gửi `temperature`.
+  - Đo trên 6 đoạn thật (31/10, cùng câu tiếng Trung, model suy luận nhỏ): mức `none` mất 1,3–4,2 s mỗi đoạn, ngang `gpt-4.1-mini` (1,2–4,6 s); mức `low` mất 2,4–13,5 s.
+  - Model đó không nhận `minimal`.
 - Khi khởi động, server báo các tên biến trong `.env` không dùng được (chỉ in tên, không in giá trị). Ví dụ: dòng key bị để sau `#` nên server không thấy.
 
 Còn lại, chưa làm:

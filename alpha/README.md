@@ -31,7 +31,7 @@ OPENAI_API_KEY=key OpenAI của bạn (dịch)
 DASHSCOPE_API_KEY=key Alibaba của bạn (Fun-ASR)
 ```
 
-Dịch dùng OpenAI nếu có `OPENAI_API_KEY`, không thì dùng `GEMINI_API_KEY`. Đổi model OpenAI bằng dòng `OPENAI_MODEL=...`. Nếu chỉ có `GEMINI_API_KEY` thì server vẫn chạy (Gemini lo cả nhận dạng lẫn dịch), nhưng Fun-ASR cho mốc thời gian chuẩn hơn. Key Gemini gói miễn phí hết lượt sau vài chục video mỗi ngày.
+Dịch dùng OpenAI nếu có `OPENAI_API_KEY`, không thì dùng `GEMINI_API_KEY`. Đổi model OpenAI bằng dòng `OPENAI_MODEL=...`. Với model suy luận, thêm `OPENAI_REASONING_EFFORT=none` (hoặc `low` nếu model không nhận `none`) để sub ra nhanh. Dịch vụ khác cùng kiểu API với OpenAI thì đặt `OPENAI_BASE=.../v1`. Nếu chỉ có `GEMINI_API_KEY` thì server vẫn chạy (Gemini lo cả nhận dạng lẫn dịch), nhưng Fun-ASR cho mốc thời gian chuẩn hơn. Key Gemini gói miễn phí hết lượt sau vài chục video mỗi ngày.
 
 **2. Bật server** (mỗi lần dùng):
 
