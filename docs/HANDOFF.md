@@ -264,6 +264,20 @@ Nguyên nhân và cách sửa:
   - Phần đầu file bị treo hoặc lỗi mạng (đo được `ERR_CONTENT_LENGTH_MISMATCH`) thì gọi lại một lần.
 - Chi phí: mỗi video dịch sẵn tốn ~26 s nhận dạng giọng nói và 1 lần gọi dịch, kể cả video bị lướt qua.
 
+## 6g. Tua trên feed 推荐: sub vẫn là của chỗ cũ (extension 0.2.15)
+
+Feed có hai loại trình phát: `xgplayer-*` và `douyin-player-*`.
+- **Loại `douyin-player`** (gặp ở video dài): khi tua, `<video>.currentTime` **không đổi**. Trình phát nối phần mới vào tiếp dòng thời gian cũ của MSE; chỉ `window.player.currentTime` nhảy tới chỗ mới.
+  - Đo trên video 17:30: tua tới 5:00, 15:00, 10:50, 2:00, 16:40, mà `<video>` vẫn chạy liền 201 → 229 s.
+  - Extension dùng `<video>.currentTime` nên không biết người dùng đã tua: vẫn dịch và hiện sub của chỗ cũ (đầu video).
+  - Trang modal (`?modal_id=`) tua thẻ `<video>` bình thường, nên các lần đo ở §6b–§6e không bắt được lỗi này.
+- **Sửa:**
+  - `tap.main.js` (trong ngữ cảnh trang, chỉ đọc) gửi độ lệch `player.currentTime − <video>.currentTime` mỗi khi độ lệch đổi.
+  - Id video lấy từ slide chứa thẻ `<video>` của trình phát; nếu không có thì từ `config.baseConfig.mediaInfo.id` (loại này không có `awemeInfo`), rồi mới tới `awemeInfo`.
+  - `content.js` cộng độ lệch đó khi đúng video đang xem.
+- **e2e:** giả lập trình phát chạy trước `<video>` 50 s. Kiểm tra trượt với mã cũ.
+- **Đo trên feed thật** (video 3:09 có lời, `douyin-player`): 6 lần tua (bấm và kéo), độ lệch từ −55 đến +127 s, 338 mẫu có sub, 0 mẫu sai (so với đồng hồ trình phát). Loại `xgplayer` thì thẻ `<video>` được tua bình thường (độ lệch 0).
+
 ## 7. Việc tiếp theo trên Mac
 
 1. **Kiểm tra môi trường:** `node -v` (cần 18+), `git status`, đang ở nhánh `claude/busy-newton-1y8nzr`. Có `alpha/server/.env` chưa (chỉ kiểm có file, không đọc nội dung).

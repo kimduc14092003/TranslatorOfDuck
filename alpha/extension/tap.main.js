@@ -227,6 +227,33 @@
   document.addEventListener('DOMContentLoaded', probeSsr, { once: true });
   window.addEventListener('load', readPaceF, { once: true });
 
+  // ---- Đồng hồ thật của trình phát ----
+  // Trên feed 推荐, trình phát nối đoạn: tua thì <video>.currentTime vẫn chạy tiếp như không có gì, chỉ
+  // player.currentTime nhảy tới chỗ mới (đo trên video 17:30: tua tới 5:00, 15:00, 10:50, 2:00, 16:40, <video> vẫn
+  // 201 → 229 s). Gửi độ lệch player.currentTime − <video>.currentTime cho content script mỗi khi nó đổi. Chỉ đọc.
+  let clockKey = '';
+  function reportClock() {
+    try {
+      const pl = window.player;
+      const media = pl && (pl.media || pl.video);
+      // Video nào: slide chứa đúng thẻ <video> của trình phát; không có thì đọc config (trình phát douyin-player để
+      // id ở baseConfig.mediaInfo.id, không có awemeInfo).
+      const c = (pl && pl.config) || {};
+      const slide = media && media.closest && media.closest('[data-e2e-vid]');
+      const aw = c.awemeInfo;
+      const id = String((slide && slide.getAttribute('data-e2e-vid')) || (c.baseConfig && c.baseConfig.mediaInfo && c.baseConfig.mediaInfo.id)
+        || (aw && (aw.awemeId || aw.aweme_id)) || '');
+      const pt = pl && pl.currentTime;
+      if (media && id && typeof pt === 'number' && isFinite(pt)) {
+        const offset = Math.round((pt - media.currentTime) * 1000) / 1000;
+        const key = id + ':' + Math.round(offset * 10);
+        if (key !== clockKey) { clockKey = key; emit('clock', { id, offset }); }
+      }
+    } catch (_) { /* không làm hỏng trang */ }
+    requestAnimationFrame(reportClock);
+  }
+  requestAnimationFrame(reportClock);
+
   // ---- T1: state của player + kiểm tra hook còn là của ta không ----
   const t1Seen = new Set();
   setInterval(() => {

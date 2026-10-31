@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TranslatorOfDuck Alpha",
-  "version": "0.2.13",
+  "version": "0.2.15",
   "description": "Bản thử: sub tiếng Việt cho video Douyin, hiện đúng lúc người nói, cả video dài. Cần server chạy trên máy (alpha/server).",
   "minimum_chrome_version": "116",
   "permissions": ["storage"],

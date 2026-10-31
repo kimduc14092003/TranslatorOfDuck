@@ -33,7 +33,11 @@
   // CDN chậm không chặn 3 video sau.
   const lanes = { current: { queue: [], busy: 0, max: 1 }, prefetch: { queue: [], busy: 0, max: 2 } };
   let currentId = null;
-  let playhead = 0;              // video.currentTime của video đang xem
+  let playhead = 0;              // vị trí thật trong video đang xem (giây)
+  // Độ lệch đồng hồ trình phát Douyin so với <video>.currentTime (tap.main.js gửi). Feed 推荐 phát nối đoạn: tua thì
+  // <video>.currentTime không đổi, chỉ đồng hồ trình phát nhảy; chỉ dùng khi đúng video đang xem.
+  let clock = { id: null, offset: 0 };
+  const timeOf = (v) => v.currentTime + (clock.id === currentId ? clock.offset : 0);
   let wanted = new Set();        // "id:k" các đoạn đang cần (schedule() tính lại 4 lần/giây)
 
   const alive = () => { try { return !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; } };
@@ -52,6 +56,7 @@
     let msg;
     try { msg = JSON.parse(ev.detail); } catch (_) { return; }
     if (msg.type === 'items') onItems(msg.data);
+    else if (msg.type === 'clock' && msg.data && msg.data.id) clock = { id: String(msg.data.id), offset: Number(msg.data.offset) || 0 };
   });
 
   // ---------------------------------------------------------------- video đang xem
@@ -381,11 +386,11 @@
       // Đo trên Douyin thật: giữa lúc phát, trình phát có lúc trả currentTime = 0 (đang dừng) rồi quay lại chỗ cũ. Tin
       // con số đó thì huỷ nhầm đoạn đang dịch rồi phải gửi lại. Bỏ qua lần đọc khi video chưa sẵn sàng, và cú nhảy về 0
       // lúc đang dừng phải lặp lại ở lần đọc sau (250 ms) mới tin.
-      const t = pv ? pv.currentTime : 0;
-      const glitch = pv && (pv.readyState < 1 || (t === 0 && pv.paused && playhead > 2 && !zeroSeen));
-      zeroSeen = !!pv && t === 0 && pv.paused;
+      const raw = pv ? pv.currentTime : 0;
+      const glitch = pv && (pv.readyState < 1 || (raw === 0 && pv.paused && playhead > 2 && !zeroSeen));
+      zeroSeen = !!pv && raw === 0 && pv.paused;
       if (!glitch) {
-        playhead = t;
+        playhead = pv ? timeOf(pv) : 0;
         schedule();                            // theo chỗ đang xem: tua tới đâu dịch tới đó
       }
     }
@@ -395,7 +400,7 @@
     const r = v.getBoundingClientRect();
     host.style.left = r.left + 'px'; host.style.top = r.top + 'px'; host.style.width = r.width + 'px'; host.style.height = r.height + 'px';
     if (v.readyState < 1 || (zeroSeen && v.currentTime === 0)) { subEl.style.display = 'none'; return; }
-    playhead = v.currentTime;
+    playhead = timeOf(v);
     const cv = vids.get(currentId);
     const plan = cv && cv.plan;
     let res = cv && (plan ? cv.chunks.get(chunkAt(plan, playhead)) : cv.chunks.get(0));

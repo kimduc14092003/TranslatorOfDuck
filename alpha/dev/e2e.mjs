@@ -204,6 +204,15 @@ long.chunksBeforeSeek = providerHits.longChunks.length;               // đoạn
 long.at85 = await waitSub(85.0, 'Đi thôi!');                          // tua tới 85 s: đoạn 4, âm thanh từ 78,5 s → "走吧" ở 84,5 s
 long.at83 = await subAt(83.5);                                        // giữa 2 câu (câu 1 hết lúc 83,1 s): trống
 long.chunks = [...providerHits.longChunks];
+// Feed 推荐 phát nối đoạn: tua thì <video>.currentTime không đổi, chỉ đồng hồ trình phát (window.player.currentTime)
+// nhảy. Giả lập trình phát chạy trước <video> 50 s: <video> ở 35 s nghĩa là đang xem 85 s → phải hiện "Đi thôi!".
+await page.evaluate(() => {
+  const v = document.querySelector('[data-e2e="feed-active-video"] video');
+  // Dạng trình phát douyin-player: id ở config.baseConfig.mediaInfo.id, không có awemeInfo.
+  window.player = { config: { baseConfig: { mediaInfo: { id: '7500000000000000004' } } }, media: v, get currentTime() { return v.currentTime + 50; } };
+});
+long.clock85 = await waitSub(35.0, 'Đi thôi!');
+await page.evaluate(() => { window.player = undefined; });
 
 console.log({ health, first, atGap, atSecond, delayed, savedDelay, status, song, long, providerHits });
 console.log('server log:\n' + alphaLog.trim());
@@ -229,6 +238,7 @@ const checks = {
   // Đoạn 2 được gửi cùng lúc với đoạn 1 (cả hai nằm trong 30 s đầu): server chờ đoạn 1 dịch xong để lấy ngữ cảnh.
   'later chunks translated with previous lines as context (chunks 2–4)': providerHits.withContext >= 3,
   'first translation got HTTP 429, server retried (first video still has subs)': providerHits.rateLimited > 1 && first.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
+  'player clock 50 s ahead of <video> (feed seek): sub follows the player': long.clock85.sub === 'Đi thôi!',
   'audio-only upload: chunk audio ≈ 26/38/38/22 s': JSON.stringify([...long.chunks].sort((a, b) => a - b)) === '[22,26,38,38]',
   'no page errors': errors.length === 0,
 };
