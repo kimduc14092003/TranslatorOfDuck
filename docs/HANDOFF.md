@@ -278,6 +278,31 @@ Feed có hai loại trình phát: `xgplayer-*` và `douyin-player-*`.
 - **e2e:** giả lập trình phát chạy trước `<video>` 50 s. Kiểm tra trượt với mã cũ.
 - **Đo trên feed thật** (video 3:09 có lời, `douyin-player`): 6 lần tua (bấm và kéo), độ lệch từ −55 đến +127 s, 338 mẫu có sub, 0 mẫu sai (so với đồng hồ trình phát). Loại `xgplayer` thì thẻ `<video>` được tua bình thường (độ lệch 0).
 
+## 6h. Kiểm tra toàn bộ như người dùng (31/10, extension 0.2.16, key OpenAI gốc)
+
+Đo trên Douyin thật, Chromium test có đăng nhập. Script ở scratchpad, chỉ để trên máy.
+
+| Tình huống | Kết quả |
+|---|---|
+| Tua trên feed, trình phát `douyin-player` (bấm và kéo thanh tiến trình, 6 lần) | 338 mẫu có sub, 0 sai |
+| Tua trên feed, trình phát `xgplayer` | 29 mẫu có sub, 0 sai |
+| Tua bằng phím ← → | 7 mẫu có sub, 0 sai |
+| Video tự phát lại từ đầu (3:09, `<video>` vẫn chạy tiếp ở 245 s) | sub vòng sau đúng |
+| Lướt ngược ↑ rồi ↓ lại | đúng video, sub có ngay, 0 sai |
+| Trang modal `?modal_id=` (vlog 34 phút, 3 lần tua) | 249 mẫu có sub, 0 sai; sub đầu sau 0,6–4,0 s |
+| Lướt nhanh 4 s/video, tải lại trang (2 lượt) | 7 và 9 / 11 có ngay; 1 và 0 không kịp |
+| Popup: kiểm server, tắt/bật, vị trí, cỡ chữ, nút −/+ | đúng, có lưu |
+| Phím `]` ×3 rồi `[` ×3 | +0,3 s rồi về 0,0 s, có lưu |
+| Toàn màn hình (nút của trình phát) | sub nằm trong phần toàn màn hình |
+| Trang `/video/{id}` (`xgplayer`, 3 lần tua) rồi phát 2× | 90 + 21 mẫu có sub, 0 sai |
+| Tắt server giữa chừng rồi bật lại | sau 1,6 s nhãn "lỗi: không kết nối được server…"; extension gọi lại sau ~20 s, sub ra sau 7,7 s |
+
+Sửa trong lúc kiểm: lượt tải bị treo (15 s không có byte nào) giờ bị bỏ sau 6 s im lặng (phần đầu file 4 s), không đợi đủ 20 s, rồi gọi lại qua `/aweme/v1/play/`. Tải chậm nhưng vẫn có dữ liệu thì không bị cắt (tổng tối đa 60 s). e2e có kiểm tra: CDN giả treo một lần; mã mới gọi lại sau 6,0 s, mã cũ sau 20,0 s.
+
+Chưa kiểm được:
+- Dòng thống kê của popup khi mở bằng biểu tượng thật (lúc kiểm, popup được mở như một tab nên không thấy tab Douyin).
+- Sub trên video livestream hay bài ảnh: chỉ thấy không có nhãn, chưa xem kỹ.
+
 ## 7. Việc tiếp theo trên Mac
 
 1. **Kiểm tra môi trường:** `node -v` (cần 18+), `git status`, đang ở nhánh `claude/busy-newton-1y8nzr`. Có `alpha/server/.env` chưa (chỉ kiểm có file, không đọc nội dung).
