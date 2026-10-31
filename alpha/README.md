@@ -7,7 +7,7 @@ Bản thử chạy trên máy bạn. Khi lướt Douyin, sub tiếng Việt hi�
   - Phần bạn không xem thì không dịch, nên không tốn tiền API.
   - 4 video kế tiếp trong feed được dịch sẵn đoạn đầu.
 - Extension chỉ tải đúng phần cần của video, tự tách riêng âm thanh rồi gửi tới **server chạy trên chính máy bạn**.
-- Server tách âm thanh, nhận dạng giọng nói (Fun-ASR, hoặc Gemini nếu không có key Alibaba), chia câu, dịch bằng OpenAI hoặc Gemini rồi trả sub về.
+- Server tách âm thanh, nhận dạng giọng nói (Fun-ASR, hoặc Gemini nếu không có key Alibaba), chia câu, dịch bằng OpenAI hoặc Gemini rồi trả sub về. Fun-ASR hết hạn mức thì server tự chuyển sang `qwen-audio-3.1-asr-flash` (cùng key Alibaba), popup ghi rõ đang dùng model nào.
 - Mặc định dịch cả lời bài hát: dòng hát hiện "♪" ở đầu. Tắt bằng nút "Dịch cả lời bài hát (♪)" trong popup thì video bài hát bị bỏ qua như trước, và video nói chuyện có xen đoạn hát chỉ bỏ những câu hát. Đổi nút giữa chừng thì chỉ những đoạn có hát được làm lại, phần nhận dạng giọng nói thường được dùng lại. Chế độ này cần Fun-ASR: nhận dạng bằng Gemini gần như không nhận ra câu hát. Video chỉ có nhạc (không lời) luôn bỏ qua.
 - Key nằm trong file `.env` trên máy bạn, không gửi đi đâu ngoài nhà cung cấp AI.
 

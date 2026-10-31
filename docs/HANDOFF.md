@@ -72,9 +72,9 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 - **`server.mjs`**: `POST /v1/subtitles` và `GET /health`.
   - Cache file theo từng đoạn: `work/cache/<id>.<from>-<to>.vi.<phiên bản>.json`, có trường `debug` gồm đặc trưng nói/hát và từng câu.
   - Mỗi đoạn có 2 dòng log: kết quả và "nghe được: …".
-- **`pipeline.mjs`** (`PIPELINE_VERSION = 'alpha-4'`), lần lượt:
+- **`pipeline.mjs`** (`PIPELINE_VERSION = 'alpha-8'`), lần lượt:
   1. ffmpeg chuyển sang mp3 16 kHz, có `aresample first_pts=0`.
-  2. Fun-ASR.
+  2. Fun-ASR; hết hạn mức thì tự chuyển sang `qwen-audio-3.1-asr-flash` (§6k).
   3. `windowAsr`: đổi mốc về thời gian video, chỉ giữ câu **bắt đầu** trong đoạn.
   4. `classifySpeech` và `splitSung`: lọc hát theo từng câu, trung vị > 0,33 s/chữ hoặc lời lặp.
   5. `segmentCues`: ≤ 7 s và ≤ 16 chữ Hán mỗi dòng.
@@ -85,7 +85,7 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 
 | Lệnh | Kiểm tra gì |
 |---|---|
-| `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới, đánh dấu dòng hát, tiếng đệm trong lời hát, dòng nói ngắn gộp vào dòng hát (18 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới ở cả hai chế độ lời bài hát, `rank`), Gemini hết lượt trong ngày (9 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON (11 kiểm tra). `lyrics-test.mjs`: chế độ lời bài hát, kể cả điệp khúc câu ngắn, ngữ cảnh ở chế độ thường, hai chế độ cùng lúc (14 kiểm tra) |
+| `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới, đánh dấu dòng hát, tiếng đệm trong lời hát, dòng nói ngắn gộp vào dòng hát (18 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới ở cả hai chế độ lời bài hát, `rank`), Gemini hết lượt trong ngày (9 kiểm tra). `asr-fallback-test.mjs`: Fun-ASR hết hạn mức thì chuyển sang model dự phòng, giới hạn theo phút thì gọi lại (20 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON (11 kiểm tra). `lyrics-test.mjs`: chế độ lời bài hát, kể cả điệp khúc câu ngắn, ngữ cảnh ở chế độ thường, hai chế độ cùng lúc (14 kiểm tra) |
 | `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng (37 kiểm tra) |
 | `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước (3 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms (4 kiểm tra) |
@@ -420,6 +420,47 @@ Còn mở:
 - **Đánh dấu ♪ theo từng câu** dựa vào độ dài chữ (> 0,33 s/chữ), nên câu nói kéo dài, la hét có thể bị đánh dấu ♪ (ví dụ "冲刺冲 → Tăng tốc nào!"). Trong một đoạn có cả câu hát lẫn câu nói, câu hát không đủ dài có thể không có ♪. Mọi agent soát đều dùng ASR giả: phân loại câu hát trên âm thanh thật là rủi ro lớn nhất chưa test, trong khi chế độ này bật mặc định.
 - **Server ngắt ASR khi người xem tua đi**, trước khi lưu `.asr.` (có từ trước). Sửa được bằng cách để lệnh ASR chạy nốt rồi lưu, nhưng nên biết trước lệnh bị ngắt có tính tiền không.
 - **Bản quyền:** khi có cache dùng chung cho nhiều người, việc lưu và phát bản dịch lời bài hát cần xem lại.
+
+## 6k. Fun-ASR hết hạn mức: tự chuyển sang `qwen-audio-3.1-asr-flash` (31/10, extension 0.2.22)
+
+Chủ dự án yêu cầu: hết token (hạn mức) của Fun-ASR thì chuyển sang `qwen-audio-3.1-asr-flash`.
+- **DashScope tính hạn mức riêng cho từng model** và không tự chuyển sang model khác. Hết hạn mức thì báo:
+  - 403 `AllocationQuota.FreeTierOnly`: hết hạn mức miễn phí khi bật "chỉ dùng miễn phí";
+  - 429 `Throttling.AllocationQuota` kèm câu "Free allocated quota exceeded": hết hạn mức miễn phí;
+  - 400 `Arrearage`: tài khoản hết tiền.
+
+  429 `Throttling.AllocationQuota` không kèm câu đó thường là giới hạn theo phút (chưa kiểm được trên DashScope thật): server gọi lại sau 2, 5, 15 s như mọi 429, không đổi model. Vẫn bị sau 3 lần gọi lại (22 s) thì model đó nghỉ 3 phút và đoạn đó dùng model dự phòng. Bản đầu coi mọi 429 mã này là hết hạn mức; verifier chứng minh gặp một lần ở cả hai model là mất nhận dạng 30 phút, trong khi bản trước chỉ chờ ~2 s.
+
+  Nguồn: tài liệu Model Studio (trang hạn mức miễn phí, trang API nhận dạng không thời gian thực).
+- **Cách chạy** (`pipeline.mjs`, `funasr()`):
+  - Gặp một trong ba mã đó thì gửi lại ngay đoạn đó bằng model dự phòng (`ASR_FALLBACK_MODEL`, mặc định `qwen-audio-3.1-asr-flash`), nên vẫn có sub. Các đoạn sau đi thẳng sang model dự phòng.
+  - Cứ 30 phút server thử lại Fun-ASR một lần (lần thử hỏng trả lời ngay), phòng khi đã nạp tiền hay tắt "chỉ dùng miễn phí". Chạy lại server thì thử ngay.
+  - Mỗi đoạn thử mỗi model tối đa một lần. Fun-ASR vừa hết lượt chờ trong lúc model dự phòng đang chạy (rồi báo hết hạn mức) thì cùng đoạn đó thử Fun-ASR luôn.
+  - Model dự phòng bị từ chối (chưa bật trong Model Studio, key không có quyền) thì lỗi ghi rõ "… hết hạn mức, model dự phòng … bị từ chối". Lỗi đó tạm dừng cả DashScope 2 phút như mọi lỗi key; trong lúc đó câu lỗi vẫn giữ nguyên.
+  - Trả 200 mà không có câu thì báo lỗi, trừ khi chữ cũng rỗng (đó mới là "không có lời"). Không thì đoạn đó bị lưu là bỏ qua mãi.
+  - Lỗi không phải JSON (trang lỗi HTML của cổng mạng) vẫn được gọi lại như trước.
+  - Model dự phòng cũng hết hạn mức thì tạm dừng nhận dạng tới lúc thử lại, báo lỗi ngay kèm `retryAfterMs` như khi Gemini hết lượt.
+  - Lỗi 401/403/404 khác (key sai, không có quyền) vẫn là lỗi cấu hình như trước, không đổi model.
+  - Đặt `ASR_FALLBACK_MODEL=` (rỗng) trong `.env` để tắt.
+- **Thấy ở đâu:**
+  - Log khởi động ghi `ASR: funasr fun-asr-flash-2026-06-15, dự phòng qwen-audio-3.1-asr-flash`.
+  - Lúc chuyển model, log ghi một lần `… hết hạn mức (mã): chuyển sang …`; dòng log của đoạn ghi tên model dự phòng sau thời gian ASR.
+  - `/health` có `asrModel` (model đang dùng), `asrModels`, `asrFallback`. Popup ghi "Nhận dạng: qwen-audio-3.1-asr-flash (Fun-ASR hết hạn mức)".
+- **Gọi thật một lần** với key của chủ dự án (server tự nạp `.env`; không đọc file đó). Âm thanh do giọng Tingting của macOS đọc.
+  - Câu tiếng Trung 6,9 s: HTTP 200, 965 ms, nhận đúng nguyên câu, 1 câu có mốc 0,12–6,80 s và 17 từ có mốc.
+  - Kết quả cùng dạng với Fun-ASR-Flash (`output.sentence` có `words[]` với `begin_time`/`end_time`), nên bộ đọc kết quả dùng chung.
+  - Đoạn im lặng 4 s: HTTP 400 `CLIENT_ERROR` với câu `ASR_RESPONSE_HAVE_NO_WORDS`, giống Fun-ASR, nên được hiểu là "không có lời".
+  - Giá trên trang model, khu vực Singapore: vào 0,15, ra 0,47 USD mỗi triệu token. Lượt thử trên tính 85 token vào, 17 token ra.
+- **Soát độc lập:** 1 verifier dựng server thật với DashScope giả, 3 lượt (soát, kiểm lại, kiểm lại lần cuối). Không có lỗi chặn.
+  - Lượt 1, lỗi lớn: 429 theo phút nói trên. Lỗi nhỏ: log khởi động báo nhầm `ASR_FALLBACK_MODEL` là biến không dùng; dạng kết quả lạ bị lưu thành "không có lời"; đoạn báo lỗi đúng lúc hết lượt chờ; câu lỗi khi model dự phòng bị từ chối; "(cả model dự phòng)" khi đã tắt dự phòng; log chuyển model lặp lại.
+  - Lượt 2, lỗi lớn do chính bản sửa sinh ra: đọc `body.message` khi DashScope trả lỗi không phải JSON (`body` là `null`), nên trang lỗi 502, 503 rỗng báo lỗi ngay, mất các lần gọi lại. Lỗi nhỏ: có chữ mà không có câu vẫn bị lưu là "không có lời"; 429 theo phút kéo dài làm đoạn nào cũng chờ 22 s rồi lỗi; câu lỗi đổi lại sau khi hết lượt chờ; `ASR_QUOTA_RETRY_MS` âm làm mất lượt chờ; test có thể treo khi trùng cổng.
+- **Test:** `asr-fallback-test.mjs`, 20 kiểm tra, dùng DashScope giả trả đúng mã và câu lỗi theo tài liệu (`ASR_QUOTA_RETRY_MS` rút lượt chờ 30 phút xuống 1,2 s; cổng do hệ điều hành chọn). Kiểm tra mới của mỗi lượt trượt với bản trước lượt đó.
+- **Chưa kiểm:**
+  - Chưa thấy Fun-ASR hết hạn mức thật; mã lỗi lấy theo tài liệu. Nếu lúc đó DashScope trả mã khác, server báo lỗi chứ không chuyển model. Mã nằm trong log server: dòng `báo HTTP 401/403/404: {…}` (lỗi key/model), hay dòng `LỖI HTTP 4xx: {…}` của đoạn đó.
+  - Chất lượng nhận dạng của model dự phòng trên video Douyin thật (nhạc nền, nói nhanh) chưa so với Fun-ASR.
+- **Còn nhỏ, chưa sửa** (verifier lượt 3, không ảnh hưởng sub):
+  - Cả hai model cùng bị giới hạn theo phút kéo dài thì câu lỗi vẫn ghi "hết hạn mức", popup ghi "Fun-ASR hết hạn mức", và mỗi lần thử lại sau 3 phút tốn một vòng 22 s.
+  - Model dự phòng bị từ chối đúng lúc một lệnh Fun-ASR đang chạy và lệnh đó báo lỗi key: câu lỗi nói về model dự phòng, nhưng log vẫn ghi đúng lỗi của Fun-ASR.
 
 ## 7. Việc tiếp theo trên Mac
 

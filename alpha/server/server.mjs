@@ -215,7 +215,7 @@ async function handleSubtitles(req, res) {
     const why = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch không ra dòng nào' };
     console.log(`${new Date().toLocaleTimeString()} ${id}${where} ${out.status}${out.label && out.status !== 'ok' ? ' (' + (why[out.label] || out.label) + ')' : ''}` +
       `${out.cues ? ' ' + out.cues.length + ' dòng' : ''}${chunked && meta.from > 0 && out.status === 'ok' && !out.cached ? ` (ngữ cảnh ${out.context || 0} dòng${out.contextFar ? ' ở đoạn xa' : ''}${out.before ? `, lời ngay trước ${out.before} câu` : ''})` : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu${!lyrics ? `, ${out.sung ?? 0} câu hát bị bỏ` : out.status === 'ok' ? `, ${out.cues.filter(c => c.sung).length} dòng hát được dịch` : ''}` +
-      ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${out.asrCached ? 'dùng lại' : (t.asrMs ?? '-') + ' ms'}, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : ''}` +
+      ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${out.asrCached ? 'dùng lại' : (t.asrMs ?? '-') + ' ms'}${out.asrModel ? ' (' + out.asrModel + ')' : ''}, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : ''}` +
       (job.startedAt - job.at > 300 ? ` · xếp hàng ${job.startedAt - job.at} ms` : '') +
       (out.heard ? `\n    nghe được: ${out.heard}` : ''));
     const { debug: _d, ...reply } = out;
@@ -262,10 +262,11 @@ const server = http.createServer(async (req, res) => {
 });
 server.listen(PORT, HOST, () => {
   const c = config();
-  console.log(`TranslatorOfDuck Alpha server: http://${HOST}:${PORT}  (ASR: ${c.asr || 'CHƯA CÓ KEY'}, dịch: ${c.mt || 'CHƯA CÓ KEY'}, dịch theo từng đoạn 30 s)`);
+  console.log(`TranslatorOfDuck Alpha server: http://${HOST}:${PORT}  (ASR: ${c.asr || 'CHƯA CÓ KEY'}${c.asrModels ? ' ' + c.asrModels.join(', dự phòng ') : ''}, dịch: ${c.mt || 'CHƯA CÓ KEY'}, dịch theo từng đoạn 30 s)`);
   // Báo tên biến (không bao giờ in giá trị) để tìm lỗi gõ sai tên trong .env.
   const KNOWN = ['OPENAI_API_KEY', 'OPENAI_MODEL', 'OPENAI_BASE', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_BASE', 'DASHSCOPE_API_KEY',
-    'DASHSCOPE_BASE', 'FUNASR_MODEL', 'FFMPEG', 'HOST', 'PORT', 'MAX_SECONDS', 'TOD_DUMP', 'TOD_WORK'];
+    'DASHSCOPE_BASE', 'FUNASR_MODEL', 'ASR_FALLBACK_MODEL', 'ASR_QUOTA_RETRY_MS', 'OPENAI_REASONING_EFFORT', 'MAX_PARALLEL', 'FFMPEG',
+    'HOST', 'PORT', 'MAX_SECONDS', 'TOD_DUMP', 'TOD_WORK'];
   const odd = dotEnvInfo.names.filter(n => !KNOWN.includes(n));
   if (odd.length) console.log(`  → .env có biến server không dùng: ${odd.join(', ')}. Tên key đúng: OPENAI_API_KEY, GEMINI_API_KEY, DASHSCOPE_API_KEY.`);
   if (misplacedOpenAIKey) console.log(`  → ${misplacedOpenAIKey} có dạng key OpenAI: đang dùng nó để dịch bằng OpenAI. Nên đổi tên dòng đó thành OPENAI_API_KEY.`);

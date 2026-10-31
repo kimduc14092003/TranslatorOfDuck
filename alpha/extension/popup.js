@@ -19,9 +19,14 @@ async function checkServer() {
     const r = await fetch(s.server.replace(/\/+$/, '') + '/health');
     const h = await r.json();
     const ok = h.ok && h.mt;
-    $('health').className = ok ? 'ok' : 'bad';
+    // Fun-ASR hết hạn mức thì server tự chuyển sang model dự phòng (asrFallback); hết cả hai thì asrModel là null, nhận
+    // dạng tạm dừng: hiện màu lỗi.
+    const asrDown = h.asr === 'funasr' && h.asrModels && !h.asrModel;
+    const asr = h.asr !== 'funasr' ? 'Gemini' : asrDown ? 'hết hạn mức' + (h.asrModels.length > 1 ? ' (cả model dự phòng)' : '')
+      : h.asrFallback ? `${h.asrModel} (Fun-ASR hết hạn mức)` : 'Fun-ASR';
+    $('health').className = ok && !asrDown ? 'ok' : 'bad';
     $('health').textContent = ok
-      ? `Server chạy. Nhận dạng: ${h.asr === 'funasr' ? 'Fun-ASR' : 'Gemini'}, dịch: ${h.mt === 'openai' ? 'OpenAI' : 'Gemini'}.`
+      ? `Server chạy. Nhận dạng: ${asr}, dịch: ${h.mt === 'openai' ? 'OpenAI' : 'Gemini'}.`
       : 'Server chạy nhưng thiếu OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env.';
   } catch (_) {
     $('health').className = 'bad';

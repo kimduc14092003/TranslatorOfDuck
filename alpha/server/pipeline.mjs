@@ -21,6 +21,10 @@ const OPENAI_MODEL = ENV.OPENAI_MODEL || 'gpt-4.1-mini';
 const OPENAI_REASONING_EFFORT = ENV.OPENAI_REASONING_EFFORT || '';
 const DASHSCOPE_BASE = ENV.DASHSCOPE_BASE || 'https://dashscope-intl.aliyuncs.com';
 const FUNASR_MODEL = ENV.FUNASR_MODEL || 'fun-asr-flash-2026-06-15';
+// Model nhận dạng dự phòng khi Fun-ASR hết hạn mức (31/10, chủ dự án chọn). Cùng API, cùng dạng kết quả có mốc từng chữ:
+// gọi thử thật một câu 6,9 s ra 17 từ có mốc, 965 ms; đoạn im lặng báo ASR_RESPONSE_HAVE_NO_WORDS như Fun-ASR. Đặt
+// ASR_FALLBACK_MODEL= (rỗng) trong .env để tắt.
+const ASR_FALLBACK_MODEL = ENV.ASR_FALLBACK_MODEL ?? 'qwen-audio-3.1-asr-flash';
 export const MAX_SECONDS = Number(ENV.MAX_SECONDS || 60);
 export const PIPELINE_VERSION = 'alpha-8';
 
@@ -45,7 +49,10 @@ for (const n of ['GEMINI_API_KEY', 'DASHSCOPE_API_KEY']) if (looksOpenAI(ENV[n])
 const mtProvider = () => (ENV.OPENAI_API_KEY ? 'openai' : ENV.GEMINI_API_KEY ? 'gemini' : null);
 export function config() {
   const mt = mtProvider();
-  return { asr: ENV.DASHSCOPE_API_KEY ? 'funasr' : (ENV.GEMINI_API_KEY ? 'gemini' : null), mt,
+  // asrModel: model nhận dạng đang dùng (null khi mọi model đều hết hạn mức); asrFallback: đang dùng model dự phòng.
+  const dash = !!ENV.DASHSCOPE_API_KEY, asrModel = dash ? asrModelNow() : null;
+  return { asr: dash ? 'funasr' : (ENV.GEMINI_API_KEY ? 'gemini' : null),
+    ...(dash ? { asrModel, asrModels: asrModels(), ...(asrModel && asrModel !== FUNASR_MODEL ? { asrFallback: true } : {}) } : {}), mt,
     model: mt === 'openai' ? OPENAI_MODEL : GEMINI_MODEL, ...(mt === 'openai' && OPENAI_REASONING_EFFORT ? { effort: OPENAI_REASONING_EFFORT } : {}),
     maxSeconds: MAX_SECONDS };
 }
@@ -128,7 +135,9 @@ const serviceOf = (url) => url.startsWith(OPENAI_BASE) ? 'OpenAI' : url.startsWi
   : url.startsWith(DASHSCOPE_BASE) ? 'DashScope' : new URL(url).host;
 const QUOTA_WHY = { Gemini: 'đã hết lượt gọi trong ngày (gói miễn phí)', OpenAI: 'hết hạn mức hoặc hết tiền trong tài khoản' };
 function dayQuotaError(service) {
-  const err = new Error(`${service} ${QUOTA_WHY[service] || 'hết hạn mức'}`);
+  const why = service !== 'DashScope' ? QUOTA_WHY[service] || 'hết hạn mức'
+    : 'hết hạn mức nhận dạng giọng nói' + (asrModels().length > 1 ? ' (cả model dự phòng)' : '');
+  const err = new Error(`${service} ${why}`);
   err.quotaDay = true;
   err.retryAfterMs = Math.max(0, (dayQuotaUntil.get(service) || 0) - Date.now());
   return err;
@@ -173,6 +182,14 @@ async function httpJson(url, init, timeoutMs = 20000) {
     let body = null;
     try { body = JSON.parse(text); } catch (_) { /* giữ text */ }
     if (!res.ok) {
+      // DashScope tính hạn mức riêng cho từng model và không tự chuyển model khác. Hết hạn mức thật (modelQuota): báo riêng,
+      // không tạm dừng cả DashScope như key sai, để funasr() đổi sang model dự phòng.
+      const code = body && typeof body.code === 'string' ? body.code : '';
+      if (service === 'DashScope' && modelQuota(code, body && body.message)) {
+        const err = new Error(`DashScope ${code}: ${String(body.message || '').slice(0, 160)}`);
+        err.modelQuota = code;
+        throw err;
+      }
       if ((res.status === 429 || res.status >= 500) && i < RETRY_WAITS.length) {
         // Gemini ghi loại hạn mức (quotaId) và thời gian nên chờ (retryDelay) trong lỗi 429: ghi log, chờ đúng chừng đó.
         const details = (body && body.error && body.error.details) || [];
@@ -196,6 +213,14 @@ async function httpJson(url, init, timeoutMs = 20000) {
         console.log(`    · ${host} báo HTTP ${res.status}: ${text.slice(0, 200)} → key hoặc model sai, tạm không gọi ${service} ${CONFIG_PAUSE_MS / 60000} phút`);
         throw configError(service);
       }
+      // Giới hạn theo phút (429 Throttling.AllocationQuota) vẫn còn sau các lần gọi lại: cho model đó nghỉ ngắn để funasr()
+      // dùng model dự phòng, thay vì đoạn nào cũng chờ 22 s rồi lỗi (đợt soát 31/10).
+      if (service === 'DashScope' && code === 'Throttling.AllocationQuota') {
+        const err = new Error(`DashScope ${code} sau ${RETRY_WAITS.length} lần gọi lại: ${String(body.message || '').slice(0, 160)}`);
+        err.modelQuota = code;
+        err.cooldownMs = ASR_THROTTLE_MS;
+        throw err;
+      }
       const err = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
       err.status = res.status;
       throw err;
@@ -203,25 +228,72 @@ async function httpJson(url, init, timeoutMs = 20000) {
     return body;
   }
 }
+// Hết hạn mức thật của một model: hết hạn mức miễn phí khi bật "chỉ dùng miễn phí" (403 AllocationQuota.FreeTierOnly),
+// tài khoản hết tiền (400 Arrearage), hay 429 Throttling.AllocationQuota kèm câu "Free allocated quota exceeded". Không kèm
+// câu đó thì là giới hạn theo phút: gọi lại như mọi 429 (đợt soát 31/10: coi là hết hạn mức thì gặp một lần ở cả hai
+// model là mất nhận dạng 30 phút, bản trước chỉ chờ ~2 s).
+const modelQuota = (code, message) => /^(AllocationQuota\.FreeTierOnly|Arrearage)$/.test(code)
+  || (code === 'Throttling.AllocationQuota' && /free/i.test(String(message || '')));
+// Model nhận dạng hết hạn mức → thời điểm thử lại. Hạn mức miễn phí không tự hồi (chỉ khi nạp tiền, tắt "chỉ dùng miễn
+// phí"), nên 30 phút mới thử lại model chính một lần; lần thử hỏng trả lời ngay, không tốn tiền. Chạy lại server thì thử
+// ngay. ASR_QUOTA_RETRY_MS chỉ để test rút ngắn.
+const ASR_QUOTA_RETRY_MS = Number(ENV.ASR_QUOTA_RETRY_MS) > 0 ? Number(ENV.ASR_QUOTA_RETRY_MS) : 30 * 60 * 1000;
+const ASR_THROTTLE_MS = Math.min(3 * 60 * 1000, ASR_QUOTA_RETRY_MS);   // giới hạn theo phút vẫn còn sau các lần gọi lại
+let fallbackRejected = null;     // { until, message }: model dự phòng bị từ chối, trong lúc DashScope tạm dừng vì lỗi đó
+const asrQuotaUntil = new Map();
+const asrModels = () => [FUNASR_MODEL, ASR_FALLBACK_MODEL].filter((m, i, a) => m && a.indexOf(m) === i);
+const asrModelNow = () => asrModels().find(m => (asrQuotaUntil.get(m) || 0) <= Date.now()) || null;
 async function funasr(mp3, signal) {
+  // Mỗi model thử tối đa một lần. Tìm lại sau mỗi lần hỏng: model chính có thể vừa hết lượt chờ trong lúc model dự phòng
+  // đang chạy (đợt soát 31/10: trước đây đoạn đó báo lỗi dù Fun-ASR đã dùng lại được).
+  const tried = new Set();
+  for (let model; (model = asrModels().find(m => !tried.has(m) && (asrQuotaUntil.get(m) || 0) <= Date.now())); ) {
+    tried.add(model);
+    try { return await funasrModel(model, mp3, signal); } catch (e) {
+      if (e.config) {
+        // Model dự phòng bị từ chối (chưa bật trong Model Studio, key không có quyền): nói rõ, không chỉ "kiểm tra .env". Lỗi
+        // đó tạm dừng cả DashScope 2 phút; trong lúc đó câu lỗi vẫn nói vậy, kể cả khi tới lượt thử lại Fun-ASR.
+        if (model !== FUNASR_MODEL) fallbackRejected = { until: Date.now() + (e.retryAfterMs || 0), message: `${FUNASR_MODEL} hết hạn mức, model dự phòng ${model} bị từ chối: ${e.message}` };
+        if (fallbackRejected && fallbackRejected.until > Date.now()) throw Object.assign(new Error(fallbackRejected.message), { config: true, retryAfterMs: e.retryAfterMs });
+        throw e;
+      }
+      if (!e.modelQuota) throw e;
+      const known = (asrQuotaUntil.get(model) || 0) > Date.now();   // việc chạy song song đã ghi trước
+      asrQuotaUntil.set(model, Date.now() + (e.cooldownMs || ASR_QUOTA_RETRY_MS));
+      const next = asrModelNow();
+      const why = e.cooldownMs ? `bị giới hạn theo phút (${e.modelQuota}), nghỉ ${Math.round(e.cooldownMs / 60000)} phút` : `hết hạn mức (${e.modelQuota})`;
+      if (!known) console.log(`    · ${model} ${why}${next ? ': chuyển sang ' + next : ': không còn model nhận dạng nào'}`);
+    }
+  }
+  // Mọi model đều hết hạn mức: tạm dừng nhận dạng tới lúc thử lại model sớm nhất, báo lỗi ngay kèm retryAfterMs.
+  dayQuotaUntil.set('DashScope', Math.min(...asrModels().map(m => asrQuotaUntil.get(m) || 0)));
+  throw dayQuotaError('DashScope');
+}
+async function funasrModel(model, mp3, signal) {
   try {
     const b = await httpJson(DASHSCOPE_BASE + '/api/v1/services/aigc/multimodal-generation/generation', {
       method: 'POST',
       signal, headers: { Authorization: 'Bearer ' + ENV.DASHSCOPE_API_KEY, 'Content-Type': 'application/json', 'X-DashScope-SSE': 'disable' },
       body: JSON.stringify({
-        model: FUNASR_MODEL,
+        model,
         input: { messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: 'data:audio/mp3;base64,' + mp3.toString('base64') } }] }] },
         parameters: { format: 'mp3', sample_rate: '16000', language_hints: ['zh'] },
       }),
     });
-    const out = (b.output && b.output.output) || b.output || {};
+    const o = b && b.output;
+    const out = (o && o.output) || o || {};
+    // Trả 200 mà không có câu (dạng khác, ví dụ model kiểu API khác): báo lỗi. Có chữ mà không có câu cũng không dùng được
+    // (không có mốc thời gian); chỉ chữ rỗng mới là "không có lời". Coi là "không có lời" thì đoạn đó bị lưu cache là bỏ qua
+    // mãi (đợt soát 31/10).
+    const hasSentences = typeof out === 'object' && ('sentence' in out || 'sentences' in out);
+    if (!hasSentences && !(typeof out.text === 'string' && !out.text.trim())) throw new Error(`${model} trả kết quả lạ: ${JSON.stringify(b).slice(0, 160)}`);
     let sentences = out.sentences || out.sentence || [];
     if (!Array.isArray(sentences)) sentences = [sentences];
     const segments = sentences.filter(Boolean).map(x => ({ start: x.begin_time / 1000, end: x.end_time / 1000, text: x.text || '' }));
     const words = sentences.flatMap(x => (x && x.words) || []).map(w => ({ text: (w.text || '') + (w.punctuation || ''), start: w.begin_time / 1000, end: w.end_time / 1000 }));
-    return { provider: 'funasr', text: out.text || segments.map(x => x.text).join(''), segments, words };
+    return { provider: 'funasr', model, text: out.text || segments.map(x => x.text).join(''), segments, words };
   } catch (e) {
-    if (e.status === 400 && /ASR_RESPONSE_HAVE_NO_WORDS/.test(e.message)) return { provider: 'funasr', text: '', segments: [], words: [] };
+    if (e.status === 400 && /ASR_RESPONSE_HAVE_NO_WORDS/.test(e.message)) return { provider: 'funasr', model, text: '', segments: [], words: [] };
     throw e;
   }
 }
@@ -537,7 +609,7 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   if (opts.from != null) asr = windowAsr(asr, opts.offset || 0, opts.from, opts.to, preRoll);
   const cls = classifySpeech(meta, asr);
   const split = splitSung(asr);
-  const base = { asr: asr.provider, ...(saved ? { asrCached: true } : {}), seconds: audio.seconds, heard: (asr.text || '').slice(0, 40), sung: split.sung, sentences: split.total,
+  const base = { asr: asr.provider, ...(asr.model && asr.model !== FUNASR_MODEL ? { asrModel: asr.model } : {}), ...(saved ? { asrCached: true } : {}), seconds: audio.seconds, heard: (asr.text || '').slice(0, 40), sung: split.sung, sentences: split.total,
     debug: { features: cls, sentences: split.sentences } };
   const skip = (label) => ({ status: 'skipped', label, ...base, timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio } });
   if (cls.label !== 'speech' && cls.label !== 'singing') return skip(cls.label);
