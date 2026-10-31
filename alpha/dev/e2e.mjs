@@ -109,6 +109,7 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body styl
   window.activate(0);
 </script></body></html>`;
 const playRequested = new Set();
+const cdnSong = [];   // lần tải phần âm thanh video bài hát (lần đầu bị treo)
 const playRequestedAt = {};
 let feedServedAt = 0;
 const douyin = https.createServer({ key: fs.readFileSync(path.join(TMP, 'k.pem')), cert: fs.readFileSync(path.join(TMP, 'c.pem')) }, (req, res) => {
@@ -131,6 +132,11 @@ const douyin = https.createServer({ key: fs.readFileSync(path.join(TMP, 'k.pem')
   const h = { 'access-control-allow-origin': 'https://www.douyin.com', 'access-control-expose-headers': 'content-range', 'content-type': 'video/mp4', 'accept-ranges': 'bytes' };
   if (!body) return send(404, h, '');
   const m = /bytes=(\d+)-(\d*)/.exec(req.headers.range || '');
+  // CDN treo một lần (như đo được trên Douyin): lượt tải phần âm thanh đầu tiên của video bài hát gửi header rồi im.
+  if (m && !u.pathname.startsWith('/media/') && u.pathname.endsWith('/song6.mp4') && Number(m[1]) > 0) {
+    cdnSong.push(Date.now());
+    if (cdnSong.length === 1) { res.writeHead(206, { ...h, 'content-range': `bytes ${m[1]}-${body.length - 1}/${body.length}` }); res.write(body.subarray(Number(m[1]), Number(m[1]) + 16)); return; }
+  }
   if (m) {
     const a = Number(m[1]), b = Math.min(m[2] ? Number(m[2]) : body.length - 1, body.length - 1);
     return send(206, { ...h, 'content-range': `bytes ${a}-${b}/${body.length}` }, body.subarray(a, b + 1));
@@ -191,7 +197,9 @@ await page.waitForTimeout(1600); // chờ thông báo lệch sub tắt
 // Chuyển sang video bài hát → phải bỏ qua, không hiện sub.
 await page.evaluate(() => window.activate(2));
 await page.waitForTimeout(800);
-const song = await subAt(2.0);
+// Lượt tải đầu của video này bị CDN giả treo: chờ extension bỏ lượt đó (6 s im) và tải lại.
+let song = await subAt(2.0);
+for (let i = 0; i < 60 && /đang dịch/.test(song.badge || ''); i++) { await page.waitForTimeout(250); song = await subAt(2.0); }
 
 // Video dài 100 s: chia đoạn [0,20) [20,50) [50,80) [80,101); dịch trước 30 s so với chỗ đang xem.
 await page.evaluate(() => window.activate(3));
@@ -214,7 +222,7 @@ await page.evaluate(() => {
 long.clock85 = await waitSub(35.0, 'Đi thôi!');
 await page.evaluate(() => { window.player = undefined; });
 
-console.log({ health, first, atGap, atSecond, delayed, savedDelay, status, song, long, providerHits });
+console.log({ health, first, atGap, atSecond, delayed, savedDelay, status, song, long, providerHits, cdnSongGapsMs: cdnSong.map(t => t - cdnSong[0]) });
 console.log('server log:\n' + alphaLog.trim());
 const checks = {
   'popup sees the server': /Server chạy/.test(health),
@@ -226,6 +234,7 @@ const checks = {
   'next videos prefetched (3 processed)': (status.counts.ok || 0) + (status.counts.skipped || 0) >= 3,
   'next video found in embedded page data (__pace_f), prefetched before the feed API answers': !!playRequestedAt[ids[1]] && (!feedServedAt || playRequestedAt[ids[1]] < feedServedAt),
   'liked video in the sidebar is not prefetched': !playRequested.has(FAV) && playRequested.has(ids[1]),
+  'stalled CDN download dropped after ~6 s idle and retried; song video still processed': cdnSong.some(t => t - cdnSong[0] >= 5000 && t - cdnSong[0] < 15000) && /7500000000000000003 \[0:00[^\]]*\] skipped \(bài hát\)/.test(alphaLog),
   'song video skipped, no subtitle': song.sub === null && /bài hát/.test(song.badge || ''),
   // Mỗi video/đoạn chỉ xử lý một lần (mẩu nhanh "[nhanh …]" là yêu cầu riêng, không tính).
   'ASR called once per video (dedupe)': (() => { const done = alphaLog.split('\n').map(l => /^\S+ \S+ (\d+)( \[[^\]]+\])? (ok|skipped)/.exec(l)).filter(m => m && !/nhanh/.test(m[2] || '')).map(m => m[1] + (m[2] || ''));

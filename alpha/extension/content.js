@@ -158,19 +158,43 @@
       chrome.runtime.sendMessage({ type: 'bump', server: settings.server, payload: { id: currentId, from: c.from, to: c.to } }).catch(() => {});
     }
   }
-  // Có hạn giờ: đo khi lướt, một lượt tải qua /aweme/v1/play/ treo tới 37 s, video đó không bao giờ được dịch sẵn.
-  async function rangeFetch(url, a, b, signal, timeoutMs = 20000) {
-    const limit = AbortSignal.timeout(timeoutMs);
+  // Hạn giờ theo "đứng im": đo khi lướt, lượt tải qua CDN có lúc treo 15–37 s không nhận byte nào, video đó không được
+  // dịch sẵn. Quá idleMs không có dữ liệu thì bỏ để gọi lại. Tải chậm mà vẫn có dữ liệu (máy chủ hl-mly ~0,3 MB/s, đoạn
+  // video dài tới 15 MB) thì không cắt, chỉ cắt khi quá totalMs.
+  async function rangeFetch(url, a, b, signal, idleMs = 6000, totalMs = 60000) {
+    const ctl = new AbortController();
+    let timedOut = false, idle = null;
+    const stop = () => { timedOut = true; ctl.abort(); };
+    const kick = () => { clearTimeout(idle); idle = setTimeout(stop, idleMs); };
+    const whole = setTimeout(stop, totalMs);
+    const onAbort = () => ctl.abort();
+    if (signal) { if (signal.aborted) ctl.abort(); else signal.addEventListener('abort', onAbort, { once: true }); }
     try {
-      const res = await fetch(url, { headers: { Range: `bytes=${a}-${b}` }, credentials: 'omit', cache: 'no-store', signal: signal ? AbortSignal.any([signal, limit]) : limit });
+      kick();
+      const res = await fetch(url, { headers: { Range: `bytes=${a}-${b}` }, credentials: 'omit', cache: 'no-store', signal: ctl.signal });
       if (res.status !== 206 && res.status !== 200) throw new Error('tải video: HTTP ' + res.status);
       const total = Number(((res.headers.get('content-range') || '').match(/\/(\d+)$/) || [])[1]) || null;
-      let buf = await res.arrayBuffer();
+      const parts = [];
+      let n = 0;
+      const reader = res.body.getReader();
+      for (;;) {
+        kick();
+        const { done, value } = await reader.read();
+        if (done) break;
+        parts.push(value); n += value.byteLength;
+      }
+      const all = new Uint8Array(n);
+      let o = 0;
+      for (const p of parts) { all.set(p, o); o += p.byteLength; }
+      let buf = all.buffer;
       if (res.status === 200 && a > 0) buf = buf.slice(a, b + 1);   // máy chủ bỏ qua Range
       return { buf, total, url: res.url };
     } catch (e) {
-      if (limit.aborted && !(signal && signal.aborted)) throw Object.assign(new Error('tải video quá lâu'), { timeout: true });
+      if (timedOut && !(signal && signal.aborted)) throw Object.assign(new Error('tải video quá lâu'), { timeout: true });
       throw e;
+    } finally {
+      clearTimeout(idle); clearTimeout(whole);
+      if (signal) signal.removeEventListener('abort', onAbort);
     }
   }
   // Mục lục (moov) của video: tải một lần, giữ lại cho các đoạn sau.
@@ -197,13 +221,15 @@
     return v.media;
   }
   async function fetchBytes(v, a, b, signal) {
-    for (const url of v.url === v.api ? [v.api] : [v.url, v.api]) {   // link CDN đã chuyển hướng hết hạn thì quay về /aweme/v1/play/
+    // Link CDN đã chuyển hướng hết hạn hoặc treo thì quay về /aweme/v1/play/ (lần gọi mới có thể sang máy chủ khác).
+    const urls = v.url === v.api ? [v.api, v.api] : [v.url, v.api];
+    for (const [i, url] of urls.entries()) {
       try {
         const r = await rangeFetch(url, a, b, signal);
         if (v.total && r.total && r.total !== v.total) throw new Error('file video đã đổi');
         if (r.url) v.url = r.url;
         return r.buf;
-      } catch (e) { if (url === v.api || signal.aborted) throw e; }
+      } catch (e) { if (i === urls.length - 1 || signal.aborted) throw e; }
     }
   }
   function toBase64(u8) {
