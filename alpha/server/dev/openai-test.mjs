@@ -15,7 +15,7 @@ const aac = (sec) => { const f = path.join(TMP, `${sec}.aac`); execFileSync(ffmp
 
 const openaiBodies = [];
 let geminiCalls = 0, asrCalls = 0;
-let mode = 'ok';                   // 'ok' | 'rate' (429 theo phút, lần đầu) | 'quota' (hết tiền)
+let mode = 'ok';                   // 'ok' | 'long' (dòng dịch quá dài) | 'rate' (429 theo phút, lần đầu) | 'quota' (hết tiền)
 let rateHits = 0;
 const providers = http.createServer((req, res) => {
   let body = '';
@@ -36,7 +36,8 @@ const providers = http.createServer((req, res) => {
       if (mode === 'quota') return json({ error: { message: 'You exceeded your current quota', type: 'insufficient_quota', code: 'insufficient_quota' } }, 429);
       if (mode === 'rate' && rateHits++ === 0) return json({ error: { message: 'Rate limit reached', type: 'requests', code: 'rate_limit_exceeded' } }, 429, { 'retry-after-ms': '300' });
       const lines = JSON.parse(b.messages[0].content.match(/Các dòng: (.*)$/m)[1]);
-      const content = JSON.stringify({ cues: lines.map(l => ({ id: l.id, vi: 'Chào cả nhà, hôm nay đi ăn lẩu.' })) });
+      const vi = mode === 'long' ? 'Chào cả nhà thân mến của tôi, hôm nay chúng ta sẽ cùng nhau đi ăn lẩu ở một quán rất nổi tiếng gần đây nhé.' : 'Chào cả nhà, hôm nay đi ăn lẩu.';
+      const content = JSON.stringify({ cues: lines.map(l => ({ id: l.id, vi })) });
       return json({ choices: [{ message: { role: 'assistant', content } }] });
     }
     res.writeHead(404); res.end();
@@ -57,8 +58,8 @@ server.stderr.on('data', d => { log += d; });
 while (!/Alpha server/.test(log)) await new Promise(r => setTimeout(r, 50));
 
 const audio = aac(22);
-const post = (from) => fetch(`http://127.0.0.1:${port}/v1/subtitles`, { method: 'POST', headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ id: '7500000000000000077', from, to: from + 30, audioStart: from, urgent: true, aac: audio }) }).then(r => r.json());
+const post = (from, extra = {}) => fetch(`http://127.0.0.1:${port}/v1/subtitles`, { method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ id: '7500000000000000077', from, to: from + 30, audioStart: from, urgent: true, aac: audio, ...extra }) }).then(r => r.json());
 let n = 0;
 const t = (name, fn) => { fn(); n++; console.log('PASS ' + name); };
 try {
@@ -80,6 +81,17 @@ try {
     assert.equal(openaiBodies[0].model, 'test-model');
     assert.equal(openaiBodies[0].reasoning_effort, 'none');
     assert.ok(!('temperature' in openaiBodies[0]));
+  });
+  // Dòng dịch quá dài: đoạn thường gọi thêm lượt rút gọn, đoạn dịch sẵn (video kế tiếp) thì không.
+  mode = 'long';
+  let before = openaiBodies.length;
+  await post(120);
+  const normalCalls = openaiBodies.length - before;
+  before = openaiBodies.length;
+  await post(150, { prefetch: true });
+  const prefetchCalls = openaiBodies.length - before;
+  t('đoạn dịch sẵn bỏ lượt rút gọn dòng dài (1 lần gọi thay vì 2)', () => {
+    assert.equal(normalCalls, 2); assert.equal(prefetchCalls, 1);
   });
   mode = 'rate';
   const t0 = Date.now();

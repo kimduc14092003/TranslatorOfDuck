@@ -13,7 +13,8 @@ const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '127.0.0.1';
 const CACHE = path.join(process.env.TOD_WORK || path.join(HERE, 'work'), 'cache');
 const MAX_BODY = 40 * 1024 * 1024;
-const MAX_PARALLEL = 2;
+// Lướt nhanh: video đang xem + 4 video dịch sẵn + đoạn kế cùng chờ; 2 việc một lúc thì video thứ 3 trở đi không kịp.
+const MAX_PARALLEL = Number(process.env.MAX_PARALLEL) || 4;
 fs.mkdirSync(CACHE, { recursive: true });
 
 // Tối đa MAX_PARALLEL đoạn xử lý cùng lúc; cùng một đoạn thì dùng chung một lần xử lý (inflight).
@@ -116,7 +117,8 @@ async function handleSubtitles(req, res) {
         const lines = near ? lastLines(path.join(CACHE, near[0])) : [];
         return lines.length ? { lines, far: true } : [];
       };
-      opts = { kind: 'aac', offset: meta.audioStart, from: meta.from, to: meta.to, context, condense: !quick };
+      // Mẩu nhanh và đoạn dịch sẵn (video kế tiếp) bỏ lượt rút gọn: bớt một lần gọi model, xong sớm hơn.
+      opts = { kind: 'aac', offset: meta.audioStart, from: meta.from, to: meta.to, context, condense: !quick && meta.prefetch !== true };
     }
     const buf = Buffer.from(chunked ? meta.aac : meta.b64, 'base64');
     job = submit(key, meta.urgent, async (signal) => {

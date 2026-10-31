@@ -85,7 +85,7 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 
 | Lệnh | Kiểm tra gì |
 |---|---|
-| `cd alpha/server && npm test` | Chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới (14 kiểm tra); hàng đợi khi tua liên tiếp: ưu tiên, huỷ, đẩy lên khi lướt tới, Gemini hết lượt trong ngày (7 kiểm tra); dịch bằng OpenAI giả (5 kiểm tra) |
+| `cd alpha/server && npm test` | Chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới (14 kiểm tra); hàng đợi khi tua liên tiếp: ưu tiên, huỷ, đẩy lên khi lướt tới, Gemini hết lượt trong ngày (7 kiểm tra); dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms (4 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
 | `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua (18 kiểm tra) |
@@ -239,6 +239,26 @@ Lỗi nằm ở nội dung dịch:
   - Mỗi lần tua tốn thêm ~16 s nhận dạng và một lần dịch.
 - Mẩu nhanh bị bỏ qua ("quá ít lời", cửa sổ ngắn) thì không đổi nhãn: vẫn "đang dịch" tới khi đoạn 30 s xong.
 - Đo được trình phát Douyin có lúc trả `currentTime = 0` (đang dừng) giữa lúc phát rồi quay lại. Extension từng tin số đó và huỷ nhầm đoạn đang dịch. Giờ extension bỏ qua lần đọc khi `readyState < 1`, và cú nhảy về 0 lúc đang dừng phải lặp lại sau 250 ms mới tin.
+
+## 6f. Lướt nhanh (~4 s/video): video thứ 3 trở đi không kịp dịch sẵn (extension 0.2.12)
+
+Đo bằng cách tải lại 推荐 rồi lướt 10 video, mỗi video 4 s (`swipeperf.mjs`, `swipesum.mjs`, chỉ để trên máy). Tính từ video thứ 4, khi feed đã tới:
+- **Trước khi sửa:** 2/8 có ngay, 4 phải chờ (0–3,5 s), 2 không kịp. Log server có đoạn xếp hàng 1,1–2,7 s.
+- **Sau khi sửa:**
+  - lượt 1: 6/8 có ngay, 1 chờ 0,0 s, 1 chờ 2,9 s;
+  - lượt 2 (gặp lượt tải treo, xem dưới): 1 không kịp, 1 chờ 0,6 s, 5 có ngay;
+  - lượt 3 (bản 0.2.12): 6/8 có ngay, 1 không có nhãn, 1 lỗi tải (đã sửa sau đó);
+  - lượt 4: 8/8 có ngay.
+- Video 1–3 sau khi tải lại vẫn hay không kịp: feed tới sau ~12 s (§6d).
+
+Nguyên nhân và cách sửa:
+- **Server chỉ chạy 2 việc cùng lúc**, chia cho video đang xem, đoạn kế và các video dịch sẵn. Sửa: `MAX_PARALLEL` mặc định 4, đặt được qua `.env`. `queue-test` đặt 2 để giữ kịch bản cũ.
+- **Chỉ dịch sẵn 2 video**, mỗi video mất 4–12 s. Sửa: `PREFETCH = 4`. Hàng tải dịch sẵn chạy 2 video cùng lúc, để một lượt gặp CDN chậm không chặn các video sau.
+- **Đoạn dịch sẵn bỏ lượt rút gọn dòng dài**: extension gửi `prefetch: true`, mỗi video bớt một lần gọi model. Video đang xem vẫn rút gọn. Có test trong `openai-test`.
+- **Lượt tải 64 KB đầu file qua `/aweme/v1/play/` có lúc treo 10–37 s**, không có hạn giờ, nên video đó không bao giờ được dịch sẵn. Sửa:
+  - `rangeFetch` có hạn giờ: mặc định 20 s, phần đầu file 4 s.
+  - Phần đầu file bị treo hoặc lỗi mạng (đo được `ERR_CONTENT_LENGTH_MISMATCH`) thì gọi lại một lần.
+- Chi phí: mỗi video dịch sẵn tốn ~26 s nhận dạng giọng nói và 1 lần gọi dịch, kể cả video bị lướt qua.
 
 ## 7. Việc tiếp theo trên Mac
 

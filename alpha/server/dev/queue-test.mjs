@@ -49,7 +49,7 @@ const PROV = `http://127.0.0.1:${providers.address().port}`;
 const port = 19787 + Math.floor(Math.random() * 1000);
 const server = spawn(process.execPath, [path.join(HERE, '..', 'server.mjs')], {
   env: { ...process.env, PORT: String(port), TOD_WORK: path.join(TMP, 'work'), FFMPEG: ffmpeg,
-    DASHSCOPE_API_KEY: 'test', GEMINI_API_KEY: 'test', OPENAI_API_KEY: '', DASHSCOPE_BASE: PROV, GEMINI_BASE: PROV + '/v1beta' },
+    MAX_PARALLEL: '2', DASHSCOPE_API_KEY: 'test', GEMINI_API_KEY: 'test', OPENAI_API_KEY: '', DASHSCOPE_BASE: PROV, GEMINI_BASE: PROV + '/v1beta' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let log = '';

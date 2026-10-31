@@ -8,7 +8,7 @@
   'use strict';
   const UP = '__tod_alpha_up';
   const DOWN = '__tod_alpha_down';
-  const PREFETCH = 2;            // số video kế tiếp được dịch sẵn đoạn đầu
+  const PREFETCH = 4;            // số video kế tiếp được dịch sẵn đoạn đầu (lướt nhanh ~4 s/video vẫn kịp)
   const LOOKAHEAD = 30;          // luôn dịch trước chỗ đang xem bấy nhiêu giây
   const FIRST = 20, STEP = 30;   // đoạn đầu ngắn để sub đầu ra nhanh, sau đó mỗi đoạn 30 s
   // Video ngắn hơn thế thì dịch một lần. Dài hơn thì đoạn đầu chỉ 20 s: đo khi lướt, /aweme/v1/play có lúc chuyển
@@ -29,8 +29,9 @@
   const watched = new Set();     // video đã từng là video đang xem
   const vids = new Map();        // id -> { plan, media, url, total, chunks: Map k -> kết quả, cues }
   // Hai hàng tải riêng: video đang xem, và video kế tiếp (dịch sẵn). Đo trên Douyin thật: một lượt tải dịch sẵn
-  // gặp CDN chậm mất 13 s, đoạn ở chỗ vừa tua tới phải chờ theo.
-  const lanes = { current: { queue: [], busy: false }, prefetch: { queue: [], busy: false } };
+  // gặp CDN chậm mất 13 s, đoạn ở chỗ vừa tua tới phải chờ theo. Hàng dịch sẵn tải 2 video cùng lúc, để một lượt gặp
+  // CDN chậm không chặn 3 video sau.
+  const lanes = { current: { queue: [], busy: 0, max: 1 }, prefetch: { queue: [], busy: 0, max: 2 } };
   let currentId = null;
   let playhead = 0;              // video.currentTime của video đang xem
   let wanted = new Set();        // "id:k" các đoạn đang cần (schedule() tính lại 4 lần/giây)
@@ -152,13 +153,20 @@
       chrome.runtime.sendMessage({ type: 'bump', server: settings.server, payload: { id: currentId, from: c.from, to: c.to } }).catch(() => {});
     }
   }
-  async function rangeFetch(url, a, b, signal) {
-    const res = await fetch(url, { headers: { Range: `bytes=${a}-${b}` }, credentials: 'omit', cache: 'no-store', signal });
-    if (res.status !== 206 && res.status !== 200) throw new Error('tải video: HTTP ' + res.status);
-    const total = Number(((res.headers.get('content-range') || '').match(/\/(\d+)$/) || [])[1]) || null;
-    let buf = await res.arrayBuffer();
-    if (res.status === 200 && a > 0) buf = buf.slice(a, b + 1);   // máy chủ bỏ qua Range
-    return { buf, total, url: res.url };
+  // Có hạn giờ: đo khi lướt, một lượt tải qua /aweme/v1/play/ treo tới 37 s, video đó không bao giờ được dịch sẵn.
+  async function rangeFetch(url, a, b, signal, timeoutMs = 20000) {
+    const limit = AbortSignal.timeout(timeoutMs);
+    try {
+      const res = await fetch(url, { headers: { Range: `bytes=${a}-${b}` }, credentials: 'omit', cache: 'no-store', signal: signal ? AbortSignal.any([signal, limit]) : limit });
+      if (res.status !== 206 && res.status !== 200) throw new Error('tải video: HTTP ' + res.status);
+      const total = Number(((res.headers.get('content-range') || '').match(/\/(\d+)$/) || [])[1]) || null;
+      let buf = await res.arrayBuffer();
+      if (res.status === 200 && a > 0) buf = buf.slice(a, b + 1);   // máy chủ bỏ qua Range
+      return { buf, total, url: res.url };
+    } catch (e) {
+      if (limit.aborted && !(signal && signal.aborted)) throw Object.assign(new Error('tải video quá lâu'), { timeout: true });
+      throw e;
+    }
   }
   // Mục lục (moov) của video: tải một lần, giữ lại cho các đoạn sau.
   function ensureMedia(id) {
@@ -169,7 +177,10 @@
   }
   async function loadMedia(id, v) {
     const api = 'https://www.douyin.com/aweme/v1/play/?video_id=' + encodeURIComponent(items.get(id).playUri);
-    const probe = await rangeFetch(api, 0, 65535);
+    // Đoạn đầu file nhỏ (64 KB): quá 4 s là treo; treo hoặc lỗi mạng (đo được: máy chủ video cắt ngang,
+    // ERR_CONTENT_LENGTH_MISMATCH) thì gọi lại một lần, có thể sang máy chủ video khác.
+    const probe = await rangeFetch(api, 0, 65535, null, 4000)
+      .catch((e) => { if (e.timeout || e instanceof TypeError) return rangeFetch(api, 0, 65535, null, 8000); throw e; });
     const head = TodMp4.headerEnd(probe.buf);
     if (head == null) throw new Error('video không có mục lục ở đầu file (chưa hỗ trợ)');
     const moov = head <= probe.buf.byteLength ? probe.buf : (await rangeFetch(probe.url || api, 0, head - 1)).buf;
@@ -272,7 +283,7 @@
       Object.assign(entry, { sent: true, sentAt: Date.now(), from, to, urgent: urgentChunk(id, k, plan) });
       chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':' + k, payload: {
         id, desc: d.desc, hashtags: d.hashtags, durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
-        prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, aac: toBase64(aac) } })
+        prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, prefetch: id !== currentId, aac: toBase64(aac) } })
         .then((r) => done(r && r.status ? { ...r, from, to } : { status: 'error', error: (r && r.error) || 'không có phản hồi', from, to }))
         .catch((e) => done({ status: 'error', error: e.message, from, to }));
     } catch (e) {
@@ -293,15 +304,14 @@
     for (const [pk, c] of vid(currentId).chunks) if (c.status === 'pending' && urgentChunk(currentId, pk, plan)) return true;
     return false;
   }
-  async function pump(lane) {
-    if (lane.busy) return;
-    lane.busy = true;
-    try {
-      while (lane.queue.length && alive() && settings.enabled) {
-        const [id, k] = lane.queue.shift();
-        if (needsWork(id, k) && !holdBack(id, k)) await runChunk(id, k);
-      }
-    } finally { lane.busy = false; }
+  function pump(lane) {
+    while (lane.busy < lane.max && lane.queue.length) { lane.busy++; drain(lane).finally(() => { lane.busy--; }); }
+  }
+  async function drain(lane) {
+    while (lane.queue.length && alive() && settings.enabled) {
+      const [id, k] = lane.queue.shift();
+      if (needsWork(id, k) && !holdBack(id, k)) await runChunk(id, k);
+    }
   }
 
   // ---------------------------------------------------------------- vẽ sub
