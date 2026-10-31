@@ -2,11 +2,12 @@
 // Server Alpha chạy trên máy bạn: extension gửi âm thanh từng đoạn video Douyin, server trả sub tiếng Việt.
 // Key nằm trong alpha/server/.env, không bao giờ vào extension.
 //   node server.mjs        (mặc định http://127.0.0.1:8787)
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { config, dotEnvInfo, makeSubtitles, misplacedOpenAIKey, PIPELINE_VERSION } from './pipeline.mjs';
+import { checkFfmpeg, config, dotEnvInfo, makeSubtitles, misplacedOpenAIKey, PIPELINE_VERSION } from './pipeline.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -18,24 +19,28 @@ const MAX_PARALLEL = Number(process.env.MAX_PARALLEL) || 4;
 fs.mkdirSync(CACHE, { recursive: true });
 
 // Tối đa MAX_PARALLEL đoạn xử lý cùng lúc; cùng một đoạn thì dùng chung một lần xử lý (inflight).
-// Hàng đợi có ưu tiên: đoạn chứa chỗ đang xem (urgent) trước, rồi yêu cầu mới nhất trước. Tua liên tiếp nhiều chỗ
-// thì chỗ dừng cuối được làm ngay, không phải chờ các chỗ đã tua qua (đo trên Douyin thật: trước đây 25 s mới có sub).
+// Hàng đợi có ưu tiên: đoạn chứa chỗ đang xem (urgent) trước, rồi video gần chỗ đang xem trước (rank: 0 = video đang
+// xem, 1 = video kế tiếp, … 4 = video dịch sẵn xa nhất), rồi yêu cầu mới nhất trước. Tua liên tiếp nhiều chỗ thì chỗ
+// dừng cuối được làm ngay, không phải chờ các chỗ đã tua qua (đo trên Douyin thật: trước đây 25 s mới có sub).
+// Có rank vì chỉ xếp theo mới nhất thì lúc đông việc, video dịch sẵn thứ 4 (gửi sau cùng) chạy trước video kế tiếp.
 // Đoạn urgent được dùng thêm một chỗ. Đoạn không còn ai chờ (extension huỷ vì người xem đã tua đi): còn xếp hàng thì
 // bỏ, đang chạy thì dừng giữa chừng, để chỗ đang xem không phải chờ và khỏi tốn tiền API.
 let running = 0;
 let seq = 0;
 const queue = [];
-const inflight = new Map();      // key → job { promise, urgent, seq, started, waiters, cancel() }
+const inflight = new Map();      // key → job { promise, urgent, rank, seq, started, waiters, cancel() }
 const cancelledError = () => Object.assign(new Error('cancelled'), { cancelled: true });
 const CONTEXT_WAIT_MS = 30000;
 const canRun = (job) => running < MAX_PARALLEL || (job.urgent && running < MAX_PARALLEL + 1);
 function pumpQueue() {
-  queue.sort((a, b) => (b.urgent - a.urgent) || (b.seq - a.seq));
+  queue.sort((a, b) => (b.urgent - a.urgent) || (a.rank - b.rank) || (b.seq - a.seq));
   while (queue.length && canRun(queue[0])) { const job = queue.shift(); running++; job.start(); }
 }
+// Không gửi rank (extension cũ, video đang xem) thì coi là 0.
+const rankOf = (x) => (Number.isInteger(x) && x >= 0 ? x : 0);
 // fn(signal): signal bị huỷ khi không còn ai chờ đoạn đang chạy → dừng lệnh gọi ASR/dịch, nhường chỗ cho chỗ đang xem.
-function submit(key, urgent, fn) {
-  const job = { urgent: !!urgent, seq: ++seq, started: false, waiters: 0, at: Date.now() };
+function submit(key, urgent, rank, fn) {
+  const job = { urgent: !!urgent, rank: rankOf(rank), seq: ++seq, started: false, waiters: 0, at: Date.now() };
   const ctl = new AbortController();
   job.promise = new Promise((resolve, reject) => {
     job.start = () => {
@@ -70,6 +75,37 @@ function readBody(req) {
   });
 }
 
+// File cache hỏng (máy tắt hay đĩa đầy giữa lúc ghi): trước đây JSON.parse ném lỗi trong hàm async và server thoát
+// (đo: file bị cắt cụt → server thoát mã 1). Giờ coi như chưa có, xoá đi để lần sau làm lại. Ghi thì ghi ra file tạm
+// rồi đổi tên: không bao giờ để lại file viết dở.
+function readCache(f) {
+  let text;
+  try { text = fs.readFileSync(f, 'utf8'); } catch (_) { return null; }
+  try { return JSON.parse(text); } catch (_) {
+    console.log(`  → cache hỏng, xoá để làm lại: ${path.basename(f)}`);
+    try { fs.rmSync(f, { force: true }); } catch (_) { /* để lần sau */ }
+    return null;
+  }
+}
+let tmpSeq = 0;
+function writeCache(f, obj) {
+  const tmp = `${f}.${process.pid}.${++tmpSeq}.tmp`;
+  try { fs.writeFileSync(tmp, JSON.stringify(obj)); fs.renameSync(tmp, f); } catch (e) {
+    console.log(`  → không ghi được cache ${path.basename(f)}: ${e.message}`);
+    try { fs.rmSync(tmp, { force: true }); } catch (_) { /* bỏ qua */ }
+  }
+}
+
+// Chỉ nhận request của extension. Trang web bất kỳ gửi được POST text/plain tới 127.0.0.1 mà trình duyệt không hỏi
+// trước (CORS preflight), và server sẽ trả tiền ASR + dịch cho nó (đo: POST text/plain chạy đủ ASR). Service worker
+// của extension gửi Origin chrome-extension://… và application/json; test, curl trên máy không có Origin.
+function rejectForeign(req, res) {
+  const origin = req.headers.origin;
+  if (origin && !origin.startsWith('chrome-extension://')) { req.resume(); send(res, 403, { error: 'forbidden_origin' }); return true; }
+  if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) { req.resume(); send(res, 415, { error: 'need content-type: application/json' }); return true; }
+  return false;
+}
+
 async function handleSubtitles(req, res) {
   let meta;
   try { meta = JSON.parse((await readBody(req)).toString('utf8')); } catch (e) { return send(res, 400, { error: 'bad_body: ' + e.message }); }
@@ -79,14 +115,16 @@ async function handleSubtitles(req, res) {
   if (!/^\d{6,25}$/.test(id) || !(chunked || typeof meta.b64 === 'string')) return send(res, 400, { error: 'need id (digits) and aac or b64' });
   if (chunked && !(num(meta.from) && num(meta.to) && meta.to > meta.from && num(meta.audioStart))) return send(res, 400, { error: 'need from < to and audioStart' });
   const span = (a, b) => `${a}-${b}`;
-  const cacheFile = (sp) => path.join(CACHE, `${id}.${sp ? sp + '.' : ''}vi.${PIPELINE_VERSION}.json`);
+  const cacheFile = (sp, kind = 'vi') => path.join(CACHE, `${id}.${sp ? sp + '.' : ''}${kind}.${PIPELINE_VERSION}.json`);
   // Mẩu nhanh (quick): ~10 s ngay tại chỗ vừa tua tới, gửi song song với đoạn 30 s để sub đầu ra sớm. Cache riêng (tiền tố q).
   const quick = chunked && meta.quick === true;
-  const file = cacheFile(chunked ? (quick ? 'q' : '') + span(meta.from, meta.to) : '');
+  const fileSpan = chunked ? (quick ? 'q' : '') + span(meta.from, meta.to) : '';
+  const file = cacheFile(fileSpan);
   const key = file;
-  if (fs.existsSync(file)) { const { debug: _d, ...c } = JSON.parse(fs.readFileSync(file, 'utf8')); return send(res, 200, { ...c, cached: true }); }
+  const hit = readCache(file);
+  if (hit) { const { debug: _d, ...c } = hit; return send(res, 200, { ...c, cached: true }); }
   let job = inflight.get(key);
-  if (job && !job.started) { job.urgent = job.urgent || !!meta.urgent; job.seq = ++seq; pumpQueue(); }   // lại được hỏi: đẩy lên
+  if (job && !job.started) { job.urgent = job.urgent || !!meta.urgent; job.rank = Math.min(job.rank, rankOf(meta.rank)); job.seq = ++seq; pumpQueue(); }   // lại được hỏi: đẩy lên
   if (!job) {
     // TOD_DUMP=1: giữ âm thanh nhận được ở work/dump (tên file kèm audioStart) để soi lỗi ASR, mốc thời gian. Chỉ để trên máy, xoá sau khi xong.
     if (process.env.TOD_DUMP) {
@@ -100,31 +138,49 @@ async function handleSubtitles(req, res) {
       // đang chạy thì chờ nó dịch xong (chỉ chờ ở bước dịch, nhận dạng giọng nói vẫn chạy song song). Đoạn trước
       // còn xếp hàng thì không chờ, để hai đoạn không giữ chỗ chờ nhau.
       const prev = Array.isArray(meta.prev) && meta.prev.length === 2 && meta.prev.every(num) ? cacheFile(span(meta.prev[0], meta.prev[1])) : null;
-      const lastLines = (f) => { try { return (JSON.parse(fs.readFileSync(f, 'utf8')).cues || []).slice(-3).map(c => ({ zh: c.zh, vi: c.vi })); } catch (_) { return []; } };
+      const lastLines = (f) => { try { return ((readCache(f) || {}).cues || []).slice(-3).map(c => ({ zh: c.zh, vi: c.vi })); } catch (_) { return []; } };
       const context = async (signal) => {
         if (prev) {
           const pj = inflight.get(prev);
           if (pj && pj.started) {
             await Promise.race([pj.promise.catch(() => {}), new Promise(r => { setTimeout(r, CONTEXT_WAIT_MS); signal?.addEventListener('abort', r, { once: true }); })]);
           }
-          if (fs.existsSync(prev)) return lastLines(prev);
+          // Đoạn liền trước đã cache mà không có dòng nào (bỏ qua: nhạc, không lời) thì vẫn tìm xa hơn bên dưới; trước
+          // đây trả ngữ cảnh rỗng dù đoạn trước nữa đã dịch.
+          const lines = lastLines(prev);
+          if (lines.length) return lines;
         } else if (!quick) return [];   // đoạn đầu video
-        // Đoạn liền trước chưa dịch (vừa tua tới), hoặc mẩu nhanh (không chờ gì): lấy đoạn đã dịch gần nhất phía trước
-        // để giữ xưng hô, tên riêng.
+        // Đoạn liền trước chưa dịch (vừa tua tới) hoặc không có dòng nào, hoặc mẩu nhanh (không chờ gì): lấy đoạn đã
+        // dịch gần nhất phía trước có dòng dịch, để giữ xưng hô, tên riêng.
         const re = new RegExp(`^${id}\\.(\\d+)-(\\d+)\\.vi\\.${PIPELINE_VERSION}\\.json$`);
         const near = fs.readdirSync(CACHE).map(f => [f, re.exec(f)]).filter(([, m]) => m && Number(m[2]) <= meta.from)
-          .sort((a, b) => Number(b[1][2]) - Number(a[1][2]))[0];
-        const lines = near ? lastLines(path.join(CACHE, near[0])) : [];
-        return lines.length ? { lines, far: true } : [];
+          .sort((a, b) => Number(b[1][2]) - Number(a[1][2]));
+        for (const [f] of near) {
+          const lines = lastLines(path.join(CACHE, f));
+          if (lines.length) return { lines, far: true };
+        }
+        return [];
       };
       // Mẩu nhanh và đoạn dịch sẵn (video kế tiếp) bỏ lượt rút gọn: bớt một lần gọi model, xong sớm hơn.
       opts = { kind: 'aac', offset: meta.audioStart, from: meta.from, to: meta.to, context, condense: !quick && meta.prefetch !== true };
     }
     const buf = Buffer.from(chunked ? meta.aac : meta.b64, 'base64');
-    job = submit(key, meta.urgent, async (signal) => {
-      const r = await makeSubtitles({ desc: meta.desc, hashtags: meta.hashtags }, buf, { ...opts, signal });
+    // Kết quả nhận dạng giọng nói giữ theo mã băm âm thanh (cùng đoạn mà gửi dư khác nhau thì âm thanh, mốc thời gian
+    // khác nhau): dịch lỗi rồi extension gửi lại thì không trả tiền ASR lần nữa. Có kết quả cuối thì xoá.
+    const asrFile = cacheFile(fileSpan, 'asr.' + crypto.createHash('sha1').update(buf).digest('hex').slice(0, 16));
+    const asrCache = {
+      load: () => { const x = readCache(asrFile); return x && typeof x.seconds === 'number' && x.asr && Array.isArray(x.asr.segments) ? x : null; },
+      save: (x) => writeCache(asrFile, x),
+    };
+    job = submit(key, meta.urgent, meta.rank, async (signal) => {
+      const r = await makeSubtitles({ desc: meta.desc, hashtags: meta.hashtags }, buf, { ...opts, signal, asrCache });
       const out = { id, ...(chunked ? { from: meta.from, to: meta.to } : {}), ...r };
-      if (r.status !== 'error') fs.writeFileSync(file, JSON.stringify(out));
+      // 'untranslated' (dịch không ra dòng nào) không cache: lần sau thử dịch lại, ASR đã có sẵn ở asrFile.
+      // Lỗi (kể cả không chạy được ffmpeg) thì báo 'error' qua catch bên dưới, không bao giờ cache.
+      if (r.status !== 'error' && r.label !== 'untranslated') {
+        writeCache(file, out);
+        try { fs.rmSync(asrFile, { force: true }); } catch (_) { /* file nhỏ, để lại cũng được */ }
+      }
       return out;
     });
   }
@@ -138,7 +194,7 @@ async function handleSubtitles(req, res) {
     const why = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch không ra dòng nào' };
     console.log(`${new Date().toLocaleTimeString()} ${id}${where} ${out.status}${out.label && out.status !== 'ok' ? ' (' + (why[out.label] || out.label) + ')' : ''}` +
       `${out.cues ? ' ' + out.cues.length + ' dòng' : ''}${chunked && meta.from > 0 && out.status === 'ok' && !out.cached ? ` (ngữ cảnh ${out.context || 0} dòng${out.contextFar ? ' ở đoạn xa' : ''}${out.before ? `, lời ngay trước ${out.before} câu` : ''})` : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu, ${out.sung ?? 0} câu hát bị bỏ` +
-      ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${t.asrMs ?? '-'} ms, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : ''}` +
+      ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${out.asrCached ? 'dùng lại' : (t.asrMs ?? '-') + ' ms'}, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : ''}` +
       (job.startedAt - job.at > 300 ? ` · xếp hàng ${job.startedAt - job.at} ms` : '') +
       (out.heard ? `\n    nghe được: ${out.heard}` : ''));
     const { debug: _d, ...reply } = out;
@@ -164,16 +220,21 @@ async function handleBump(req, res) {
   if (!/^\d{6,25}$/.test(id) || !(typeof meta.from === 'number' && typeof meta.to === 'number')) return send(res, 400, { error: 'need id, from, to' });
   const job = inflight.get(path.join(CACHE, `${id}.${meta.from}-${meta.to}.vi.${PIPELINE_VERSION}.json`));
   const queued = !!(job && !job.started);
-  if (queued) { job.urgent = true; job.seq = ++seq; pumpQueue(); }
+  if (queued) { job.urgent = true; job.rank = 0; job.seq = ++seq; pumpQueue(); }
   send(res, 200, { ok: true, found: !!job, queued });
 }
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://local');
   if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, version: PIPELINE_VERSION, ...config(), running, queued: queue.length });
-  if (req.method === 'POST' && url.pathname === '/v1/subtitles') return handleSubtitles(req, res);
-  if (req.method === 'POST' && url.pathname === '/v1/bump') return handleBump(req, res);
-  send(res, 404, { error: 'not_found' });
+  const handler = req.method === 'POST' && { '/v1/subtitles': handleSubtitles, '/v1/bump': handleBump }[url.pathname];
+  if (!handler) return send(res, 404, { error: 'not_found' });
+  if (rejectForeign(req, res)) return;
+  // Lỗi không lường trước trong một request (body lạ, đĩa lỗi) chỉ làm hỏng request đó, không làm server thoát.
+  handler(req, res).catch((e) => {
+    console.log(`${new Date().toLocaleTimeString()} LỖI xử lý ${url.pathname}: ${e.message}`);
+    if (!res.headersSent && !res.destroyed) send(res, 500, { status: 'error', error: String(e.message).slice(0, 300) });
+  });
 });
 server.listen(PORT, HOST, () => {
   const c = config();
@@ -187,4 +248,7 @@ server.listen(PORT, HOST, () => {
   if (dotEnvInfo.empty.length) console.log(`  → .env có biến để trống: ${dotEnvInfo.empty.join(', ')}.`);
   if (dotEnvInfo.badLines.length) console.log(`  → .env: dòng ${dotEnvInfo.badLines.join(', ')} không đọc được (cần dạng TÊN=giá trị trên một dòng).`);
   if (!c.mt) console.log('  → Điền OPENAI_API_KEY hoặc GEMINI_API_KEY (và DASHSCOPE_API_KEY nếu có) vào alpha/server/.env rồi chạy lại.');
+  checkFfmpeg().then((f) => {
+    if (!f.ok) console.log(`  → Không chạy được ffmpeg (${f.bin}: ${f.error}): mọi đoạn sẽ báo lỗi. Chạy npm install trong alpha/server, hoặc cài ffmpeg, hoặc đặt FFMPEG trong .env.`);
+  });
 });

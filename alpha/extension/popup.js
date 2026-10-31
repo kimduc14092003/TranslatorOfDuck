@@ -25,7 +25,8 @@ async function checkServer() {
       : 'Server chạy nhưng thiếu OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env.';
   } catch (_) {
     $('health').className = 'bad';
-    $('health').textContent = 'Không kết nối được. Mở PowerShell trong alpha\\server và chạy "npm start".';
+    // Server chạy cả trên Mac lẫn Windows (đang dùng trên Mac, HANDOFF §7): không chỉ nói PowerShell.
+    $('health').textContent = 'Không kết nối được. Mở cửa sổ dòng lệnh (Terminal, PowerShell) trong thư mục alpha/server và chạy "npm start".';
   }
 }
 async function showStats() {

@@ -22,7 +22,7 @@ const OPENAI_REASONING_EFFORT = ENV.OPENAI_REASONING_EFFORT || '';
 const DASHSCOPE_BASE = ENV.DASHSCOPE_BASE || 'https://dashscope-intl.aliyuncs.com';
 const FUNASR_MODEL = ENV.FUNASR_MODEL || 'fun-asr-flash-2026-06-15';
 export const MAX_SECONDS = Number(ENV.MAX_SECONDS || 60);
-export const PIPELINE_VERSION = 'alpha-7';
+export const PIPELINE_VERSION = 'alpha-8';
 
 function loadDotEnv(file) {
   if (!fs.existsSync(file)) return;
@@ -73,7 +73,15 @@ async function resolveFfmpeg() {
   if (!ffmpegBin) ffmpegBin = 'ffmpeg';
   return ffmpegBin;
 }
+// Khi khởi động: báo ngay nếu không chạy được ffmpeg, thay vì để mọi đoạn lỗi lúc đang xem.
+export async function checkFfmpeg() {
+  const bin = await resolveFfmpeg();
+  return new Promise((resolve) => execFile(bin, ['-version'], (err) => resolve(err ? { ok: false, bin, error: err.code || err.message } : { ok: true, bin })));
+}
 // Âm thanh AAC (ADTS, extension đã cắt sẵn) hoặc đoạn đầu video mp4 (cắt ngắn có chủ đích) → mp3 16 kHz mono.
+// Trả null (no_audio, được cache) chỉ khi ffmpeg chạy xong mà không có tiếng. Không chạy được ffmpeg hay ffmpeg lỗi
+// mà không tách ra được gì thì báo lỗi: trước đây cả hai thành no_audio và bị cache mãi (đo với FFMPEG=/nonexistent:
+// đoạn vẫn "không có âm thanh" sau khi cài lại ffmpeg và chạy lại server).
 export async function extractAudio(buf, kind = 'mp4') {
   const bin = await resolveFfmpeg();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tod-'));
@@ -83,12 +91,19 @@ export async function extractAudio(buf, kind = 'mp4') {
   try {
     // aresample first_pts=0: nếu track âm thanh bắt đầu muộn hơn mốc 0 của video (edit list), chèn khoảng lặng
     // tương ứng; không thì mọi mốc thời gian bị sớm đúng bằng khoảng đó và sub hiện trước lời nói.
-    await new Promise((resolve) => execFile(bin, ['-v', 'error', '-y', '-i', src, '-t', String(kind === 'aac' ? 120 : MAX_SECONDS), '-vn', '-ac', '1', '-ar', '16000',
+    const run = await new Promise((resolve) => execFile(bin, ['-v', 'error', '-y', '-i', src, '-t', String(kind === 'aac' ? 120 : MAX_SECONDS), '-vn', '-ac', '1', '-ar', '16000',
       '-af', 'aresample=async=1:first_pts=0',
-      '-c:a', 'libmp3lame', '-b:a', '48k', out], () => resolve())); // file cắt ngắn nên ffmpeg hay báo lỗi ở cuối: vẫn dùng phần đã tách
-    if (!fs.existsSync(out) || fs.statSync(out).size < 2000) return null;
-    const mp3 = fs.readFileSync(out);
-    return { mp3, seconds: round((mp3.length * 8) / 48000, 1) };
+      '-c:a', 'libmp3lame', '-b:a', '48k', out], (err, _o, stderr) => resolve({ err, stderr: String(stderr || '') })));
+    // Mã lỗi dạng chữ (ENOENT, EACCES): không chạy được ffmpeg.
+    if (run.err && typeof run.err.code === 'string') throw new Error(`không chạy được ffmpeg (${bin}): ${run.err.code}`);
+    // File cắt ngắn nên ffmpeg hay báo lỗi ở cuối (đo: "partial file", "Input buffer exhausted"): vẫn dùng phần đã tách.
+    if (fs.existsSync(out) && fs.statSync(out).size >= 2000) {
+      const mp3 = fs.readFileSync(out);
+      return { mp3, seconds: round((mp3.length * 8) / 48000, 1) };
+    }
+    // Video không có track tiếng: ffmpeg 6 báo "Output file does not contain any stream" (bản cũ: "Output file #0 …").
+    if (!run.err || /does not contain any stream|matches no streams/i.test(run.stderr)) return null;
+    throw new Error('ffmpeg không tách được âm thanh: ' + (run.stderr.trim().split('\n').pop() || 'thoát mã ' + (run.err.code ?? run.err.signal)).slice(0, 200));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -118,10 +133,30 @@ function dayQuotaError(service) {
   err.retryAfterMs = Math.max(0, (dayQuotaUntil.get(service) || 0) - Date.now());
   return err;
 }
+// Key sai hay bị thu hồi, model không có (HTTP 401/403/404): gọi lại vô ích tới khi sửa .env. Lỗi dịch xảy ra SAU khi
+// đã trả tiền nhận dạng giọng nói, và extension gửi lại đoạn đó mỗi 20 s (đo bằng dịch vụ giả: dịch báo 401, 3 lần gửi
+// = 3 lần ASR). Tạm không gọi dịch vụ đó CONFIG_PAUSE_MS, báo lỗi ngay kèm retryAfterMs như khi hết hạn mức; ngắn hơn
+// vì sửa key xong là dùng được (chạy lại server thì hết tạm dừng).
+const CONFIG_PAUSE_MS = 2 * 60 * 1000;
+const configErrorUntil = new Map();   // dịch vụ → { until, status }
+function configError(service) {
+  const c = configErrorUntil.get(service) || {};
+  const err = new Error(`${service} từ chối key hoặc model (HTTP ${c.status}): kiểm tra alpha/server/.env`);
+  err.config = true;
+  err.retryAfterMs = Math.max(0, (c.until || 0) - Date.now());
+  return err;
+}
+// Dịch vụ đang tạm dừng (hết hạn mức hoặc key/model sai) thì trả lỗi để báo ngay, không thì null.
+function pausedError(service) {
+  if ((dayQuotaUntil.get(service) || 0) > Date.now()) return dayQuotaError(service);
+  if ((configErrorUntil.get(service)?.until || 0) > Date.now()) return configError(service);
+  return null;
+}
 async function httpJson(url, init, timeoutMs = 20000) {
   const host = new URL(url).host;
   const service = serviceOf(url);
-  if ((dayQuotaUntil.get(service) || 0) > Date.now()) throw dayQuotaError(service);
+  const paused = pausedError(service);
+  if (paused) throw paused;
   for (let i = 0; ; i++) {
     let res, text;
     try {
@@ -155,6 +190,11 @@ async function httpJson(url, init, timeoutMs = 20000) {
         if (res.status === 429) console.log(`    · ${new URL(url).host} báo 429${quota ? ' (' + quota + ')' : ''}: thử lại sau ${Math.round(wait / 1000)} s`);
         await sleep(wait, init.signal);
         continue;
+      }
+      if ([401, 403, 404].includes(res.status)) {
+        configErrorUntil.set(service, { until: Date.now() + CONFIG_PAUSE_MS, status: res.status });
+        console.log(`    · ${host} báo HTTP ${res.status}: ${text.slice(0, 200)} → key hoặc model sai, tạm không gọi ${service} ${CONFIG_PAUSE_MS / 60000} phút`);
+        throw configError(service);
       }
       const err = new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
       err.status = res.status;
@@ -444,14 +484,19 @@ export async function translate(meta, cues, context = [], signal, { far = false,
 
 // ---------------------------------------------------------------- toàn bộ
 // opts (video dài, từng đoạn): { kind: 'aac', offset: giây bắt đầu của âm thanh, from, to, context }; signal: huỷ giữa chừng.
+// opts.asrCache { load(), save(x) }: kết quả nhận dạng giọng nói của đúng âm thanh này (server giữ theo mã băm). Lần
+// trước dịch lỗi (sau khi đã trả tiền ASR) thì lần gửi lại chỉ còn bước dịch.
 export async function makeSubtitles(meta, buf, opts = {}) {
-  // Dịch đang hết lượt trong ngày: báo ngay, khỏi tốn tiền nhận dạng giọng nói cho đoạn không dịch được.
-  if ((dayQuotaUntil.get(mtService()) || 0) > Date.now()) throw dayQuotaError(mtService());
+  // Dịch đang tạm dừng (hết lượt trong ngày, key/model sai): báo ngay, khỏi tốn tiền nhận dạng giọng nói cho đoạn không dịch được.
+  const paused = pausedError(mtService());
+  if (paused) throw paused;
   const t0 = Date.now();
-  const audio = await extractAudio(buf, opts.kind);
+  const saved = opts.asrCache?.load();
+  const audio = saved ? { seconds: saved.seconds } : await extractAudio(buf, opts.kind);
   const tAudio = Date.now();
   if (!audio) return { status: 'no_audio', timings: { audioMs: tAudio - t0 } };
-  let asr = resplitSentences(await transcribe(audio.mp3, opts.signal));
+  let asr = saved ? saved.asr : resplitSentences(await transcribe(audio.mp3, opts.signal));
+  if (!saved) opts.asrCache?.save({ seconds: audio.seconds, asr });
   const tAsr = Date.now();
   // Âm thanh gửi dư trước đoạn ≥ 4 s: extension báo đoạn trước chưa dịch (vừa tua tới). Lấy lời nói phần đó làm
   // mạch câu cho bước dịch, và giữ câu vắt qua đầu đoạn.
@@ -460,7 +505,7 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   if (opts.from != null) asr = windowAsr(asr, opts.offset || 0, opts.from, opts.to, preRoll);
   const cls = classifySpeech(meta, asr);
   const split = splitSung(asr);
-  const base = { asr: asr.provider, seconds: audio.seconds, heard: (asr.text || '').slice(0, 40), sung: split.sung, sentences: split.total,
+  const base = { asr: asr.provider, ...(saved ? { asrCached: true } : {}), seconds: audio.seconds, heard: (asr.text || '').slice(0, 40), sung: split.sung, sentences: split.total,
     debug: { features: cls, sentences: split.sentences } };
   const skip = (label) => ({ status: 'skipped', label, ...base, timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio } });
   if (cls.label !== 'speech' && cls.label !== 'singing') return skip(cls.label);

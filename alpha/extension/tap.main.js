@@ -20,16 +20,21 @@
   const queue = [];
   function emit(type, data) {
     const msg = JSON.stringify({ type, data, t: Date.now() });
-    if (!ready) { if (queue.length < 500) queue.push(msg); return; }
+    // Tin đồng hồ gửi 2 lần/giây và chỉ đúng lúc gửi: không xếp hàng (khỏi chiếm chỗ của metadata video).
+    if (!ready) { if (type !== 'clock' && queue.length < 500) queue.push(msg); return; }
     window.dispatchEvent(new CustomEvent(UP, { detail: msg }));
   }
 
   // ---- endpoint feed/detail mà trang tự gọi (theo WhiteSevs, OpenBiliClaw, dtk) ----
+  // Mỗi API là một danh sách video riêng (feed 推荐, video liên quan, video của một người, kết quả tìm, hợp tập): video
+  // kế tiếp là video sau video đang xem trong chính danh sách chứa nó. Trước đây mọi API gộp vào một danh sách, nên xem
+  // trên feed mà trang tải thêm video liên quan (hay kết quả tìm) thì chúng chen vào hàng dịch sẵn. detail chỉ là một
+  // video (trang /video/…), không có video kế tiếp: không thuộc danh sách nào.
   const PATHS = [
-    '/aweme/v1/web/tab/feed', '/aweme/v2/web/module/feed', '/aweme/v1/web/module/feed',
-    '/aweme/v1/web/aweme/related', '/aweme/v1/web/aweme/detail', '/aweme/v1/web/aweme/post',
-    '/aweme/v1/web/general/search/single', '/aweme/v1/web/search/item', '/aweme/v1/web/mix/aweme',
-    '/aweme/v1/web/follow/feed', '/aweme/v1/web/familiar/feed', '/aweme/v1/web/channel/feed',
+    ['/aweme/v1/web/tab/feed', 'feed'], ['/aweme/v2/web/module/feed', 'feed'], ['/aweme/v1/web/module/feed', 'feed'],
+    ['/aweme/v1/web/aweme/related', 'related'], ['/aweme/v1/web/aweme/detail', null], ['/aweme/v1/web/aweme/post', 'post'],
+    ['/aweme/v1/web/general/search/single', 'search'], ['/aweme/v1/web/search/item', 'search'], ['/aweme/v1/web/mix/aweme', 'mix'],
+    ['/aweme/v1/web/follow/feed', 'follow'], ['/aweme/v1/web/familiar/feed', 'familiar'], ['/aweme/v1/web/channel/feed', 'channel'],
   ];
   function classify(rawUrl) {
     let u;
@@ -37,8 +42,8 @@
     if (u.hostname !== location.hostname) return null;
     const p = u.pathname;
     if (!p.startsWith('/aweme/') || p.startsWith('/aweme/v1/play')) return null;
-    const known = PATHS.find(x => p.startsWith(x));
-    return { path: known || p.replace(/\/\d+/g, '/:n'), known: !!known };
+    const known = PATHS.find(([x]) => p.startsWith(x));
+    return { path: known ? known[0] : p.replace(/\/\d+/g, '/:n'), known: !!known, list: known ? known[1] : null };
   }
 
   // ---- nhận dạng item theo hình dạng JSON (snake_case hoặc camelCase) ----
@@ -117,9 +122,9 @@
   function handleJson(data, info, via) {
     const items = [];
     walk(data, items, via, 0);
-    // feed: lấy từ API danh sách video (PATHS). Video từ API khác (vd. /aweme/favorite/: video đã thích ở cột bên)
-    // không phải video sẽ lướt tới, không dùng để đoán video kế tiếp.
-    for (const it of items) it.feed = info.known;
+    // feed: tên danh sách video (PATHS) chứa item, theo đúng thứ tự trang hiện. Video từ API khác (vd. /aweme/favorite/:
+    // video đã thích ở cột bên) không phải video sẽ lướt tới, không dùng để đoán video kế tiếp (feed = null).
+    for (const it of items) it.feed = info.list;
     emit('endpoint', { path: info.path, known: info.known, via, items: items.length });
     if (items.length) emit('items', items);
   }
@@ -203,6 +208,16 @@
   // Video đầu của 推荐 nằm trong dữ liệu nhúng của trang (self.__pace_f, mỗi dòng "id:JSON"), không qua API feed.
   // Đo khi tải lại: video 1–2 chỉ thấy qua player, nên video 2 không được dịch sẵn, video 1 mất ~1,5 s đầu không có nhãn.
   // Chỉ đọc; đọc lại khi trang tải xong vì dữ liệu tới dần.
+  // Chỉ coi là feed khi trang được tải ở feed (www.douyin.com/, /?recommend=…, /jingxuan, không mở ?modal_id=). Trang
+  // khác (/video/…, /user/…, /search/…) cũng nhúng video vào __pace_f, nhưng đó không phải video sẽ lướt tới: dịch sẵn
+  // chúng chỉ tốn tiền (như video đã thích ở cột bên, §6d). __pace_f là dữ liệu của địa chỉ lúc tải trang, nên lấy địa
+  // chỉ lúc này (document_start), không lấy địa chỉ sau khi trang tự chuyển.
+  const ssrFeed = (() => {
+    try {
+      const u = new URL(location.href);
+      return u.hostname === 'www.douyin.com' && /^\/(jingxuan\/?)?$/.test(u.pathname) && !u.searchParams.has('modal_id');
+    } catch (_) { return false; }
+  })();
   let paceRead = 0;
   function readPaceF() {
     try {
@@ -220,7 +235,7 @@
           }
         }
       }
-      for (const it of items) it.feed = true;   // danh sách mở đầu của feed, theo đúng thứ tự hiện
+      for (const it of items) it.feed = ssrFeed ? 'feed' : null;   // danh sách mở đầu của feed, theo đúng thứ tự hiện
       if (items.length) emit('items', items);
     } catch (_) { /* không làm hỏng trang */ }
   }
@@ -231,7 +246,12 @@
   // Trên feed 推荐, trình phát nối đoạn: tua thì <video>.currentTime vẫn chạy tiếp như không có gì, chỉ
   // player.currentTime nhảy tới chỗ mới (đo trên video 17:30: tua tới 5:00, 15:00, 10:50, 2:00, 16:40, <video> vẫn
   // 201 → 229 s). Gửi độ lệch player.currentTime − <video>.currentTime cho content script mỗi khi nó đổi. Chỉ đọc.
+  // Kèm vị trí <video> lúc đọc (mediaTime, at = performance.now(), dùng chung với content script; paused, rate): content
+  // script chỉ cộng độ lệch khi thẻ <video> nó đọc khớp vị trí này, nên độ lệch của trình phát feed không bị cộng nhầm
+  // vào thẻ <video> khác của cùng video (trang ?modal_id=). Gửi lại mỗi 500 ms và khi <video> nhảy, dừng, đổi tốc độ,
+  // để vị trí tính theo thời gian trôi không lệch dần (video khựng lúc tải).
   let clockKey = '';
+  let lastClock = null;
   function reportClock() {
     try {
       const pl = window.player;
@@ -245,9 +265,17 @@
         || (aw && (aw.awemeId || aw.aweme_id)) || '');
       const pt = pl && pl.currentTime;
       if (media && id && typeof pt === 'number' && isFinite(pt)) {
-        const offset = Math.round((pt - media.currentTime) * 1000) / 1000;
-        const key = id + ':' + Math.round(offset * 10);
-        if (key !== clockKey) { clockKey = key; emit('clock', { id, offset }); }
+        const now = performance.now();
+        const mediaTime = media.currentTime, paused = !!media.paused, rate = Number(media.playbackRate) || 1;
+        const offset = Math.round((pt - mediaTime) * 1000) / 1000;
+        const key = id + ':' + Math.round(offset * 10) + ':' + paused + ':' + rate;
+        const l = lastClock;
+        const drift = l ? Math.abs(mediaTime - (l.mediaTime + (l.paused ? 0 : (now - l.at) / 1000 * l.rate))) : 0;
+        if (key !== clockKey || !l || now - l.at > 500 || drift > 0.3) {
+          clockKey = key;
+          lastClock = { id, offset, mediaTime, at: now, paused, rate };
+          emit('clock', lastClock);
+        }
       }
     } catch (_) { /* không làm hỏng trang */ }
     requestAnimationFrame(reportClock);

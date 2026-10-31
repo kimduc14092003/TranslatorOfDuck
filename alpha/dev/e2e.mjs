@@ -43,7 +43,10 @@ const providers = http.createServer((req, res) => {
       const seconds = (Buffer.from(b64.split(',')[1], 'base64').length * 8) / 48000;
       if (seconds >= 20) {
         providerHits.longChunks.push(Math.round(seconds));
-        return json({ output: { sentences: [sentence('大家好，今天我们去吃火锅。', 2000, 4100), sentence('走吧！', 6000, 6600)] } });
+        // Đoạn 30 s chậm hơn mẩu nhanh như trên Douyin thật (6–8 s so với 3,3–3,7 s, HANDOFF §6e): extension chỉ gửi mẩu
+        // nhanh sau khi chỗ tua tới đứng yên ~0,5 s, nên đoạn xong ngay thì không còn gì để gửi mẩu nhanh.
+        const out = { output: { sentences: [sentence('大家好，今天我们去吃火锅。', 2000, 4100), sentence('走吧！', 6000, 6600)] } };
+        return setTimeout(() => json(out), 1500);
       }
       if (seconds < 8) {
         return json({ output: { sentence: { begin_time: 500, end_time: 5500, text: '自由是逃离这全世界', words:
@@ -207,7 +210,7 @@ const waitSub = async (t, want) => { let r; for (let i = 0; i < 60; i++) { r = a
 const long = {};
 long.at2 = await waitSub(2.2, 'Chào cả nhà, hôm nay đi ăn lẩu.');      // đoạn 1: câu ở 2,0 s
 long.at21 = await waitSub(21.0, 'Chào cả nhà, hôm nay đi ăn lẩu.');    // đoạn 2: âm thanh từ 18,5 s → câu ở 20,5 s
-await page.waitForTimeout(1000);
+await page.waitForTimeout(2500);                                      // đoạn 3 (gửi sau đoạn 2, ASR giả 1,5 s) xong
 long.chunksBeforeSeek = providerHits.longChunks.length;               // đoạn 1, 2, 3 (21 + 30 = 51 chạm đoạn 3), chưa đến đoạn 4
 long.at85 = await waitSub(85.0, 'Đi thôi!');                          // tua tới 85 s: đoạn 4, âm thanh từ 78,5 s → "走吧" ở 84,5 s
 long.at83 = await subAt(83.5);                                        // giữa 2 câu (câu 1 hết lúc 83,1 s): trống
@@ -236,10 +239,11 @@ const checks = {
   'liked video in the sidebar is not prefetched': !playRequested.has(FAV) && playRequested.has(ids[1]),
   'stalled CDN download dropped after ~6 s idle and retried; song video still processed': cdnSong.some(t => t - cdnSong[0] >= 5000 && t - cdnSong[0] < 15000) && /7500000000000000003 \[0:00[^\]]*\] skipped \(bài hát\)/.test(alphaLog),
   'song video skipped, no subtitle': song.sub === null && /bài hát/.test(song.badge || ''),
-  // Mỗi video/đoạn chỉ xử lý một lần (mẩu nhanh "[nhanh …]" là yêu cầu riêng, không tính).
-  'ASR called once per video (dedupe)': (() => { const done = alphaLog.split('\n').map(l => /^\S+ \S+ (\d+)( \[[^\]]+\])? (ok|skipped)/.exec(l)).filter(m => m && !/nhanh/.test(m[2] || '')).map(m => m[1] + (m[2] || ''));
+  // Mỗi video/đoạn chỉ xử lý một lần, tính cả mẩu nhanh "[nhanh …]" (mỗi lần tua tới một chỗ chỉ một mẩu).
+  'ASR called once per video (dedupe)': (() => { const done = alphaLog.split('\n').map(l => /^\S+ \S+ (\d+)( \[[^\]]+\])? (ok|skipped)/.exec(l)).filter(Boolean).map(m => m[1] + (m[2] || ''));
     return done.length >= 4 && new Set(done).size === done.length; })(),
   'seek: quick 10 s piece sent at the seek point': /\[nhanh 1:25–1:3\d\]/.test(alphaLog),
+  'short videos (12 s, 6 s) send no quick piece': !ids.slice(0, 3).some(id => new RegExp(id + ' \\[nhanh ').test(alphaLog)),
   'long video: chunk 1 line at 2.2 s': long.at2.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
   'long video: chunk 2 line lands at 20.5 s (video time)': long.at21.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
   'long video: only chunks within 30 s of playhead processed': long.chunksBeforeSeek === 3,

@@ -141,6 +141,17 @@ try {
     const onset = Number((/silence_end: ([\d.]+)/.exec(log) || [])[1]);
     assert.ok(Math.abs(onset - 1.4) < 0.08, 'tiếng bắt đầu ở ' + onset + ' s, cần ≈ 1,4 s');
   });
+  // no_audio được cache mãi: chỉ trả khi video thật sự không có tiếng. File hỏng thì báo lỗi (lần sau thử lại);
+  // file cắt ngắn (đầu video, ffmpeg báo lỗi ở cuối) vẫn dùng phần đã tách.
+  execFileSync(ffmpeg, ['-v', 'error', '-y', '-i', f('a.mp4'), '-an', '-c', 'copy', f('v.mp4')]);
+  const silent = await extractAudio(fs.readFileSync(f('v.mp4')));
+  const garbage = await extractAudio(Buffer.alloc(3000, 7), 'aac').then(() => 'ok', (e) => e.message);
+  const head = await extractAudio(fs.readFileSync(f('b.mp4')).subarray(0, 60000));
+  t('video không có tiếng: no_audio; file hỏng: báo lỗi; file cắt ngắn: vẫn tách được', () => {
+    assert.equal(silent, null);
+    assert.match(garbage, /ffmpeg không tách được âm thanh/);
+    assert.ok(head && head.seconds > 0.5, JSON.stringify(head && head.seconds));
+  });
 } catch (e) {
   if (e.code === 'ENOENT') console.log('BỎ QUA kiểm tra mốc âm thanh (không tìm thấy ffmpeg)'); else throw e;
 } finally { fs.rmSync(dir, { recursive: true, force: true }); }

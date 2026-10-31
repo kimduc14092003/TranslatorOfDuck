@@ -58,12 +58,13 @@ server.stderr.on('data', d => { log += d; });
 while (!/Alpha server/.test(log)) await new Promise(r => setTimeout(r, 50));
 
 // Âm thanh dài 21..26 s: dịch vụ giả nhận ra đoạn nào qua độ dài.
-const SEC = { a: 21, b: 22, c: 23, d: 24, e: 25, f: 26, g: 27, k: 28, l: 29, m: 30, o: 31, h: 32, i: 33 };
+const SEC = { a: 21, b: 22, c: 23, d: 24, e: 25, f: 26, g: 27, k: 28, l: 29, m: 30, o: 31, h: 32, i: 33, p: 34, q: 35, r0: 36, r1: 37, r2: 38, r3: 39 };
 const audio = Object.fromEntries(Object.entries(SEC).map(([k, s]) => [k, aac(s)]));
-const FROM = { a: 0, b: 20, c: 50, d: 80, e: 110, f: 140, g: 170, k: 230, l: 260, m: 290, o: 320, h: 350, i: 380 };
-function post(name, urgent) {
+const FROM = { a: 0, b: 20, c: 50, d: 80, e: 110, f: 140, g: 170, k: 230, l: 260, m: 290, o: 320, h: 350, i: 380, p: 410, q: 440, r0: 470, r1: 500, r2: 530, r3: 560 };
+// rank: 0 = video đang xem (không gửi cũng là 0), 1 = video kế tiếp, … 4 = video dịch sẵn xa nhất.
+function post(name, urgent, rank) {
   const ctl = new AbortController();
-  const body = JSON.stringify({ id: '7500000000000000099', from: FROM[name], to: FROM[name] + 30, audioStart: FROM[name], urgent, aac: audio[name] });
+  const body = JSON.stringify({ id: '7500000000000000099', from: FROM[name], to: FROM[name] + 30, audioStart: FROM[name], urgent, aac: audio[name], ...(rank != null ? { rank } : {}) });
   const p = fetch(`http://127.0.0.1:${port}/v1/subtitles`, { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal: ctl.signal })
     .then(r => r.json()).catch(e => ({ status: e.name === 'AbortError' ? 'aborted' : 'error' }));
   return { p, abort: () => ctl.abort() };
@@ -119,6 +120,20 @@ try {
   t('đoạn được đẩy lên (bump) chạy trước đoạn gửi sau nó', () => {
     assert.ok(bump.found && bump.queued, JSON.stringify(bump));
     assert.ok(asrOrder.indexOf(SEC.m) < asrOrder.indexOf(SEC.o), 'thứ tự ASR: ' + asrOrder.join(','));
+  });
+  // Lướt nhanh, hai chỗ đều bận: các đoạn không gấp xếp hàng theo video gần chỗ đang xem trước (rank nhỏ), rồi mới
+  // tới mới nhất. Chỉ xếp theo mới nhất thì video dịch sẵn thứ 3 (gửi sau cùng) chạy trước video kế tiếp.
+  const p = post('p', false), q = post('q', false);
+  await wait(300);
+  const r0 = post('r0', false), r3 = post('r3', false, 3);
+  await wait(50);
+  const r1 = post('r1', false, 1);
+  await wait(50);
+  const r2 = post('r2', false, 2);
+  await Promise.all([p.p, q.p, r0.p, r1.p, r2.p, r3.p]);
+  t('đoạn không gấp: video đang xem, rồi video kế tiếp, … rồi mới tới video xa', () => {
+    const at = (k) => asrOrder.indexOf(SEC[k]);
+    assert.ok(at('r0') < at('r1') && at('r1') < at('r2') && at('r2') < at('r3'), 'thứ tự ASR: ' + asrOrder.join(','));
   });
   // Gemini hết lượt trong ngày: báo lỗi ngay (không chờ 20 s gọi lại), đoạn sau không gọi cả nhận dạng giọng nói.
   dayQuota = true;

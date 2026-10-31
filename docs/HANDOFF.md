@@ -85,10 +85,12 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 
 | Lệnh | Kiểm tra gì |
 |---|---|
-| `cd alpha/server && npm test` | Chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới (14 kiểm tra); hàng đợi khi tua liên tiếp: ưu tiên, huỷ, đẩy lên khi lướt tới, Gemini hết lượt trong ngày (7 kiểm tra); dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra) |
+| `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới (15 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới, `rank`), Gemini hết lượt trong ngày (8 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON (11 kiểm tra) |
+| `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank` (27 kiểm tra) |
+| `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước (3 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms (4 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
-| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua (18 kiểm tra) |
+| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua, đồng hồ trình phát lệch 50 s, CDN treo một lần (22 kiểm tra) |
 
 Cần cho các test: Node 18+, `playwright`, `ffmpeg`, `openssl`.
 
@@ -302,6 +304,58 @@ Sửa trong lúc kiểm: lượt tải bị treo (15 s không có byte nào) gi�
 Chưa kiểm được:
 - Dòng thống kê của popup khi mở bằng biểu tượng thật (lúc kiểm, popup được mở như một tab nên không thấy tab Douyin).
 - Sub trên video livestream hay bài ảnh: chỉ thấy không có nhãn, chưa xem kỹ.
+
+## 6i. Sửa theo đợt rà soát độc lập (31/10, extension 0.2.18, `alpha-8`)
+
+Một agent `verifier` đọc toàn bộ code ở commit `acf699d` và tìm ra 16 điểm, không có lỗi chặn. Tôi tự chạy lại mô phỏng của nó và tái hiện được F1, F2, F3, F8, F12. Sửa bằng một workflow: hai thợ code, một cho extension, một cho server, mỗi người một worktree; mỗi bản vá có một verifier kiểm, và extension qua thêm một vòng sửa.
+
+Server (`alpha-8`, xoá cache cũ, các video đã xem sẽ dịch lại):
+- **F2:** lỗi dịch không do hết hạn mức từng làm extension gửi lại mỗi 20 s mãi, mỗi lần trả tiền nhận dạng lại.
+  - Giờ server cache kết quả nhận dạng của từng đoạn và dùng lại khi thử lại.
+  - Lỗi cấu hình dịch (401/403/404) tạm dừng gọi dịch vụ và trả `retryAfterMs`.
+  - Extension giãn lần thử lại 20 s → 60 s → 180 s khi server trả lỗi. Không gọi được server (chưa chạy `npm start`) thì vẫn 20 s.
+- **F3:** thiếu ffmpeg từng ra "không có âm thanh" và lưu vĩnh viễn. Giờ báo lỗi, không cache; "dịch không ra dòng" cũng không cache.
+- **F8:** file cache hỏng từng làm server sập. Giờ coi như chưa có cache; ghi cache theo kiểu tmp + rename.
+- **F11:** việc không gấp chạy theo `rank` (video kế tiếp trước), rồi mới đến yêu cầu mới nhất.
+- **F12:** trang web lạ từng gửi được POST `text/plain` và làm tốn tiền. Giờ Origin khác `chrome-extension://` bị trả 403, không phải JSON bị trả 415. Đã thử bằng curl trên server thật.
+- **F14:** đoạn trước bị "bỏ qua" (bài hát, không lời) thì lấy ngữ cảnh ở đoạn xa hơn.
+
+Extension:
+- **F1:** mẩu nhanh được lọc theo từng dòng. Dòng nằm trong đoạn 30 s đã xong thì bỏ. Trước đây tua sát cuối đoạn thì mẩu nhanh hiện mãi và mất dòng của đoạn sau.
+- **F4:** đồng hồ trình phát gửi kèm vị trí `<video>`, trạng thái dừng/phát và tốc độ, nhắc lại mỗi ~500 ms.
+  - Chỉ cộng độ lệch khi thẻ `<video>` khớp vị trí và trạng thái dừng/phát.
+  - Riêng ~1 s sau khi chính thẻ `<video>` đó đổi dừng/phát thì không xét trạng thái, vì tin đồng hồ mới chưa kịp tới.
+  - Bản đầu của tôi tính theo tuổi của tin (< 600 ms), nên nhịp nhắc 500 ms luôn lọt và điều kiện vô tác dụng; verifier chỉ ra, đã sửa.
+- **F6, F7:** mẩu nhanh chỉ gửi khi chỗ đang xem đã đứng yên 450 ms, mỗi lần tua một mẩu. Không gửi cho đoạn ≤ 16 s, hay khi đoạn đã bắt đầu tải từ trước lần tua (trừ khi tải quá 2 s chưa xong).
+  - Lướt nhanh 10 video: cả lượt chỉ còn 1 mẩu nhanh.
+- **F9:** lướt sang video đang tải hay dừng ở 0 s, nhãn đổi theo video mới.
+- **F10:**
+  - `__pace_f` chỉ được tính là feed ở trang feed (`/`, `/?recommend`, `/jingxuan`).
+  - Mỗi API là một danh sách riêng; video kế tiếp lấy theo danh sách chứa video đang xem.
+- **F13:** gặp "file video đã đổi" thì bỏ mục lục cũ, lần sau tải lại.
+- **F15:** tắt sub thì huỷ mọi việc đang chạy. Câu báo lỗi trong popup không chỉ nói PowerShell.
+- **Tôi thêm, ưu tiên đường truyền cho mẩu nhanh:** khi mẩu nhanh bắt đầu tải, các lượt tải đoạn 30 s của video đó bắt đầu sau lần tua mà chưa gửi bị ngắt, rồi tải lại sau khi mẩu nhanh tải xong (chờ tối đa 3 s).
+  - Một verifier soát riêng phần này và bắt được lỗi đảo thứ tự: đoạn kế lấy lượt tải trước đoạn ở chỗ tua, nên hết 10 s của mẩu nhanh là mất sub ~5 s.
+  - Đã sửa:
+    - `holdBack` giữ chỗ cho đoạn gấp vừa bị ngắt;
+    - không ngắt đoạn đã tải từ trước lần tua;
+    - cổng chờ 3 s thay vì 6 s.
+  - `content-time-test.mjs` có 3 kiểm tra; cả 3 trượt với bản đầu của tôi.
+  - Đo trên video 23 phút bitrate cao (đoạn 30 s ~14,5 MB): mẩu nhanh 6,7 MB tải một mình trong 1,8 s, trước đó 4,4 s khi tải chung với đoạn 30 s.
+  - Sub đầu sau khi tua: 2,3–4,6 s; trước đó 6,8–9,3 s, có lần quá 10 s.
+
+Đo lại trên Douyin thật sau khi ghép:
+- Lướt nhanh 10 video: 8/11 có ngay, 2 phải chờ, 1 không kịp.
+- Tua trên video 23 phút: 155 mẫu có sub, 0 sai.
+
+Còn mở:
+- **F4, một ca hẹp:** thẻ `<video>` khác của cùng video phát ngang qua đúng chỗ trình phát feed đang dừng. Đã chặn bằng điều kiện trạng thái dừng/phát (mô phỏng: 0/12 lần cộng nhầm, trước đó 8/12). Chưa đo trên Douyin xem `window.player` có còn là trình phát feed khi mở `?modal_id=` không.
+- **Mẩu nhanh không được ưu tiên so với hàng dịch sẵn:** hàng dịch sẵn (video kế tiếp) vẫn tải song song, nên mẩu nhanh chỉ "tải một mình" khi hàng dịch sẵn đang rảnh.
+- **F6:** video > 15 s chưa dịch sẵn vẫn gửi cả mẩu nhanh lẫn đoạn đầu, nên 10 s đầu được nhận dạng hai lần. Giữ lại vì nó cho sub đầu nhanh hơn.
+- **SETTLE 450 ms:** làm mẩu nhanh sau khi tua đi muộn thêm ~0,45 s, để tránh tải bừa khi kéo thanh tiến trình.
+- **Nhận diện lỗi kết nối:** extension phân biệt "không gọi được server" với lỗi phải trả tiền bằng cách so câu chữ báo lỗi của `background.js`. Đổi câu đó thì phải đổi theo `UNREACHABLE` trong `content.js`.
+- **F16:** service worker MV3 có thể bị dừng khi một yêu cầu kéo dài hơn 30 s. Chưa kiểm.
+- File `.asr.` của đoạn bị huỷ giữa chừng còn lại trong cache. Vô hại; lần thử lại còn dùng được.
 
 ## 7. Việc tiếp theo trên Mac
 
