@@ -50,7 +50,13 @@
   // thẻ <video>, cùng lúc phát.
   const CLOCK_TOL = 1;
 
-  let settings = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0 };
+  // lyrics: dịch cả lời bài hát (dòng hát hiện "♪"); tắt thì bỏ qua bài hát như trước (PLAN §15). Mặc định bật (31/10).
+  let settings = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0, lyrics: true };
+  const lyricsOn = () => settings.lyrics !== false;
+  // Kết quả như nhau ở hai chế độ lời bài hát: không có câu hát nào (cùng điều kiện noSinging ở server.mjs: số câu hát 0,
+  // không phải bài hát, không có dòng ♪), hay không có âm thanh.
+  const modeFree = (r) => r.status === 'no_audio' || ((r.status === 'ok' || r.status === 'skipped') && typeof r.sung === 'number'
+    && r.sung === 0 && r.label !== 'singing' && !(r.cues || []).some(x => x.sung));
   const items = new Map();       // id -> metadata
   // Thứ tự video theo từng danh sách của trang (tap.main.js đặt tên: feed, related, post, search, mix…; không tính video
   // chỉ thấy ở API khác hay ở player). Danh sách nào chứa video đang xem thì video kế tiếp lấy theo danh sách đó.
@@ -155,7 +161,8 @@
   }
 
   // ---------------------------------------------------------------- dịch trước
-  const vid = (id) => { let v = vids.get(id); if (!v) { v = { chunks: new Map(), quick: new Map(), cues: [] }; vids.set(id, v); } return v; };
+  // redo: k -> phần âm thanh gửi dư (PRE hay PRE_SEEK) của đoạn bị bỏ khi đổi chế độ lời bài hát (resetResults).
+  const vid = (id) => { let v = vids.get(id); if (!v) { v = { chunks: new Map(), quick: new Map(), cues: [], redo: new Map() }; vids.set(id, v); } return v; };
   const eligible = (d) => d && d.kind === 'video' && d.playUri && !/^https?:/.test(d.playUri);
   // Lưới đoạn cố định theo thời lượng (cùng video thì luôn cùng lưới, để cache dùng lại được).
   function planFor(id) {
@@ -232,6 +239,9 @@
   function cancelUnwanted() {
     const keys = [];
     for (const [id, v] of vids) {
+      // Phần gửi dư nhớ lúc đổi chế độ lời bài hát chỉ dùng cho lần xin lại ngay sau đó. Đoạn không còn cần (tua, lướt đi)
+      // thì bỏ: lần sau tính lại theo đoạn trước, tua tới thì vẫn gửi dư 8 s cho đúng ngữ cảnh (§6e), dù phải nhận dạng lại.
+      for (const k of v.redo.keys()) if (!wanted.has(id + ':' + k)) v.redo.delete(k);
       for (const [k, c] of v.chunks) {
         if (c.status !== 'pending' || wanted.has(id + ':' + k)) continue;
         if (c.sent) { c.sent = false; keys.push(id + ':' + k); } else if (c.ctl) c.ctl.abort();
@@ -391,6 +401,8 @@
     const done = (r) => {
       if (v.quick.get(from) !== q) return;
       if (r.status === 'cancelled') { v.quick.delete(from); return; }
+      // Gửi khi chế độ lời bài hát còn khác (đổi nút lúc mẩu này đang ở server) mà có câu hát: bỏ, xin mẩu mới.
+      if (q.sent && q.lyrics !== lyricsOn() && !modeFree(r)) { v.quick.delete(from); quickTried = -1; return; }
       Object.assign(q, r, { from, to, at: Date.now() });
       mergeCues(v);
     };
@@ -407,10 +419,10 @@
       try { bytes = await fetchBytes(v, media, w.start, w.end - 1, q.ctl.signal); } finally { open(); if (v.quickGate === gate) v.quickGate = null; }
       const aac = w.build(bytes);
       if (!quickWanted(id, q)) { if (v.quick.get(from) === q) v.quick.delete(from); return; }
-      q.sent = true;
+      q.sent = true; q.lyrics = lyricsOn();
       chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':q' + from, payload: {
         id, desc: d.desc, hashtags: d.hashtags, durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
-        quick: true, urgent: true, rank: 0, aac: toBase64(aac) } })
+        quick: true, urgent: true, rank: 0, lyrics: q.lyrics, aac: toBase64(aac) } })
         .then((r) => { r = r && r.status ? r : { status: 'error', error: (r && r.error) || 'không có phản hồi', unreachable: true }; noteReply(r); done(r); })
         .catch((e) => { const r = { status: 'error', error: e.message, unreachable: true }; noteReply(r); done(r); });
     } catch (e) {
@@ -430,9 +442,13 @@
       const down = sent && noteReply(r);
       if (v.chunks.get(k) !== entry) return;
       if (r.status === 'cancelled') { v.chunks.delete(k); return; }   // tua lại tới đây thì gửi lại
+      // Gửi khi chế độ lời bài hát còn khác (đổi nút lúc đoạn này đang ở server): kết quả có câu hát (hay lỗi) thì bỏ,
+      // schedule() xin lại theo chế độ mới với đúng phần âm thanh này (server đã giữ ASR). Không có câu hát thì như nhau.
+      if (sent && entry.lyrics !== lyricsOn() && !modeFree(r)) { v.chunks.delete(k); v.redo.set(k, entry.pre); return; }
+      if (r.status !== 'error') v.redo.delete(k);
       const paid = sent && !down;
       const n = fails + (paid ? 1 : 0);
-      v.chunks.set(k, { ...r, at: Date.now(), ...(r.status === 'error'
+      v.chunks.set(k, { ...r, pre: entry.pre, at: Date.now(), ...(r.status === 'error'
         ? { fails: n, wait: paid ? RETRY_MS[Math.min(n, RETRY_MS.length) - 1] : RETRY_MS[0] } : {}) });
       mergeCues(v);
     };
@@ -444,7 +460,12 @@
       const [from, to] = plan[k];
       // Đoạn trước đã dịch hoặc đang dịch (phát liền mạch: server chờ nó để lấy ngữ cảnh) thì chỉ gửi dư 1,5 s.
       const prevDone = k === 0 || ['ok', 'pending'].includes((v.chunks.get(k - 1) || {}).status);
-      const w = TodMp4.window(media, Math.max(0, from - (prevDone ? PRE : PRE_SEEK)), to + POST);
+      // Xin lại sau khi đổi chế độ lời bài hát, hay thử lại sau lỗi: gửi đúng phần âm thanh như lần trước để server dùng
+      // lại kết quả nhận dạng (giữ theo mã băm âm thanh). Đoạn trước lúc đó cũng thường bị bỏ nên prevDone khác lần đầu: mô
+      // phỏng của verifier, đang phát liền mạch mà đổi chế độ thì đoạn thứ hai gửi dư 8 s thay vì 1,5 s, trả tiền ASR lần
+      // nữa. v.redo chỉ xoá khi có kết quả cuối (done), để lần tải hỏng hay lỗi server vẫn gửi đúng phần âm thanh đó.
+      entry.pre = v.redo.has(k) ? v.redo.get(k) : before && before.status === 'error' && before.pre != null ? before.pre : prevDone ? PRE : PRE_SEEK;
+      const w = TodMp4.window(media, Math.max(0, from - entry.pre), to + POST);
       if (!w) return done({ status: 'no_audio', from, to });
       if (v.quickGate) await v.quickGate;   // mẩu nhanh của video này đang tải: nhường đường truyền
       const aac = w.build(await fetchBytes(v, media, w.start, w.end - 1, entry.ctl.signal));
@@ -453,10 +474,10 @@
       // Không chờ server xong mới tải đoạn tiếp theo. urgent: đoạn chứa (hoặc sắp tới) chỗ đang xem, server làm trước.
       // rank: 0 là video đang xem, 1–4 là video dịch sẵn theo thứ tự sẽ lướt tới (server làm video gần trước).
       const next = upcoming().indexOf(id);
-      Object.assign(entry, { sent: true, sentAt: Date.now(), from, to, urgent: urgentChunk(id, k, plan) });
+      Object.assign(entry, { sent: true, sentAt: Date.now(), from, to, urgent: urgentChunk(id, k, plan), lyrics: lyricsOn() });
       chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':' + k, payload: {
         id, desc: d.desc, hashtags: d.hashtags, durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
-        prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, prefetch: id !== currentId,
+        prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, prefetch: id !== currentId, lyrics: entry.lyrics,
         rank: id === currentId ? 0 : next >= 0 ? next + 1 : PREFETCH, aac: toBase64(aac) } })
         .then((r) => done(r && r.status ? { ...r, from, to } : { status: 'error', error: (r && r.error) || 'không có phản hồi', unreachable: true, from, to }, true))
         .catch((e) => done({ status: 'error', error: e.message, unreachable: true, from, to }, true));
@@ -620,7 +641,8 @@
     if (settings.position === 'top') subEl.style.top = (r.height * 0.08) + 'px';
     else if (settings.position === 'middle') subEl.style.top = (r.height * 0.55) + 'px';
     else subEl.style.bottom = (r.height * 0.13) + 'px';
-    if (subEl.textContent !== c.vi) subEl.textContent = c.vi;
+    const text = (c.sung ? '♪ ' : '') + c.vi;   // dòng hát (chế độ lời bài hát)
+    if (subEl.textContent !== text) subEl.textContent = text;
     subEl.style.display = 'block';
   }
 
@@ -634,14 +656,34 @@
     if (area === 'local' && ch.settings) {
       const nv = { ...(ch.settings.newValue || {}) };
       if (delayWrite) delete nv.delay;         // đang có chỉnh lệch bằng phím chưa ghi xong
-      const was = settings.enabled;
+      const was = settings.enabled, wasLyrics = settings.lyrics !== false;
       settings = { ...settings, ...nv };
+      if (lyricsOn() !== wasLyrics) resetResults();
       // Vừa bật lại: chỗ đang xem là của lúc tắt (người xem có thể đã tua, lướt đi). Đọc lại ngay ở khung hình sau rồi
       // mới lên lịch, khỏi tải và gửi nhầm chỗ cũ.
       if (settings.enabled && !was) lastFind = 0;
       else schedule();
     }
   });
+  // Đổi chế độ lời bài hát: bỏ kết quả đã có mà có câu hát (bài hát bị bỏ qua, hay có dòng ♪); schedule() xin lại theo
+  // chế độ mới. Đoạn chỉ có lời nói, đoạn lỗi (lần thử lại tự gửi theo chế độ mới, giữ số lần lỗi) và việc đang tải hay
+  // đang ở server thì giữ. Không huỷ việc đã gửi: huỷ giữa lúc nhận dạng thì lần gửi lại trả tiền ASR lần nữa, cả với đoạn
+  // chỉ có lời nói (đợt soát 31/10); trả lời của chế độ cũ được xét ở done().
+  function resetResults() {
+    for (const v of vids.values()) {
+      for (const [k, c] of v.chunks) {
+        if (c.status === 'pending' || c.status === 'error' || modeFree(c)) continue;
+        if (c.pre != null) v.redo.set(k, c.pre);
+        v.chunks.delete(k);
+      }
+      for (const [qa, q] of v.quick) {
+        if (q.status === 'pending' || q.status === 'error' || modeFree(q)) continue;
+        v.quick.delete(qa);
+        quickTried = -1;        // xin mẩu nhanh mới cho chỗ đang xem, không chờ cả đoạn 30 s
+      }
+      mergeCues(v);
+    }
+  }
   chrome.runtime.onMessage.addListener((msg, _s, reply) => {
     if (msg && msg.type === 'status') {
       // Mỗi video tính một lần: có đoạn đã dịch thì là "ok", còn đang chờ thì "pending"…

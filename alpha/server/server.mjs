@@ -119,9 +119,19 @@ async function handleSubtitles(req, res) {
   // Mẩu nhanh (quick): ~10 s ngay tại chỗ vừa tua tới, gửi song song với đoạn 30 s để sub đầu ra sớm. Cache riêng (tiền tố q).
   const quick = chunked && meta.quick === true;
   const fileSpan = chunked ? (quick ? 'q' : '') + span(meta.from, meta.to) : '';
-  const file = cacheFile(fileSpan);
+  // Chế độ lời bài hát (extension gửi lyrics: true, mặc định bật): kết quả lưu riêng (.vi.lyr.). Đoạn không có câu hát
+  // nào thì hai chế độ ra cùng một kết quả: dùng lại file của chế độ kia, đổi chế độ không phải dịch lại.
+  // Không có câu hát nào: sung (số câu hát) = 0, không phải bài hát, không có dòng ♪. Cả đoạn là bài hát mà không câu
+  // nào tự đủ dài để tính là câu hát (điệp khúc câu 3 chữ; ASR Gemini không có mốc từng chữ) thì sung = 0 mà mọi dòng là
+  // dòng hát: trước đây chế độ thường nhận nhầm kết quả đó, hiện cả các dòng ♪.
+  const lyrics = meta.lyrics === true;
+  const MT = lyrics ? 'vi.lyr' : 'vi';
+  const noSinging = (x) => x && typeof x.sung === 'number' && x.sung === 0 && x.label !== 'singing' && !(x.cues || []).some(c => c.sung);
+  const file = cacheFile(fileSpan, MT);
   const key = file;
-  const hit = readCache(file);
+  const otherFile = cacheFile(fileSpan, lyrics ? 'vi' : 'vi.lyr');
+  const ready = () => { const other = readCache(otherFile); return readCache(file) || (noSinging(other) ? other : null); };
+  const hit = ready();
   if (hit) { const { debug: _d, ...c } = hit; return send(res, 200, { ...c, cached: true }); }
   let job = inflight.get(key);
   if (job && !job.started) { job.urgent = job.urgent || !!meta.urgent; job.rank = Math.min(job.rank, rankOf(meta.rank)); job.seq = ++seq; pumpQueue(); }   // lại được hỏi: đẩy lên
@@ -137,8 +147,10 @@ async function handleSubtitles(req, res) {
       // Ngữ cảnh: 3 dòng cuối của đoạn trước. Khi tua, đoạn đang xem và đoạn kế được gửi cùng lúc: nếu đoạn trước
       // đang chạy thì chờ nó dịch xong (chỉ chờ ở bước dịch, nhận dạng giọng nói vẫn chạy song song). Đoạn trước
       // còn xếp hàng thì không chờ, để hai đoạn không giữ chỗ chờ nhau.
-      const prev = Array.isArray(meta.prev) && meta.prev.length === 2 && meta.prev.every(num) ? cacheFile(span(meta.prev[0], meta.prev[1])) : null;
-      const lastLines = (f) => { try { return ((readCache(f) || {}).cues || []).slice(-3).map(c => ({ zh: c.zh, vi: c.vi })); } catch (_) { return []; } };
+      const prevSpan = Array.isArray(meta.prev) && meta.prev.length === 2 && meta.prev.every(num) ? span(meta.prev[0], meta.prev[1]) : null;
+      const prev = prevSpan ? cacheFile(prevSpan, MT) : null;
+      // Chế độ thường không hiện dòng hát: không lấy chúng làm ngữ cảnh (lời bài hát xưng hô, giọng văn khác lời nói).
+      const lastLines = (f) => { try { return ((readCache(f) || {}).cues || []).filter(c => lyrics || !c.sung).slice(-3).map(c => ({ zh: c.zh, vi: c.vi })); } catch (_) { return []; } };
       const context = async (signal) => {
         if (prev) {
           const pj = inflight.get(prev);
@@ -149,10 +161,12 @@ async function handleSubtitles(req, res) {
           // đây trả ngữ cảnh rỗng dù đoạn trước nữa đã dịch.
           const lines = lastLines(prev);
           if (lines.length) return lines;
+          const otherLines = lastLines(cacheFile(prevSpan, lyrics ? 'vi' : 'vi.lyr'));   // đoạn trước dịch ở chế độ kia
+          if (otherLines.length) return otherLines;
         } else if (!quick) return [];   // đoạn đầu video
         // Đoạn liền trước chưa dịch (vừa tua tới) hoặc không có dòng nào, hoặc mẩu nhanh (không chờ gì): lấy đoạn đã
         // dịch gần nhất phía trước có dòng dịch, để giữ xưng hô, tên riêng.
-        const re = new RegExp(`^${id}\\.(\\d+)-(\\d+)\\.vi\\.${PIPELINE_VERSION}\\.json$`);
+        const re = new RegExp(`^${id}\\.(\\d+)-(\\d+)\\.vi(?:\\.lyr)?\\.${PIPELINE_VERSION}\\.json$`);
         const near = fs.readdirSync(CACHE).map(f => [f, re.exec(f)]).filter(([, m]) => m && Number(m[2]) <= meta.from)
           .sort((a, b) => Number(b[1][2]) - Number(a[1][2]));
         for (const [f] of near) {
@@ -164,22 +178,29 @@ async function handleSubtitles(req, res) {
       // Mẩu nhanh và đoạn dịch sẵn (video kế tiếp) bỏ lượt rút gọn: bớt một lần gọi model, xong sớm hơn.
       opts = { kind: 'aac', offset: meta.audioStart, from: meta.from, to: meta.to, context, condense: !quick && meta.prefetch !== true };
     }
+    opts.lyrics = lyrics;
     const buf = Buffer.from(chunked ? meta.aac : meta.b64, 'base64');
     // Kết quả nhận dạng giọng nói giữ theo mã băm âm thanh (cùng đoạn mà gửi dư khác nhau thì âm thanh, mốc thời gian
-    // khác nhau): dịch lỗi rồi extension gửi lại thì không trả tiền ASR lần nữa. Có kết quả cuối thì xoá.
+    // khác nhau): dịch lỗi rồi extension gửi lại thì không trả tiền ASR lần nữa. Có kết quả cuối thì xoá, trừ đoạn có câu
+    // hát (cùng điều kiện noSinging): đổi chế độ lời bài hát thì đoạn đó phải làm lại, giữ ASR để khỏi trả tiền lần nữa.
     const asrFile = cacheFile(fileSpan, 'asr.' + crypto.createHash('sha1').update(buf).digest('hex').slice(0, 16));
     const asrCache = {
       load: () => { const x = readCache(asrFile); return x && typeof x.seconds === 'number' && x.asr && Array.isArray(x.asr.segments) ? x : null; },
       save: (x) => writeCache(asrFile, x),
     };
     job = submit(key, meta.urgent, meta.rank, async (signal) => {
+      // Lúc tới lượt chạy, đoạn này có thể đã có kết quả: việc của chế độ kia cho cùng đoạn vừa xong mà không có câu hát
+      // (hai tab, hay đổi nút lúc đoạn đang xếp hàng). Dùng luôn, khỏi trả tiền ASR và dịch lần nữa (đợt soát 31/10: việc
+      // chạy sau không xem lại cache, file .asr. đã bị việc trước xoá).
+      const now = ready();
+      if (now) { const { debug: _d, ...c } = now; return { ...c, cached: true }; }
       const r = await makeSubtitles({ desc: meta.desc, hashtags: meta.hashtags }, buf, { ...opts, signal, asrCache });
       const out = { id, ...(chunked ? { from: meta.from, to: meta.to } : {}), ...r };
       // 'untranslated' (dịch không ra dòng nào) không cache: lần sau thử dịch lại, ASR đã có sẵn ở asrFile.
       // Lỗi (kể cả không chạy được ffmpeg) thì báo 'error' qua catch bên dưới, không bao giờ cache.
       if (r.status !== 'error' && r.label !== 'untranslated') {
         writeCache(file, out);
-        try { fs.rmSync(asrFile, { force: true }); } catch (_) { /* file nhỏ, để lại cũng được */ }
+        if (noSinging(out)) try { fs.rmSync(asrFile, { force: true }); } catch (_) { /* file nhỏ, để lại cũng được */ }
       }
       return out;
     });
@@ -187,13 +208,13 @@ async function handleSubtitles(req, res) {
   job.waiters++;
   res.on('close', () => { if (!res.writableEnded && --job.waiters <= 0) job.cancel(); });
   const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
-  const where = chunked ? ` [${quick ? 'nhanh ' : ''}${mmss(meta.from)}–${mmss(meta.to)}]` : '';
+  const where = chunked ? ` [${quick ? 'nhanh ' : ''}${mmss(meta.from)}–${mmss(meta.to)}${lyrics ? ' ♪' : ''}]` : '';
   try {
     const out = await job.promise;
     const t = out.timings || {};
     const why = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch không ra dòng nào' };
     console.log(`${new Date().toLocaleTimeString()} ${id}${where} ${out.status}${out.label && out.status !== 'ok' ? ' (' + (why[out.label] || out.label) + ')' : ''}` +
-      `${out.cues ? ' ' + out.cues.length + ' dòng' : ''}${chunked && meta.from > 0 && out.status === 'ok' && !out.cached ? ` (ngữ cảnh ${out.context || 0} dòng${out.contextFar ? ' ở đoạn xa' : ''}${out.before ? `, lời ngay trước ${out.before} câu` : ''})` : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu, ${out.sung ?? 0} câu hát bị bỏ` +
+      `${out.cues ? ' ' + out.cues.length + ' dòng' : ''}${chunked && meta.from > 0 && out.status === 'ok' && !out.cached ? ` (ngữ cảnh ${out.context || 0} dòng${out.contextFar ? ' ở đoạn xa' : ''}${out.before ? `, lời ngay trước ${out.before} câu` : ''})` : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu${!lyrics ? `, ${out.sung ?? 0} câu hát bị bỏ` : out.status === 'ok' ? `, ${out.cues.filter(c => c.sung).length} dòng hát được dịch` : ''}` +
       ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${out.asrCached ? 'dùng lại' : (t.asrMs ?? '-') + ' ms'}, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : ''}` +
       (job.startedAt - job.at > 300 ? ` · xếp hàng ${job.startedAt - job.at} ms` : '') +
       (out.heard ? `\n    nghe được: ${out.heard}` : ''));
@@ -218,10 +239,13 @@ async function handleBump(req, res) {
   try { meta = JSON.parse((await readBody(req)).toString('utf8')); } catch (e) { return send(res, 400, { error: 'bad_body: ' + e.message }); }
   const id = String(meta.id || '');
   if (!/^\d{6,25}$/.test(id) || !(typeof meta.from === 'number' && typeof meta.to === 'number')) return send(res, 400, { error: 'need id, from, to' });
-  const job = inflight.get(path.join(CACHE, `${id}.${meta.from}-${meta.to}.vi.${PIPELINE_VERSION}.json`));
-  const queued = !!(job && !job.started);
-  if (queued) { job.urgent = true; job.rank = 0; job.seq = ++seq; pumpQueue(); }
-  send(res, 200, { ok: true, found: !!job, queued });
+  // Lần bump không mang cờ lyrics: thử cả khoá của chế độ lời bài hát (.vi.lyr., mặc định) lẫn chế độ thường. Trước đây
+  // chỉ tìm .vi. nên ở chế độ mặc định không bao giờ thấy việc nào để đẩy lên.
+  const jobs = ['vi.lyr', 'vi'].map(mt => inflight.get(path.join(CACHE, `${id}.${meta.from}-${meta.to}.${mt}.${PIPELINE_VERSION}.json`))).filter(Boolean);
+  const waiting = jobs.filter(job => !job.started);
+  for (const job of waiting) { job.urgent = true; job.rank = 0; job.seq = ++seq; }
+  if (waiting.length) pumpQueue();
+  send(res, 200, { ok: true, found: jobs.length > 0, queued: waiting.length > 0 });
 }
 
 const server = http.createServer(async (req, res) => {

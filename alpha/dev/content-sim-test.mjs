@@ -249,6 +249,182 @@ await t('Tua: mẩu nhanh tải một mình trước, lượt tải đoạn 30 s
   assert.deepEqual(e.subs().filter((k) => k.includes(':q')).slice(-1), [A + ':q85']);
 });
 
+await t('Lời bài hát: mặc định gửi lyrics: true; tắt trong popup thì xin lại kết quả có câu hát với lyrics: false, không huỷ việc đang ở server', async () => {
+  // Đợt soát 31/10: trước đây đổi nút thì huỷ mọi việc đã gửi; huỷ giữa lúc nhận dạng thì lần gửi lại trả tiền ASR lần nữa.
+  const e = makeEnv();
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  const first = e.sent.filter((m) => m.type === 'subtitles');
+  assert.ok(first.length && first.every((m) => m.payload.lyrics === true), JSON.stringify(first.map((m) => [m.key, m.payload.lyrics])));
+  await e.reply(A + ':0', { status: 'skipped', label: 'singing', sung: 2, cues: [] });
+  const waiting = [...e.replies.keys()];   // còn đang chờ server (mẩu nhanh)
+  assert.deepEqual(waiting, [A + ':q2']);
+  e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+  for (let i = 0; i < 2; i++) await e.tick();
+  assert.deepEqual(e.cancels(), [], 'không huỷ gì');
+  const again = e.sent.filter((m) => m.type === 'subtitles').slice(first.length);
+  assert.deepEqual(again.map((m) => [m.key, m.payload.lyrics]), [[A + ':0', false]]);
+  // Mẩu nhanh gửi theo chế độ cũ, trả về không có câu hát: kết quả như nhau ở hai chế độ, giữ và hiện.
+  await e.reply(A + ':q2', { status: 'ok', label: 'speech', sung: 0, cues: [C(2.2, 4, 'Lời nói')] });
+  v.currentTime = 2.5; await e.tick();
+  assert.equal(e.subText(), 'Lời nói');
+});
+
+await t('Đổi chế độ khi đoạn đang ở server: trả lời của chế độ cũ có câu hát thì bỏ, xin lại đúng phần âm thanh đó; không có câu hát thì giữ', async () => {
+  const e = makeEnv();
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':0', { status: 'ok', label: 'speech', sung: 0, cues: [C(2, 4, 'Lời nói')] });
+  for (let i = 0; i < 3; i++) await e.tick();
+  assert.ok(e.replies.has(A + ':1'), 'đoạn 1 đang ở server');
+  e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+  await e.tick();
+  await e.reply(A + ':1', { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(22, 24, 'hát cũ'), sung: true }] });
+  for (let i = 0; i < 2; i++) await e.tick();
+  const s1 = e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':1').map((m) => [m.payload.lyrics, m.payload.audioStart]);
+  assert.deepEqual(s1, [[true, 18.5], [false, 18.5]]);
+  assert.ok(!e.cancels().includes(A + ':1'), 'đoạn đang ở server không bị huỷ khi đổi nút');
+  v.currentTime = 22.5; await e.tick();
+  assert.notEqual(e.subText(), '♪ hát cũ', 'không hiện kết quả của chế độ cũ');
+  v.currentTime = 2.5; await e.tick();
+  assert.equal(e.subText(), 'Lời nói', 'đoạn 0 (không có câu hát) vẫn giữ');
+});
+
+await t('Đổi chế độ: kết quả sung = 0 mà có dòng ♪ (điệp khúc câu ngắn, ASR Gemini) cũng bị bỏ ngay và xin lại', async () => {
+  // Bản sao phía extension của lỗi R1 (đợt soát 31/10): bỏ điều kiện "không có dòng ♪" thì dòng ♪ ở lại chế độ thường.
+  const e = makeEnv();
+  e.up('items', [e.item(A, 12000)]);
+  e.activeId = A; const v = e.video(A, 1); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':0', { status: 'ok', label: 'speech', sung: 0, cues: [{ ...C(0.5, 2.8, 'Anh yêu em'), sung: true }] });
+  await e.tick();
+  assert.equal(e.subText(), '♪ Anh yêu em');
+  e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+  await e.tick();
+  assert.equal(e.subText(), null, 'dòng ♪ rời màn hình ngay');
+  assert.deepEqual(e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':0').map((m) => m.payload.lyrics), [true, false]);
+});
+
+await t('Đổi chế độ: đoạn lỗi giữ số lần lỗi và thời gian chờ, đoạn không có âm thanh giữ nguyên, không xin lại ngay', async () => {
+  const e = makeEnv();
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':0', { status: 'error', error: 'HTTP 500' });
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':1', { status: 'no_audio' });
+  const err = e.vid(A).chunks.get(0);
+  assert.equal(err.status, 'error'); assert.equal(err.fails, 1);
+  const sends = e.subs().length;
+  e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+  for (let i = 0; i < 2; i++) await e.tick();
+  assert.equal(e.vid(A).chunks.get(0), err, 'giữ đúng mục lỗi (fails, wait)');
+  assert.equal(e.vid(A).chunks.get(1).status, 'no_audio');
+  assert.deepEqual(e.subs().slice(sends).filter((k) => k === A + ':0' || k === A + ':1'), []);
+});
+
+await t('Đổi chế độ khi đã qua một đoạn rồi tua về đầu đoạn đó: vẫn gửi dư 8 s như lần tua thường (§6e), không dùng phần gửi dư cũ', async () => {
+  const e = makeEnv();
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':0', { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(2, 4, 'hát 0'), sung: true }] });
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':1', { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(36, 37.8, 'hát 1'), sung: true }] });
+  v.currentTime = 65; for (let i = 0; i < 4; i++) await e.tick();
+  for (const k of [2, 3]) if (e.replies.has(A + ':' + k)) await e.reply(A + ':' + k, { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(52 + 30 * (k - 2), 54 + 30 * (k - 2), 'hát ' + k), sung: true }] });
+  for (let i = 0; i < 3; i++) await e.tick();
+  e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+  for (let i = 0; i < 3; i++) await e.tick();
+  v.currentTime = 20.5; for (let i = 0; i < 6; i++) await e.tick();
+  const s1 = e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':1').map((m) => [m.payload.lyrics, m.payload.audioStart]);
+  assert.deepEqual(s1.at(-1), [false, 12]);
+});
+
+await t('Đổi chế độ: mẩu nhanh có câu hát bị bỏ thì gửi mẩu nhanh mới cho chỗ đang xem, không chờ cả đoạn 30 s', async () => {
+  const e = makeEnv();
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 85); v.paused = true;
+  for (let i = 0; i < 6; i++) await e.tick();
+  assert.ok(e.replies.has(A + ':q85'), 'có mẩu nhanh ở 85 s');
+  await e.reply(A + ':q85', { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(86, 88, 'hát nhanh'), sung: true }] });
+  if (e.replies.has(A + ':3')) await e.reply(A + ':3', { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(86, 88, 'hát'), sung: true }] });
+  await e.tick();
+  e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+  for (let i = 0; i < 4; i++) await e.tick();
+  const q = e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':q85').map((m) => m.payload.lyrics);
+  assert.deepEqual(q, [true, false]);
+});
+
+await t('Đổi chế độ lời bài hát: giữ kết quả không có câu hát (sub vẫn hiện, không tải lại, không xin lại), chỉ xin lại đoạn có câu hát', async () => {
+  // Rà soát 31/10: trước đây bỏ hết kết quả, sub biến mất và nhãn "đang dịch…" tới khi tải lại âm thanh từ CDN.
+  const e = makeEnv();
+  e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':0', { status: 'ok', label: 'speech', sung: 0, cues: [C(2, 4, 'Lời nói')] });
+  for (let i = 0; i < 3; i++) await e.tick();   // đoạn 1 chờ đoạn 0 xong mới gửi (holdBack)
+  await e.reply(A + ':1', { status: 'skipped', label: 'singing', sung: 3, cues: [] });
+  v.currentTime = 2.5; await e.tick();
+  assert.equal(e.subText(), 'Lời nói');
+  const first1 = e.sent.find((m) => m.type === 'subtitles' && m.key === A + ':1');
+  const fetches = e.fetches.length, sends = e.sent.length;
+  e.onChanged({ settings: { newValue: { lyrics: true } } }, 'local');
+  await e.tick();
+  assert.equal(e.subText(), 'Lời nói');
+  const again = e.sent.slice(sends).filter((m) => m.type === 'subtitles');
+  assert.deepEqual(again.map((m) => [m.key, m.payload.lyrics]), [[A + ':1', true]]);
+  assert.equal(again[0].payload.audioStart, first1.payload.audioStart, 'gửi đúng phần âm thanh cũ');
+  assert.deepEqual(e.fetches.slice(fetches).map((f) => f.a), [first1.payload.audioStart * 1000], 'chỉ tải lại đoạn có câu hát');
+});
+
+await t('Đổi chế độ lời bài hát lúc đang phát liền mạch: đoạn có câu hát gửi lại đúng phần âm thanh cũ (server dùng lại ASR)', async () => {
+  // Mô phỏng của verifier 31/10: phát từ 2 s tới 35 s rồi tắt lời bài hát. Đoạn 0 cũng bị bỏ nên prevDone khác lần đầu:
+  // đoạn 1 từng gửi dư 8 s (audioStart 12) thay vì 1,5 s (18,5) như lần đầu, mã băm âm thanh khác, trả tiền ASR lần nữa.
+  const e = makeEnv();
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':0', { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(2, 4, 'hát 0'), sung: true }] });
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':1', { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(36, 37.8, 'hát 1'), sung: true }] });
+  v.currentTime = 35; for (let i = 0; i < 4; i++) await e.tick();
+  e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+  for (let i = 0; i < 3; i++) await e.tick();
+  const sends = e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':1');
+  assert.deepEqual(sends.map((m) => [m.payload.lyrics, m.payload.audioStart]), [[true, 18.5], [false, 18.5]]);
+});
+
+await t('Đổi chế độ lời bài hát khi một đoạn đang tải: không ngắt lượt tải, gửi với chế độ mới', async () => {
+  const e = makeEnv({ fetchHang: (a) => a === 18500 });   // đoạn [20,50) (gửi dư từ 18,5 s) tải lâu
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':0', { status: 'ok', label: 'speech', sung: 0, cues: [C(2, 4, 'Lời nói')] });
+  for (let i = 0; i < 3; i++) await e.tick();
+  const slow = e.fetches.find((f) => f.a === 18500);
+  assert.ok(slow && slow.release, 'đoạn 1 đang tải');
+  e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+  await e.tick();
+  assert.ok(!slow.aborted, 'lượt tải không bị ngắt');
+  slow.release(); await e.flush(); await e.tick();
+  assert.deepEqual(e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':1').map((m) => m.payload.lyrics), [false]);
+  assert.equal(e.fetches.filter((f) => f.a === 18500).length, 1, 'tải một lần, không tải lại');
+});
+
+await t('Dòng hát (sung) hiện kèm "♪ "', async () => {
+  const e = makeEnv();
+  e.up('items', [e.item(A, 12000)]);
+  e.activeId = A; const v = e.video(A, 1); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':0', { status: 'ok', cues: [{ start: 0.5, end: 3, se: 2.8, vi: 'Ánh trăng nói hộ lòng anh', zh: '月亮代表我的心', sung: true }] });
+  await e.tick();
+  assert.equal(e.subText(), '♪ Ánh trăng nói hộ lòng anh');
+});
+
 await t('F9 lướt sang video đang tải / dừng ở 0: nhãn theo video mới, không giữ nhãn video trước', async () => {
   const e = makeEnv();
   const X = '7500000000000000001', Y = '7500000000000000003';

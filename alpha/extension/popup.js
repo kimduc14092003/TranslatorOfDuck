@@ -1,6 +1,6 @@
 'use strict';
 const $ = (id) => document.getElementById(id);
-const DEFAULTS = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0 };
+const DEFAULTS = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0, lyrics: true };
 
 async function load() {
   const { settings = {} } = await chrome.storage.local.get('settings');
@@ -43,10 +43,12 @@ async function showStats() {
 (async () => {
   const s = await load();
   $('enabled').checked = s.enabled;
+  $('lyrics').checked = s.lyrics !== false;
   $('position').value = s.position;
   $('size').value = s.size;
   $('server').value = s.server;
   $('enabled').addEventListener('change', (e) => save({ enabled: e.target.checked }));
+  $('lyrics').addEventListener('change', (e) => save({ lyrics: e.target.checked }));
   $('position').addEventListener('change', (e) => save({ position: e.target.value }));
   $('size').addEventListener('change', (e) => save({ size: e.target.value }));
   $('server').addEventListener('change', (e) => save({ server: e.target.value.trim() || DEFAULTS.server }));

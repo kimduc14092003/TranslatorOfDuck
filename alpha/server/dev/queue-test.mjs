@@ -58,13 +58,14 @@ server.stderr.on('data', d => { log += d; });
 while (!/Alpha server/.test(log)) await new Promise(r => setTimeout(r, 50));
 
 // Âm thanh dài 21..26 s: dịch vụ giả nhận ra đoạn nào qua độ dài.
-const SEC = { a: 21, b: 22, c: 23, d: 24, e: 25, f: 26, g: 27, k: 28, l: 29, m: 30, o: 31, h: 32, i: 33, p: 34, q: 35, r0: 36, r1: 37, r2: 38, r3: 39 };
+const SEC = { a: 21, b: 22, c: 23, d: 24, e: 25, f: 26, g: 27, k: 28, l: 29, m: 30, o: 31, h: 32, i: 33, p: 34, q: 35, r0: 36, r1: 37, r2: 38, r3: 39, s0: 40, s1: 41, s2: 42, s3: 43 };
 const audio = Object.fromEntries(Object.entries(SEC).map(([k, s]) => [k, aac(s)]));
-const FROM = { a: 0, b: 20, c: 50, d: 80, e: 110, f: 140, g: 170, k: 230, l: 260, m: 290, o: 320, h: 350, i: 380, p: 410, q: 440, r0: 470, r1: 500, r2: 530, r3: 560 };
+const FROM = { a: 0, b: 20, c: 50, d: 80, e: 110, f: 140, g: 170, k: 230, l: 260, m: 290, o: 320, h: 350, i: 380, p: 410, q: 440, r0: 470, r1: 500, r2: 530, r3: 560, s0: 590, s1: 620, s2: 650, s3: 680 };
 // rank: 0 = video đang xem (không gửi cũng là 0), 1 = video kế tiếp, … 4 = video dịch sẵn xa nhất.
-function post(name, urgent, rank) {
+function post(name, urgent, rank, lyrics) {
   const ctl = new AbortController();
-  const body = JSON.stringify({ id: '7500000000000000099', from: FROM[name], to: FROM[name] + 30, audioStart: FROM[name], urgent, aac: audio[name], ...(rank != null ? { rank } : {}) });
+  const body = JSON.stringify({ id: '7500000000000000099', from: FROM[name], to: FROM[name] + 30, audioStart: FROM[name], urgent, aac: audio[name],
+    ...(rank != null ? { rank } : {}), ...(lyrics ? { lyrics } : {}) });
   const p = fetch(`http://127.0.0.1:${port}/v1/subtitles`, { method: 'POST', headers: { 'content-type': 'application/json' }, body, signal: ctl.signal })
     .then(r => r.json()).catch(e => ({ status: e.name === 'AbortError' ? 'aborted' : 'error' }));
   return { p, abort: () => ctl.abort() };
@@ -120,6 +121,21 @@ try {
   t('đoạn được đẩy lên (bump) chạy trước đoạn gửi sau nó', () => {
     assert.ok(bump.found && bump.queued, JSON.stringify(bump));
     assert.ok(asrOrder.indexOf(SEC.m) < asrOrder.indexOf(SEC.o), 'thứ tự ASR: ' + asrOrder.join(','));
+  });
+  // Chế độ lời bài hát (mặc định của extension): việc lưu theo khoá .vi.lyr.; lần bump không mang cờ lyrics. Trước đây
+  // /v1/bump chỉ tìm khoá .vi. nên trả found: false, đoạn dịch sẵn của video vừa lướt tới không được đẩy lên.
+  const s0 = post('s0', false, null, true), s1 = post('s1', false, null, true);
+  await wait(300);
+  const s2 = post('s2', false, null, true);
+  await wait(100);
+  const s3 = post('s3', false, null, true);
+  await wait(100);
+  const bumpLyr = await fetch(`http://127.0.0.1:${port}/v1/bump`, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: '7500000000000000099', from: FROM.s2, to: FROM.s2 + 30 }) }).then(r => r.json());
+  await Promise.all([s0.p, s1.p, s2.p, s3.p]);
+  t('chế độ lời bài hát: bump vẫn tìm thấy đoạn đang xếp hàng và đẩy nó lên', () => {
+    assert.ok(bumpLyr.found && bumpLyr.queued, JSON.stringify(bumpLyr));
+    assert.ok(asrOrder.indexOf(SEC.s2) < asrOrder.indexOf(SEC.s3), 'thứ tự ASR: ' + asrOrder.join(','));
   });
   // Lướt nhanh, hai chỗ đều bận: các đoạn không gấp xếp hàng theo video gần chỗ đang xem trước (rank nhỏ), rồi mới
   // tới mới nhất. Chỉ xếp theo mới nhất thì video dịch sẵn thứ 3 (gửi sau cùng) chạy trước video kế tiếp.

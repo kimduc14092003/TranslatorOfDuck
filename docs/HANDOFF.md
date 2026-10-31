@@ -29,7 +29,7 @@ Extension Chromium (Chrome, Cốc Cốc) hiện **sub tiếng Việt cho video D
   - tự động lướt hay thu thập hàng loạt.
   - Test trên Douyin thật thì **chỉ vài video, lướt chậm như người thật**.
 - **Quyết định đã chốt** (PLAN §15):
-  - Chỉ dịch **lời nói**, bỏ qua tiếng hát.
+  - Chỉ dịch **lời nói**, bỏ qua tiếng hát. Từ 31/10 chủ dự án muốn dịch cả lời bài hát: có nút trong popup, mặc định bật, dòng hát hiện "♪" (§6j).
   - Khi không chắc thì nghiêng về bỏ qua. Nhưng chủ dự án đã phàn nàn vlog nói nhiều bị bỏ, xem mục 6.
 
 ## 3. Đã đo được trên Douyin thật (S1, S3)
@@ -58,8 +58,8 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
   - Mốc thời gian cùng thước với `video.currentTime`.
 - **`content.js`**:
   - Tìm video đang xem: `[data-e2e="feed-active-video"][data-e2e-vid]`, `?modal_id=`, `/video/{id}`.
-  - **Chia đoạn:** video ≤ 75 s dịch một lần. Video dài hơn chia theo lưới cố định: [0,20), rồi mỗi 30 s.
-  - **Dịch trước:** luôn dịch các đoạn nằm trong [chỗ đang xem, +30 s]; tua tới đâu dịch tới đó. 2 video kế tiếp được dịch sẵn đoạn đầu.
+  - **Chia đoạn:** video ≤ 30 s dịch một lần (`SINGLE_MAX`). Video dài hơn chia theo lưới cố định: [0,20), rồi mỗi 30 s.
+  - **Dịch trước:** luôn dịch các đoạn nằm trong [chỗ đang xem, +30 s]; tua tới đâu dịch tới đó. 4 video kế tiếp được dịch sẵn đoạn đầu (`PREFETCH`).
   - **Âm thanh gửi dư:** 1,5 s trước và 6 s sau mỗi đoạn.
   - **Vẽ sub:** shadow DOM, theo vòng `requestAnimationFrame`.
   - **Nhãn góc trên trái:** đang dịch / VI / bỏ qua + lý do / lỗi.
@@ -85,12 +85,12 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 
 | Lệnh | Kiểm tra gì |
 |---|---|
-| `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới (15 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới, `rank`), Gemini hết lượt trong ngày (8 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON (11 kiểm tra) |
-| `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank` (27 kiểm tra) |
+| `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới, đánh dấu dòng hát, tiếng đệm trong lời hát, dòng nói ngắn gộp vào dòng hát (18 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới ở cả hai chế độ lời bài hát, `rank`), Gemini hết lượt trong ngày (9 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON (11 kiểm tra). `lyrics-test.mjs`: chế độ lời bài hát, kể cả điệp khúc câu ngắn, ngữ cảnh ở chế độ thường, hai chế độ cùng lúc (14 kiểm tra) |
+| `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng (37 kiểm tra) |
 | `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước (3 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms (4 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
-| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua, đồng hồ trình phát lệch 50 s, CDN treo một lần (22 kiểm tra) |
+| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua, đồng hồ trình phát lệch 50 s, CDN treo một lần, lời bài hát ♪, bấm ô tắt lời bài hát trong popup (24 kiểm tra) |
 
 Cần cho các test: Node 18+, `playwright`, `ffmpeg`, `openssl`.
 
@@ -356,6 +356,70 @@ Còn mở:
 - **Nhận diện lỗi kết nối:** extension phân biệt "không gọi được server" với lỗi phải trả tiền bằng cách so câu chữ báo lỗi của `background.js`. Đổi câu đó thì phải đổi theo `UNREACHABLE` trong `content.js`.
 - **F16:** service worker MV3 có thể bị dừng khi một yêu cầu kéo dài hơn 30 s. Chưa kiểm.
 - File `.asr.` của đoạn bị huỷ giữa chừng còn lại trong cache. Vô hại; lần thử lại còn dùng được.
+
+## 6j. Dịch cả lời bài hát (31/10, extension 0.2.21)
+
+Chủ dự án muốn hiểu cả video bài hát. Log ngày 31/10: 35/232 video bị bỏ vì là bài hát. Phần nhận dạng giọng nói của các video này đã trả tiền trước khi biết là bài hát, nên dịch thêm chỉ tốn bước dịch.
+- **Popup:** nút "Dịch cả lời bài hát (♪)", mặc định bật (`settings.lyrics`). Extension gửi `lyrics: true` trong mọi yêu cầu.
+- **Server, khi `lyrics: true`:**
+  - Không bỏ đoạn hát. `lyricCues` đánh dấu `sung` cho từng dòng: cả đoạn là bài hát (đúng điều kiện bỏ qua cũ) thì mọi dòng; không thì dòng có quá nửa thời gian nói nằm trong một câu hát (`splitSung`).
+  - Dòng hát chỉ có tiếng đệm (耶耶耶, 啦啦啦…) bị bỏ. Dòng chỉ có tiếng đệm chữ Latin ("yeah yeah", "lalala") bị bỏ ở mọi dòng và ở cả hai chế độ, vì `splitSung` chỉ đếm chữ Hán nên dòng chữ Latin không bao giờ là câu hát.
+  - Câu lệnh dịch thêm hướng dẫn lời bài hát và cờ `"sung": true` cho từng dòng. Lượt rút gọn dòng quá dài cũng nhận cờ đó.
+- **Cache riêng** `.vi.lyr.`:
+  - Đoạn không có câu hát nào thì hai chế độ ra cùng kết quả: server trả ngay file của chế độ kia. "Không có câu hát" là `sung === 0`, không phải bài hát, và không có dòng ♪ (`noSinging` trong `server.mjs`).
+  - Lúc một việc tới lượt chạy, server xem lại cache, cả file của chế độ kia. Hai chế độ cho cùng một đoạn tới cùng lúc thì việc chạy sau dùng kết quả của việc trước.
+  - File nhận dạng (`.asr.`) của đoạn có hát (cùng điều kiện) được giữ lại, nên đổi chế độ thường không phải trả tiền nhận dạng lần nữa. Log ghi "ASR dùng lại".
+  - Chế độ thường không lấy dòng hát của đoạn trước làm ngữ cảnh dịch.
+  - `/v1/bump` tìm việc theo cả hai khoá (`.vi.lyr.` rồi `.vi.`); lần bump không mang cờ lyrics.
+- **Extension:**
+  - Dòng `sung` hiện "♪ " ở đầu.
+  - Đổi nút thì bỏ kết quả đã có mà có câu hát (bài hát bị bỏ qua, hay có dòng ♪), rồi xin lại. Đoạn chỉ có lời nói và đoạn lỗi (giữ số lần lỗi) giữ nguyên, nên sub không biến mất.
+  - Không huỷ việc đang tải hay đang ở server. Chế độ lúc gửi được ghi lại; trả lời về mà là chế độ cũ và có câu hát (hay lỗi) thì bỏ và xin lại, không có câu hát thì giữ.
+  - Đoạn xin lại gửi đúng phần âm thanh như lần trước (`v.redo`; thử lại sau lỗi cũng vậy), để mã băm khớp và server dùng lại kết quả nhận dạng. Phần nhớ này chỉ xoá khi có kết quả cuối, và bỏ khi đoạn không còn cần (tua, lướt đi). Tua về sau đó thì gửi dư 8 s cho đúng ngữ cảnh (§6e), chấp nhận nhận dạng lại một lần. Đây là lựa chọn có chủ ý: ưu tiên sub đúng ở chỗ tua tới.
+  - Mẩu nhanh có câu hát bị bỏ thì gửi mẩu nhanh mới cho chỗ đang xem.
+- **Log server:** đoạn ở chế độ lời bài hát có "♪" trong nhãn, ví dụ `[0:20–0:50 ♪]`. Chế độ lời bài hát ghi "N dòng hát được dịch" khi có kết quả, chế độ thường ghi "N câu hát bị bỏ".
+- **ASR Gemini** (khi không có key DashScope) gần như không nhận ra câu hát. Nó không có mốc từng chữ, nên chỉ điệp khúc lặp 4 lần mới thành "cả đoạn là bài hát", và câu lệnh nhận dạng còn dặn bỏ qua lời bài hát. Chế độ lời bài hát cần Fun-ASR.
+- **Đo trên Douyin thật:**
+  - Dòng hát hiện đúng lúc, ví dụ "♪ Ngày ấy tôi đã trở thành xiềng xích," (当年我变成了枷锁) ở 36,3 s.
+  - Tắt trong popup thì cùng chỗ đó hiện "bài hát (đoạn 0:20–0:50)", server ghi "ASR dùng lại".
+  - Extension 0.2.21, video nói (7697856221549727017): tắt rồi bật ô trong popup, sub vẫn hiện suốt (30/30 và 29/30 mẫu trong 3 s), nhãn không về "đang dịch", server không bị hỏi lại.
+  - Video 12 s chỉ có tiếng ngân "嗯嗯嗯…": chế độ thường bỏ qua (bài hát); bật lại thì xin lại, server ghi "ASR dùng lại", vẫn bỏ qua vì chỉ có tiếng đệm.
+  - Chưa gặp bài hát dài hơn 35 s trong 20 video lướt thử, nên ca đổi nút lúc đang phát liền mạch một bài hát dài chỉ có mô phỏng.
+- **Sửa theo đợt soát độc lập lần 1** (1 verifier, 31/10). Tôi tự dựng lại cả hai lỗi lớn bằng script của nó trên code thật trước khi sửa:
+  - **Chế độ thường nhận nhầm dòng ♪.** Bài hát toàn câu ngắn (điệp khúc "我爱你。" ×4: không câu nào đủ 4 chữ để tự tính là câu hát) hoặc ASR Gemini cho `sung = 0` mà mọi dòng là dòng hát. Điều kiện cũ (`sung === 0`, không phải `singing`) cho chế độ thường dùng lại file đó, hiện cả dòng ♪. Sửa: thêm điều kiện "không có dòng ♪".
+  - **`/v1/bump` không chạy ở chế độ mặc định.** Server chỉ tìm khoá `.vi.`, nên lướt tới video dịch sẵn thì đoạn đó không được đẩy lên (hỏng bản sửa "video dịch sẵn vẫn xếp hàng" ở §6d). Đo bằng hàng đợi 1 chỗ: thứ tự xong 01, 03, 02 thay vì 01, 02, 03.
+  - **Đổi nút lúc đang phát liền mạch thì trả tiền ASR lần nữa.** Đoạn trước cũng bị bỏ nên đoạn thứ hai gửi dư 8 s thay vì 1,5 s như lần đầu, mã băm âm thanh khác. Cache thật của video bài hát test hôm đó có đúng dấu vết này: đoạn 0:50–1:20 có 2 file `.asr.` khác mã băm.
+  - **Đổi nút bỏ cả đoạn chỉ có lời nói:** sub biến mất, nhãn "đang dịch…" tới khi tải lại âm thanh từ CDN.
+  - Nhỏ: ngữ cảnh ở chế độ thường, tiếng đệm chữ Latin, lượt rút gọn, câu log.
+- **Sửa theo đợt soát lần 2** (Workflow 7 agent: 3 lens server / extension / test-tài liệu-chi phí, mỗi lens 1 verifier, 1 critic; ~0,75 triệu token, 37 phút). Không có lỗi chặn hay lỗi lớn; các lỗi nhỏ đã sửa:
+  - **Đổi nút huỷ mọi việc đã gửi server**, kể cả đoạn chỉ có lời nói. Server ngắt lệnh ASR trước khi lưu `.asr.`, nên huỷ giữa lúc nhận dạng thì lần gửi lại trả tiền ASR lần nữa (hai agent chạy lại độc lập). Kẽ hở đi kèm: trả lời muộn của chế độ cũ được giữ, mô phỏng thấy "♪ hát cũ" ở chế độ thường. Sửa: không huỷ, xét trả lời theo chế độ lúc gửi.
+  - **Hai chế độ cùng lúc cho một đoạn** thì việc chạy sau trả tiền ASR và dịch lần nữa. Sửa: xem lại cache lúc việc bắt đầu.
+  - **Phần âm thanh nhớ lúc đổi nút bị xoá ngay khi bắt đầu xin lại:** tải hỏng hay lỗi server thì lần sau gửi khác, trả tiền ASR lần nữa. Nó cũng được dùng cho lần tua sau đó, mất câu vắt qua chỗ tua tới.
+  - **Dòng nói ngắn ("好。") gộp vào dòng hát ngay sau thì mất ♪**, vì chỉ xét mốc bắt đầu.
+  - **"yeah yeah" ở dòng không hát vẫn hiện.**
+  - **Mẩu nhanh có câu hát bị bỏ khi đổi nút mà không gửi lại.**
+  - Thêm test cho phần điều kiện "không có dòng ♪" phía extension và cho việc giữ đoạn lỗi: trước đó bỏ đi mà mọi test vẫn đạt.
+- **Vẫn trả tiền thêm** trong các trường hợp:
+  - Đoạn có câu hát đang ở server lúc đổi nút chạy hết theo chế độ cũ, rồi dịch lại theo chế độ mới. ASR được dùng lại, chỉ tốn thêm một lần dịch.
+  - Xin lại với phần gửi dư khác lần đầu: tải lại trang, tab khác, tua về đoạn đã bỏ.
+  - File `.vi.lyr.` làm trước các bản sửa, của điệp khúc câu ngắn hay của ASR Gemini, đã mất `.asr.`.
+  - Đoạn có xen câu hát đã dịch ở chế độ thường trước 31/10 (file cũ không có `.asr.`): chế độ lời bài hát (mặc định) nhận dạng và dịch lại một lần.
+  - Bài hát đã bị bỏ qua trước khi có chế độ này (bản cũ luôn xoá `.asr.`): lần đầu xem lại ở chế độ lời bài hát trả tiền nhận dạng một lần.
+  - Người xem tua đi lúc đoạn đang nhận dạng: server ngắt ASR trước khi lưu. Chuyện này có từ trước chế độ lời bài hát. Chưa biết lệnh bị ngắt có bị tính tiền không.
+- **Không tăng `PIPELINE_VERSION`** (vẫn `alpha-8`). Các thay đổi chỉ đổi kết quả làm mới từ nay: chế độ lời bài hát, ngữ cảnh và dòng "yeah yeah" ở chế độ thường. File cũ vẫn đúng, vì điều kiện dùng chung giữa hai chế độ được xét lúc đọc. Tăng thì mọi video đã xem phải nhận dạng và dịch lại. File `.vi.lyr.` làm trước các bản sửa có thể còn dòng tiếng đệm chữ Latin.
+- **Test:**
+  - `lyrics-test.mjs` 14: điệp khúc câu ngắn ở hai chế độ, ngữ cảnh ở chế độ thường, lượt rút gọn dòng hát, "yeah yeah", hai chế độ cùng lúc.
+  - `queue-test.mjs`: bump ở chế độ lời bài hát.
+  - `test.mjs`: dòng hát trong vlog, tiếng đệm (kể cả chữ Latin toàn chiều rộng, chuỗi dài), dòng nói ngắn gộp vào dòng hát.
+  - `content-sim-test.mjs`: 10 kiểm tra về lời bài hát và đổi chế độ giữa chừng.
+  - e2e: video bài hát hiện "♪ …"; bấm ô trong popup để tắt thì bài hát bị bỏ qua và ASR được dùng lại.
+  - Trượt với code trước đợt soát lần 2: 4 kiểm tra extension (không huỷ khi đổi nút, trả lời của chế độ cũ, tua về sau khi đổi nút, mẩu nhanh) và 4 kiểm tra server (chữ Latin toàn chiều rộng, dòng gộp, "yeah yeah", hai chế độ cùng lúc). Các kiểm tra "không có dòng ♪" phía extension, giữ đoạn lỗi và lượt rút gọn được kiểm bằng cách bỏ đúng đoạn code đó: test trượt. Kiểm tra điệp khúc ở chế độ lời bài hát đạt cả với code cũ; kiểm tra chế độ thường ngay sau nó mới bắt lỗi R1.
+
+Còn mở:
+- **Nhận dạng lời hát kém hơn lời nói** khi nhạc to hoặc hát luyến: có chỗ sai chữ, câu dịch lệch nghĩa.
+- **Đánh dấu ♪ theo từng câu** dựa vào độ dài chữ (> 0,33 s/chữ), nên câu nói kéo dài, la hét có thể bị đánh dấu ♪ (ví dụ "冲刺冲 → Tăng tốc nào!"). Trong một đoạn có cả câu hát lẫn câu nói, câu hát không đủ dài có thể không có ♪. Mọi agent soát đều dùng ASR giả: phân loại câu hát trên âm thanh thật là rủi ro lớn nhất chưa test, trong khi chế độ này bật mặc định.
+- **Server ngắt ASR khi người xem tua đi**, trước khi lưu `.asr.` (có từ trước). Sửa được bằng cách để lệnh ASR chạy nốt rồi lưu, nhưng nên biết trước lệnh bị ngắt có tính tiền không.
+- **Bản quyền:** khi có cache dùng chung cho nhiều người, việc lưu và phát bản dịch lời bài hát cần xem lại.
 
 ## 7. Việc tiếp theo trên Mac
 

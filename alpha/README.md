@@ -2,13 +2,13 @@
 
 Bản thử chạy trên máy bạn. Khi lướt Douyin, sub tiếng Việt hiện đè lên video, đúng lúc người nói.
 
-- Video được chia thành từng đoạn 30 giây (video ngắn hơn 75 giây thì dịch một lần).
+- Video được chia thành từng đoạn 30 giây (video từ 30 giây trở xuống thì dịch một lần).
   - Extension luôn dịch trước 30 giây so với chỗ bạn đang xem. Tua tới đâu dịch tới đó.
   - Phần bạn không xem thì không dịch, nên không tốn tiền API.
-  - 2 video kế tiếp trong feed được dịch sẵn đoạn đầu.
+  - 4 video kế tiếp trong feed được dịch sẵn đoạn đầu.
 - Extension chỉ tải đúng phần cần của video, tự tách riêng âm thanh rồi gửi tới **server chạy trên chính máy bạn**.
 - Server tách âm thanh, nhận dạng giọng nói (Fun-ASR, hoặc Gemini nếu không có key Alibaba), chia câu, dịch bằng OpenAI hoặc Gemini rồi trả sub về.
-- Video bài hát hoặc chỉ có nhạc sẽ bỏ qua. Video nói chuyện có xen đoạn hát thì chỉ bỏ những câu hát.
+- Mặc định dịch cả lời bài hát: dòng hát hiện "♪" ở đầu. Tắt bằng nút "Dịch cả lời bài hát (♪)" trong popup thì video bài hát bị bỏ qua như trước, và video nói chuyện có xen đoạn hát chỉ bỏ những câu hát. Đổi nút giữa chừng thì chỉ những đoạn có hát được làm lại, phần nhận dạng giọng nói thường được dùng lại. Chế độ này cần Fun-ASR: nhận dạng bằng Gemini gần như không nhận ra câu hát. Video chỉ có nhạc (không lời) luôn bỏ qua.
 - Key nằm trong file `.env` trên máy bạn, không gửi đi đâu ngoài nhà cung cấp AI.
 
 ## Chạy lần đầu (Windows)
@@ -57,7 +57,7 @@ Thấy dòng `TranslatorOfDuck Alpha server: http://127.0.0.1:8787` là được
   - **bỏ qua** (xám), kèm lý do và số giây đã nghe, ví dụ "bài hát (60 s đầu)" hoặc "không nghe thấy lời (60 s đầu)". Cửa sổ `npm start` in thêm mấy chữ đầu nghe được.
   - **lỗi** (đỏ): kèm lý do ngắn.
 - Video đầu tiên mất vài giây. Các video sau thường đã dịch xong trước khi bạn lướt tới.
-- Popup cho đổi vị trí sub (dưới / giữa / trên), cỡ chữ, và xem thống kê của tab.
+- Popup cho bật/tắt dịch lời bài hát, đổi vị trí sub (dưới / giữa / trên), cỡ chữ, và xem thống kê của tab.
 - **Sub lệch so với lời nói:** trên trang Douyin bấm phím `]` (sub muộn hơn 0,1 s) hoặc `[` (sớm hơn 0,1 s), hoặc dùng nút − / + trong popup. Mức lệch được lưu cho mọi video.
 
 ## Giới hạn của bản Alpha

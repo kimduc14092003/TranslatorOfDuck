@@ -203,6 +203,22 @@ await page.waitForTimeout(800);
 // Lượt tải đầu của video này bị CDN giả treo: chờ extension bỏ lượt đó (6 s im) và tải lại.
 let song = await subAt(2.0);
 for (let i = 0; i < 60 && /đang dịch/.test(song.badge || ''); i++) { await page.waitForTimeout(250); song = await subAt(2.0); }
+// Tắt "Dịch cả lời bài hát" trong popup: video bài hát lại bị bỏ qua (server dùng lại kết quả nhận dạng), rồi bật lại.
+// Bấm ô trong popup như người dùng (rà soát 31/10: trước đây ghi thẳng vào storage, không kiểm phần nối ô đó với cài đặt).
+const storedLyrics = () => pop.evaluate(async () => (await chrome.storage.local.get('settings')).settings.lyrics);
+const setLyrics = async (on) => {
+  await pop.evaluate((on) => { const el = document.getElementById('lyrics'); if (el.checked !== on) el.click(); }, on);
+  for (let i = 0; i < 40 && (await storedLyrics()) !== on; i++) await pop.waitForTimeout(50);
+};
+const lyricsBoxDefault = await pop.evaluate(() => document.getElementById('lyrics').checked);
+const asrBeforeOff = providerHits.funasr;
+await setLyrics(false);
+const lyricsSavedOff = await storedLyrics();
+let songOff = await subAt(2.0);
+for (let i = 0; i < 60 && !/bài hát/.test(songOff.badge || ''); i++) { await page.waitForTimeout(250); songOff = await subAt(2.0); }
+const asrAfterOff = providerHits.funasr;
+await setLyrics(true);
+await page.waitForTimeout(500);
 
 // Video dài 100 s: chia đoạn [0,20) [20,50) [50,80) [80,101); dịch trước 30 s so với chỗ đang xem.
 await page.evaluate(() => window.activate(3));
@@ -225,7 +241,7 @@ await page.evaluate(() => {
 long.clock85 = await waitSub(35.0, 'Đi thôi!');
 await page.evaluate(() => { window.player = undefined; });
 
-console.log({ health, first, atGap, atSecond, delayed, savedDelay, status, song, long, providerHits, cdnSongGapsMs: cdnSong.map(t => t - cdnSong[0]) });
+console.log({ health, first, atGap, atSecond, delayed, savedDelay, status, song, songOff, long, providerHits, cdnSongGapsMs: cdnSong.map(t => t - cdnSong[0]) });
 console.log('server log:\n' + alphaLog.trim());
 const checks = {
   'popup sees the server': /Server chạy/.test(health),
@@ -237,12 +253,14 @@ const checks = {
   'next videos prefetched (3 processed)': (status.counts.ok || 0) + (status.counts.skipped || 0) >= 3,
   'next video found in embedded page data (__pace_f), prefetched before the feed API answers': !!playRequestedAt[ids[1]] && (!feedServedAt || playRequestedAt[ids[1]] < feedServedAt),
   'liked video in the sidebar is not prefetched': !playRequested.has(FAV) && playRequested.has(ids[1]),
-  'stalled CDN download dropped after ~6 s idle and retried; song video still processed': cdnSong.some(t => t - cdnSong[0] >= 5000 && t - cdnSong[0] < 15000) && /7500000000000000003 \[0:00[^\]]*\] skipped \(bài hát\)/.test(alphaLog),
-  'song video skipped, no subtitle': song.sub === null && /bài hát/.test(song.badge || ''),
+  'stalled CDN download dropped after ~6 s idle and retried; song video still processed': cdnSong.some(t => t - cdnSong[0] >= 5000 && t - cdnSong[0] < 15000) && /7500000000000000003 \[0:00[^\]]*\] (ok|skipped \(bài hát\))/.test(alphaLog),
+  'song video (lyrics on by default): lyrics shown with ♪': /^♪ /.test(song.sub || ''),
+  'lyrics turned off in popup: song skipped again, no sub, ASR reused': songOff.sub === null && /bài hát/.test(songOff.badge || '') && asrAfterOff === asrBeforeOff,
+  'popup "Dịch cả lời bài hát" box: ticked by default, clicking it saves the setting': lyricsBoxDefault === true && lyricsSavedOff === false,
   // Mỗi video/đoạn chỉ xử lý một lần, tính cả mẩu nhanh "[nhanh …]" (mỗi lần tua tới một chỗ chỉ một mẩu).
   'ASR called once per video (dedupe)': (() => { const done = alphaLog.split('\n').map(l => /^\S+ \S+ (\d+)( \[[^\]]+\])? (ok|skipped)/.exec(l)).filter(Boolean).map(m => m[1] + (m[2] || ''));
     return done.length >= 4 && new Set(done).size === done.length; })(),
-  'seek: quick 10 s piece sent at the seek point': /\[nhanh 1:25–1:3\d\]/.test(alphaLog),
+  'seek: quick 10 s piece sent at the seek point': /\[nhanh 1:25–1:3\d( ♪)?\]/.test(alphaLog),
   'short videos (12 s, 6 s) send no quick piece': !ids.slice(0, 3).some(id => new RegExp(id + ' \\[nhanh ').test(alphaLog)),
   'long video: chunk 1 line at 2.2 s': long.at2.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
   'long video: chunk 2 line lands at 20.5 s (video time)': long.at21.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',

@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { classifySpeech, segmentCues, fixViText, splitSung, extractAudio, windowAsr, resplitSentences, speechBefore } from '../pipeline.mjs';
+import { classifySpeech, segmentCues, fixViText, splitSung, extractAudio, windowAsr, resplitSentences, speechBefore, lyricCues, isFiller } from '../pipeline.mjs';
 
 const W = (text, start, end) => ({ text, start, end });
 let n = 0;
@@ -53,6 +53,32 @@ t('vlog có một câu hát: chỉ bỏ câu hát, giữ câu nói', () => {
   assert.equal(s.sung, 1);
   assert.equal(s.r.text, '今天我们来到了稻城亚丁这里的风景真的太美了');
   assert.ok(segmentCues(s.r).every(c => !c.zh.includes('自由')));
+});
+t('chế độ lời bài hát, vlog có một câu hát: chỉ dòng hát được đánh dấu sung, dòng nói giữ nguyên', () => {
+  // Câu nói 0,2 s/chữ, rồi một câu hát 0,6 s/chữ (như vlog có đoạn hát theo nhạc nền).
+  const words = [W('今天', 0, 0.4), W('我们', 0.4, 0.8), W('去', 0.8, 1.0), W('吃', 1.0, 1.2), W('火锅。', 1.2, 1.6),
+    W('月', 3, 3.6), W('亮', 3.6, 4.2), W('代', 4.2, 4.8), W('表', 4.8, 5.4), W('我', 5.4, 6), W('的', 6, 6.6), W('心。', 6.6, 7.2)];
+  const r = { text: '今天我们去吃火锅。月亮代表我的心。', segments: [{ start: 0, end: 1.6, text: '今天我们去吃火锅。' }, { start: 3, end: 7.2, text: '月亮代表我的心。' }], words };
+  const cues = lyricCues(r, { label: 'speech' }, splitSung(r));
+  assert.deepEqual(cues.map(c => [c.zh, c.sung]), [['今天我们去吃火锅。', false], ['月亮代表我的心。', true]]);
+});
+t('chế độ lời bài hát: dòng hát chỉ có tiếng đệm (kể cả ASR ghi bằng chữ Latin) thì bỏ, dòng có lời thì giữ', () => {
+  for (const zh of ['耶耶耶耶。', 'yeah yeah', 'Oh, oh, oh!', 'lalala', '啦啦啦 la la', 'ooh~', 'Ｙｅａｈ ｙｅａｈ', 'uh huh', 'yeahyeah']) assert.ok(isFiller(zh), zh);
+  for (const zh of ['我爱你', 'I love you', 'oh baby', 'mama', '耶 love you', '2025', '', 'oh no', '哈哈 so funny']) assert.ok(!isFiller(zh), zh);
+  const t0 = Date.now(); isFiller('o'.repeat(5000) + '!' + 'oh'.repeat(3000) + 'x');
+  assert.ok(Date.now() - t0 < 200, 'chuỗi dài không làm biểu thức chạy lâu');
+});
+t('chế độ lời bài hát: dòng nói rất ngắn bị gộp vào dòng hát ngay sau vẫn là dòng hát (♪); dòng chữ Latin chỉ có tiếng đệm bị bỏ dù không hát', () => {
+  // "好。" 0,3 s rồi câu hát 0,6 s/chữ: segmentCues gộp hai câu thành một dòng bắt đầu trong câu nói. Trước đây chỉ xét
+  // mốc bắt đầu nên dòng gộp mất ♪ (đợt soát 31/10). Sau đó "yeah yeah" nói nhanh: không phải câu hát (splitSung chỉ đếm
+  // chữ Hán) nhưng chỉ là tiếng đệm.
+  const song = '月亮代表我的心。'.split('').filter(ch => ch !== '。');
+  const words = [W('好。', 0, 0.3), ...song.map((ch, i) => W(ch + (i === song.length - 1 ? '。' : ''), 0.5 + 0.6 * i, 1.1 + 0.6 * i)),
+    W('yeah', 6, 6.3), W('yeah。', 6.3, 6.6)];
+  const r = { text: '好。月亮代表我的心。yeahyeah。', words,
+    segments: [{ start: 0, end: 0.3, text: '好。' }, { start: 0.5, end: 4.7, text: '月亮代表我的心。' }, { start: 6, end: 6.6, text: 'yeahyeah。' }] };
+  const cues = lyricCues(r, { label: 'speech' }, splitSung(r));
+  assert.deepEqual(cues.map(c => [c.zh, c.sung]), [['好。月亮代表我的心。', true]]);
 });
 t('đoạn video dài: đổi về thời gian video, chỉ giữ câu bắt đầu trong đoạn', () => {
   // Âm thanh của đoạn [20, 50) bắt đầu ở 18,5 s; câu đầu (0,5 s → 19,0 s) thuộc đoạn trước.

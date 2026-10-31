@@ -375,6 +375,34 @@ export function speechBefore(r, offset, from, n = 3) {
     .filter(x => x.start >= offset + 0.5 && x.end <= from + 0.3 && x.text.trim()).slice(-n).map(x => x.text);
 }
 
+// Chế độ lời bài hát (31/10: chủ dự án muốn hiểu cả video bài hát; log hôm đó 35/232 video bị bỏ vì là bài hát, trong
+// khi phần nhận dạng đã trả tiền rồi). Dòng hát được giữ và đánh dấu sung để extension hiện "♪". Cả đoạn là bài hát thì
+// mọi dòng là dòng hát; không thì dòng bắt đầu trong một câu hát (splitSung). Dòng hát chỉ có tiếng đệm (耶耶耶, 啦啦啦)
+// thì bỏ: dịch ra chỉ là "yeah yeah". Tiếng đệm ASR ghi bằng chữ Latin ("yeah yeah", "oh", "lalala") thì bỏ ở mọi dòng:
+// splitSung chỉ đếm chữ Hán nên dòng chữ Latin không bao giờ được tính là câu hát (đợt soát 31/10).
+const FILLER = /^[啊哦呀耶啦嗯哈呜喔哎嘿噢唉哇嘞咯呦哟咿呃诶哒嘀嗒]+$/u;
+// Từng từ một (không lồng lượng từ, khỏi quay lui lâu với chuỗi dài): tiếng đệm, hay một tiếng đệm viết liền nhiều lần.
+const SOUND = /^(?:o+h*|a+h*|uh+|um+|m{2,}|hm+|huh|ye(?:ah?|h)?|hey|wo+w?|woah|whoa|eh|ay|(?:la)+|(?:na)+|(?:da)+|(?:ha)+|(?:ya)+|(?:yo)+)$/i;
+const SOUND_TWICE = /^(yeah|oh|ah|hey|wow|woah|whoa|huh)\1+$/i;
+export function isFiller(zh) {
+  const s = String(zh).normalize('NFKC');
+  const han = normalize(s).filter(ch => /\p{Script=Han}/u.test(ch)).join('');
+  const words = s.replace(/\p{Script=Han}/gu, ' ').split(/[\p{P}\p{S}\s]+/u).filter(Boolean);
+  return !!(han || words.length) && (!han || FILLER.test(han)) && words.every(w => SOUND.test(w) || SOUND_TWICE.test(w));
+}
+// Dòng là dòng hát khi quá nửa thời gian nói của nó nằm trong câu hát. Trước đây chỉ xét mốc bắt đầu: segmentCues gộp
+// một dòng nói rất ngắn ("好。") vào dòng hát ngay sau, dòng gộp bắt đầu trong câu nói nên mất ♪ (đợt soát 31/10).
+export function lyricCues(r, cls, split) {
+  const wholeSong = cls.label === 'singing';
+  const sungShare = (c) => {
+    const a = c.start, b = Math.max(c.se || c.end, a + 0.01);
+    return split.sentences.reduce((s, x) => s + (x.sung ? Math.max(0, Math.min(b, x.end) - Math.max(a, x.start)) : 0), 0) / (b - a);
+  };
+  const hasHan = (t) => /\p{Script=Han}/u.test(t);
+  return segmentCues(r).map(c => ({ ...c, sung: wholeSong || sungShare(c) > 0.5 }))
+    .filter(c => !((c.sung || !hasHan(c.zh)) && isFiller(c.zh)));
+}
+
 // ---------------------------------------------------------------- chia câu, mốc thời gian (§7.3, §7.4)
 const FRAME = 1 / 30;
 export function segmentCues(r) {
@@ -437,7 +465,9 @@ const budget = (c) => Math.floor(Math.min(84, 17 * (c.end - c.start)));
 // context: dòng đã dịch ngay trước (hoặc ở đoạn đã dịch gần nhất phía trước, far = true). before: lời nói ngay trước
 // đoạn (chữ Hán, chưa dịch) khi đoạn trước chưa dịch, ví dụ vừa tua tới.
 // condense = false: bỏ lượt rút gọn dòng quá dài (mẩu nhanh: sub ra sớm hơn một lần gọi model).
+// Dòng có sung (chế độ lời bài hát) được dịch như lời bài hát.
 export async function translate(meta, cues, context = [], signal, { far = false, before = [], condense = true } = {}) {
+  const sung = cues.some(c => c.sung);
   if (!mtProvider()) throw new Error('Chưa có OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env');
   const first = await mtJson([
     'Dịch phụ đề video Douyin từ tiếng Trung sang tiếng Việt tự nhiên, như phụ đề chuyên nghiệp.',
@@ -450,7 +480,8 @@ export async function translate(meta, cues, context = [], signal, { far = false,
     ...(context.length ? [(far ? 'Các dòng đã dịch ở một đoạn trước đó trong video (cách một quãng, chỉ để giữ xưng hô và tên riêng, không dịch lại): '
       : 'Các dòng ngay trước trong video (đã dịch, chỉ để giữ mạch và xưng hô, không dịch lại): ') + JSON.stringify(context)] : []),
     ...(before.length ? ['Lời nói ngay trước các dòng này (chưa dịch, chỉ để hiểu mạch câu và ai nói với ai, không dịch): ' + JSON.stringify(before)] : []),
-    'Các dòng: ' + JSON.stringify(cues.map(c => ({ id: c.id, seconds: round(c.end - c.start, 1), max_chars: budget(c), zh: c.zh }))),
+    ...(sung ? ['Dòng có "sung": true là lời bài hát, không phải lời nói: dịch thành lời tiếng Việt tự nhiên, gọn, giữ ý và cảm xúc, có thể hơi văn vẻ nhưng không thêm ý. Câu hát lặp lại thì dịch giống nhau. Lời hát dễ bị nghe sai chữ: chọn nghĩa hợp với mạch bài hát.'] : []),
+    'Các dòng: ' + JSON.stringify(cues.map(c => ({ id: c.id, seconds: round(c.end - c.start, 1), max_chars: budget(c), zh: c.zh, ...(c.sung ? { sung: true } : {}) }))),
   ].join('\n'), CUE_SCHEMA, 0.2, signal);
   const vi = new Map((first.cues || []).map(c => [c.id, fixViText(c.vi)]));
   const out = cues.map(c => {
@@ -466,7 +497,8 @@ export async function translate(meta, cues, context = [], signal, { far = false,
     try {
       const r = await mtJson([
         'Rút gọn các dòng phụ đề tiếng Việt sau cho vừa max_chars (đếm cả dấu cách). Giữ ý chính, giữ xưng hô và tên riêng, bỏ từ đệm và chi tiết phụ. Không thêm ý mới.',
-        'Các dòng: ' + JSON.stringify(long.map(c => ({ id: c.id, max_chars: budget(c), zh: c.zh, vi: c.vi }))),
+        ...(long.some(c => c.sung) ? ['Dòng có "sung": true là lời bài hát: rút gọn mà vẫn là lời hát tự nhiên, giữ hình ảnh và cảm xúc chính.'] : []),
+        'Các dòng: ' + JSON.stringify(long.map(c => ({ id: c.id, max_chars: budget(c), zh: c.zh, vi: c.vi, ...(c.sung ? { sung: true } : {}) }))),
       ].join('\n'), CUE_SCHEMA, 0.2, signal);
       const short = new Map((r.cues || []).map(c => [c.id, fixViText(c.vi)]));
       for (const c of long) {
@@ -509,11 +541,21 @@ export async function makeSubtitles(meta, buf, opts = {}) {
     debug: { features: cls, sentences: split.sentences } };
   const skip = (label) => ({ status: 'skipped', label, ...base, timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio } });
   if (cls.label !== 'speech' && cls.label !== 'singing') return skip(cls.label);
-  // Cả đoạn là bài hát khi: lặp lời, hoặc quá nửa số câu là câu hát, hoặc chữ kéo dài kèm hashtag nhạc.
-  // Hashtag nhạc cộng nói thưa (vlog có nhạc nền, nhiều khoảng lặng) thì không đủ: chỉ lọc từng câu.
-  if (cls.label === 'singing' && ((cls.repeat && slowChars(cls.medCharDur)) || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33))) return skip('singing');
-  if (((split.r.text || '').match(HAN) || []).length < 4) return skip('singing');
-  const cues = segmentCues(split.r);
+  let cues;
+  if (opts.lyrics) {
+    // Chế độ lời bài hát: không bỏ câu hát, đánh dấu để hiện "♪". Cả đoạn là bài hát theo đúng điều kiện bên dưới.
+    const song = cls.label === 'singing' && ((cls.repeat && slowChars(cls.medCharDur)) || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33));
+    cues = lyricCues(asr, { ...cls, label: song ? 'singing' : 'speech' }, split);
+    if (!cues.length) return skip(song ? 'singing' : 'too_short');
+  } else {
+    // Cả đoạn là bài hát khi: lặp lời, hoặc quá nửa số câu là câu hát, hoặc chữ kéo dài kèm hashtag nhạc.
+    // Hashtag nhạc cộng nói thưa (vlog có nhạc nền, nhiều khoảng lặng) thì không đủ: chỉ lọc từng câu.
+    if (cls.label === 'singing' && ((cls.repeat && slowChars(cls.medCharDur)) || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33))) return skip('singing');
+    if (((split.r.text || '').match(HAN) || []).length < 4) return skip('singing');
+    // Dòng chỉ có tiếng đệm chữ Latin ("yeah yeah") bỏ như ở chế độ lời bài hát: đoạn không có câu hát thì hai chế độ
+    // dùng chung một kết quả (noSinging ở server.mjs), nên phải ra cùng các dòng.
+    cues = segmentCues(split.r).filter(c => /\p{Script=Han}/u.test(c.zh) || !isFiller(c.zh));
+  }
   // opts.context có thể là hàm: server chờ đoạn trước (đang chạy) dịch xong rồi mới lấy ngữ cảnh. Trả về mảng dòng,
   // hoặc { lines, far } khi lấy từ đoạn đã dịch gần nhất phía trước (không phải đoạn liền trước).
   const ctxRaw = typeof opts.context === 'function' ? await opts.context(opts.signal) : (opts.context || []);
@@ -524,7 +566,7 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   opts.signal?.throwIfAborted();   // huỷ giữa lượt rút gọn (lượt đó tự bắt lỗi): không trả kết quả dở
   const tMt = Date.now();
   return { status: vi.length ? 'ok' : 'skipped', label: vi.length ? 'speech' : 'untranslated', ...base, context: context.length,
-    contextFar: far, before: context.length && !far ? 0 : before.length,
-    cues: vi.map(c => ({ start: c.start, end: c.end, se: c.se, vi: c.vi, zh: c.zh })),
+    contextFar: far, before: context.length && !far ? 0 : before.length, ...(opts.lyrics ? { lyrics: true } : {}),
+    cues: vi.map(c => ({ start: c.start, end: c.end, se: c.se, vi: c.vi, zh: c.zh, ...(c.sung ? { sung: true } : {}) })),
     timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio, mtMs: tMt - tAsr, totalMs: tMt - t0 } };
 }
