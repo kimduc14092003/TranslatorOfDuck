@@ -198,8 +198,34 @@
       }
     } catch (_) { /* bỏ qua */ }
     emit('ssr', res);
+    readPaceF();
+  }
+  // Video đầu của 推荐 nằm trong dữ liệu nhúng của trang (self.__pace_f, mỗi dòng "id:JSON"), không qua API feed.
+  // Đo khi tải lại: video 1–2 chỉ thấy qua player, nên video 2 không được dịch sẵn, video 1 mất ~1,5 s đầu không có nhãn.
+  // Chỉ đọc; đọc lại khi trang tải xong vì dữ liệu tới dần.
+  let paceRead = 0;
+  function readPaceF() {
+    try {
+      const pf = self.__pace_f;
+      if (!Array.isArray(pf)) return;
+      const items = [];
+      for (; paceRead < pf.length; paceRead++) {
+        const chunk = pf[paceRead];
+        for (const s of Array.isArray(chunk) ? chunk : []) {
+          if (typeof s !== 'string' || !/"aweme_?[iI]d"/.test(s)) continue;
+          for (const line of s.split('\n')) {
+            const m = /^[0-9a-z]+:([[{][\s\S]*)$/.exec(line);
+            if (!m) continue;
+            try { walk(JSON.parse(m[1]), items, 'ssr', 0); } catch (_) { /* dòng không phải JSON */ }
+          }
+        }
+      }
+      for (const it of items) it.feed = true;   // danh sách mở đầu của feed, theo đúng thứ tự hiện
+      if (items.length) emit('items', items);
+    } catch (_) { /* không làm hỏng trang */ }
   }
   document.addEventListener('DOMContentLoaded', probeSsr, { once: true });
+  window.addEventListener('load', readPaceF, { once: true });
 
   // ---- T1: state của player + kiểm tra hook còn là của ta không ----
   const t1Seen = new Set();
@@ -227,7 +253,7 @@
         }
       }
     } catch (_) { /* bỏ qua */ }
-  }, 2000);
+  }, 500);   // video không có trong danh sách nào: nhãn hiện sớm hơn
 
   window.addEventListener(DOWN, (ev) => {
     let req;

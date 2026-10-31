@@ -94,7 +94,11 @@ const feed = { status_code: 0, aweme_list: [aweme(ids[0], '今天吃火锅'), aw
 const PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">
 <div id="feed">${ids.map((id, i) => `<div class="slide" ${i === 0 ? 'data-e2e="feed-active-video"' : ''} data-e2e-vid="${id}"><video muted playsinline style="width:640px;height:480px;display:block"></video></div>`).join('')}</div>
 <script>
-  fetch('/aweme/v1/web/aweme/favorite/?count=2').then(r => r.json()).then(() => fetch('/aweme/v1/web/tab/feed/?count=3')).then(r => r.json());
+  // Như 推荐 thật: 2 video đầu nằm trong dữ liệu nhúng của trang (RSC, self.__pace_f), feed API tới sau.
+  (self.__pace_f = self.__pace_f || []).push([1, '8:' + JSON.stringify(['$', '$La', null, { awemeList: ${JSON.stringify([aweme(ids[0], '今天吃火锅'), aweme(ids[1], '日常vlog')])} }]) + '\\n']);
+</script>
+<script>
+  new Promise(r => setTimeout(r, 4000)).then(() => fetch('/aweme/v1/web/aweme/favorite/?count=2')).then(r => r.json()).then(() => fetch('/aweme/v1/web/tab/feed/?count=3')).then(r => r.json());
   const slides = [...document.querySelectorAll('.slide')];
   window.activate = (i) => {
     slides.forEach((s, j) => { if (j === i) s.setAttribute('data-e2e', 'feed-active-video'); else s.removeAttribute('data-e2e'); s.style.display = j === i ? 'block' : 'none'; });
@@ -105,16 +109,19 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body styl
   window.activate(0);
 </script></body></html>`;
 const playRequested = new Set();
+const playRequestedAt = {};
+let feedServedAt = 0;
 const douyin = https.createServer({ key: fs.readFileSync(path.join(TMP, 'k.pem')), cert: fs.readFileSync(path.join(TMP, 'c.pem')) }, (req, res) => {
   const u = new URL(req.url, 'https://' + req.headers.host);
   const send = (s, h, b) => { res.writeHead(s, h); res.end(b); };
   if (req.headers.host.startsWith('www.douyin.com')) {
     if (u.pathname === '/') return send(200, { 'content-type': 'text/html; charset=utf-8' }, PAGE);
-    if (u.pathname.startsWith('/aweme/v1/web/tab/feed')) return send(200, { 'content-type': 'application/json' }, JSON.stringify(feed));
+    if (u.pathname.startsWith('/aweme/v1/web/tab/feed')) { feedServedAt = feedServedAt || Date.now(); return send(200, { 'content-type': 'application/json' }, JSON.stringify(feed)); }
     if (u.pathname.startsWith('/aweme/v1/web/aweme/favorite')) return send(200, { 'content-type': 'application/json' }, JSON.stringify({ status_code: 0, aweme_list: [aweme(ids[0], '今天吃火锅'), aweme(FAV, '收藏')] }));
     if (u.pathname.startsWith('/aweme/v1/play/')) {
       const id = u.searchParams.get('video_id').replace('v0d00f', '');
       playRequested.add(id);
+      if (!playRequestedAt[id]) playRequestedAt[id] = Date.now();
       return send(302, { location: `https://v3-web.douyinvod.com/x/${fileFor[id]}.mp4` }, '');
     }
     if (!u.pathname.startsWith('/media/')) return send(404, {}, '');
@@ -208,6 +215,7 @@ const checks = {
   '] key delays subs by 0.3 s and saves it': delayed.at12.sub === null && /lệch sub \+0\.3 s/.test(delayed.at12.badge || '')
     && delayed.at135.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.' && savedDelay === 0.3,
   'next videos prefetched (3 processed)': (status.counts.ok || 0) + (status.counts.skipped || 0) >= 3,
+  'next video found in embedded page data (__pace_f), prefetched before the feed API answers': !!playRequestedAt[ids[1]] && (!feedServedAt || playRequestedAt[ids[1]] < feedServedAt),
   'liked video in the sidebar is not prefetched': !playRequested.has(FAV) && playRequested.has(ids[1]),
   'song video skipped, no subtitle': song.sub === null && /bài hát/.test(song.badge || ''),
   // Mỗi video/đoạn chỉ xử lý một lần (mẩu nhanh "[nhanh …]" là yêu cầu riêng, không tính).

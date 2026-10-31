@@ -249,7 +249,11 @@ Lỗi nằm ở nội dung dịch:
   - lượt 2 (gặp lượt tải treo, xem dưới): 1 không kịp, 1 chờ 0,6 s, 5 có ngay;
   - lượt 3 (bản 0.2.12): 6/8 có ngay, 1 không có nhãn, 1 lỗi tải (đã sửa sau đó);
   - lượt 4: 8/8 có ngay.
-- Video 1–3 sau khi tải lại vẫn hay không kịp: feed tới sau ~12 s (§6d).
+- Video 1–3 sau khi tải lại hay không kịp vì feed API tới sau ~12 s (§6d). Đã sửa một phần (extension 0.2.13):
+  - 2 video đầu của 推荐 nằm trong dữ liệu nhúng của trang (`self.__pace_f`, RSC, mỗi dòng `id:JSON`), không qua API feed. Trước đây extension chỉ thấy chúng qua player (kiểm mỗi 2 s), nên video 1 mất ~1,5 s đầu không có nhãn và video 2 không được dịch sẵn.
+  - Sửa: `tap.main.js` đọc `__pace_f` lúc DOMContentLoaded và lúc load, coi đó là đầu danh sách feed; player kiểm mỗi 0,5 s. e2e có kiểm tra (feed giả tới sau 4 s); kiểm tra này trượt với mã cũ.
+  - Đo: video 1 có nhãn ngay khi hiện. Video 2 có ngay hoặc chờ 0,2 s ở 2/2 lượt, trước đó trượt ở 5/5 lượt.
+  - Còn sót do mạng: lượt tải 64 KB đầu file qua `/aweme/v1/play/` có lúc mất 2–5 s hoặc treo cả 3 lần gọi lại.
 
 Nguyên nhân và cách sửa:
 - **Server chỉ chạy 2 việc cùng lúc**, chia cho video đang xem, đoạn kế và các video dịch sẵn. Sửa: `MAX_PARALLEL` mặc định 4, đặt được qua `.env`. `queue-test` đặt 2 để giữ kịch bản cũ.
