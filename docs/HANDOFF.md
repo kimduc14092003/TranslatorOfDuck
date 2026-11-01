@@ -749,6 +749,6 @@ Hai luật ứng viên ở §6l được chọn sau khi nhìn lỗi của lô 1,
 
 - Đo hiệu quả bước rút gọn dòng quá dài trên dữ liệu thật. Ở S3 có 44/99 dòng vượt 17 ký tự/giây.
 - Thu thêm khoảng 100 mẫu có lời nói, kèm bản chép tay để đo tỉ lệ lỗi chữ (CER).
-- Bộ phân loại nói/hát theo âm thanh (ví dụ SenseVoice) thay cho đặc trưng văn bản. Từ 1/11 đọc theo nhịp, 喊麦 và rap đều tính là hát, nên bộ này đáng giá hơn: 98 dòng hát thiếu ♪ ở hai lô đo (52 dòng rap và 喊麦, 46 dòng bài hát nhanh) không bắt được bằng độ dài chữ (§6n).
+- Bộ phân loại nói/hát theo âm thanh (ví dụ SenseVoice) thay cho đặc trưng văn bản. Từ 1/11 đọc theo nhịp, 喊麦 và rap đều tính là hát, nên bộ này đáng giá hơn: 98 dòng hát thiếu ♪ ở hai lô đo (52 dòng rap và 喊麦, 46 dòng bài hát nhanh) không bắt được bằng độ dài chữ (§6n). Ngày 1/11 chủ dự án vẫn chọn để sau.
 - Bỏ khoảng lặng và nhạc trước khi gửi ASR (VAD), vì Fun-ASR tính tiền theo giây.
 - Bảng tên riêng và xưng hô theo cả video. Cache dùng chung giữa người dùng khi có server thật.
