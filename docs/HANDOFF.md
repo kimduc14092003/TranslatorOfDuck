@@ -417,7 +417,7 @@ Chủ dự án muốn hiểu cả video bài hát. Log ngày 31/10: 35/232 video
 
 Còn mở:
 - **Nhận dạng lời hát kém hơn lời nói** khi nhạc to hoặc hát luyến: có chỗ sai chữ, câu dịch lệch nghĩa.
-- **Đánh dấu ♪ theo từng câu** dựa vào độ dài chữ (> 0,33 s/chữ), nên câu nói kéo dài, la hét có thể bị đánh dấu ♪ (ví dụ "冲刺冲 → Tăng tốc nào!"). Trong một đoạn có cả câu hát lẫn câu nói, câu hát không đủ dài có thể không có ♪. Mọi agent soát đều dùng ASR giả: phân loại câu hát trên âm thanh thật là rủi ro lớn nhất chưa test, trong khi chế độ này bật mặc định.
+- **Đánh dấu ♪ theo từng câu** dựa vào độ dài chữ (> 0,33 s/chữ), nên câu nói kéo dài, la hét có thể bị đánh dấu ♪ (ví dụ "冲刺冲 → Tăng tốc nào!"). Trong một đoạn có cả câu hát lẫn câu nói, câu hát không đủ dài có thể không có ♪. Đã đo trên 13 video thật ngày 1/11 (§6l): ♪ đúng khoảng 90% số dòng được gắn, phủ khoảng 89% dòng hát có sub; rap và hô vè không bao giờ có ♪.
 - **Server ngắt ASR khi người xem tua đi**, trước khi lưu `.asr.` (có từ trước). Sửa được bằng cách để lệnh ASR chạy nốt rồi lưu, nhưng nên biết trước lệnh bị ngắt có tính tiền không.
 - **Bản quyền:** khi có cache dùng chung cho nhiều người, việc lưu và phát bản dịch lời bài hát cần xem lại.
 
@@ -461,6 +461,83 @@ Chủ dự án yêu cầu: hết token (hạn mức) của Fun-ASR thì chuyển
 - **Còn nhỏ, chưa sửa** (verifier lượt 3, không ảnh hưởng sub):
   - Cả hai model cùng bị giới hạn theo phút kéo dài thì câu lỗi vẫn ghi "hết hạn mức", popup ghi "Fun-ASR hết hạn mức", và mỗi lần thử lại sau 3 phút tốn một vòng 22 s.
   - Model dự phòng bị từ chối đúng lúc một lệnh Fun-ASR đang chạy và lệnh đó báo lỗi key: câu lỗi nói về model dự phòng, nhưng log vẫn ghi đúng lỗi của Fun-ASR.
+
+## 6l. Đo phân loại câu hát trên Douyin thật (1/11, extension 0.2.22, `alpha-8`)
+
+Chế độ lời bài hát bật mặc định, mà phần phân loại câu hát/câu nói mới chỉ được kiểm bằng ASR giả (§6j).
+
+- **Cách đo:**
+  - Xem 13 video thật ở trang `/video/<id>`. Video tìm theo từ khoá, không phải lướt feed ngẫu nhiên, nên tỉ lệ video có hát (7/13) cao hơn feed thật.
+    - Có hát: 2 bài hát cover, 2 video dạy hát, 1 livestream nói chuyện rồi hát, 1 kinh kịch, 1 rap.
+    - Chỉ nói hoặc hô vè: 2 video đọc thơ, 1 bình luận bóng đá, 1 bài giảng đào tạo streamer, 1 livestream bán hàng hô vè, 1 vlog lồng tiếng.
+  - Có 352 dòng sub, hệ thống gắn ♪ cho 76 dòng.
+  - Nhãn chuẩn dựng mù, người gán nhãn không thấy cờ ♪. Workflow 9 agent:
+    - 3 giám khảo: một xét chữ và ngữ cảnh; một xét âm thanh (dò cao độ, đo tỉ lệ nốt giữ, bỏ nốt của nhạc cụ); một tra lời bài hát trên web.
+    - 1 agent phân xử gộp nhãn của ba giám khảo.
+    - 2 verifier phản biện từng dòng lệch và 22 dòng khớp lấy mẫu.
+    - 1 agent phân tích luật, 1 critic.
+  - Có 4 loại nhãn: hát, rap/hô vè, nói, không rõ (21 dòng). Không ai nghe trực tiếp.
+- **Kết quả**, tính hát với nói, bỏ rap và dòng không rõ:
+  - Độ chính xác của ♪ là 63/70 = 0,90. Độ phủ là 63/71 = 0,887. Dòng nói bị gắn ♪: 7/221 = 3,2%.
+  - Có 5 video toàn lời nói: 4 video không có dòng nào bị ♪, video đọc thơ còn lại có 3 dòng.
+  - Hai video có hát liền mạch (爱错, guitar 情歌) có 30/30 dòng hát được gắn ♪.
+  - Rap và hô vè: 0/39 dòng có ♪.
+- **Đọc số cho đúng** (critic tự tính lại các số trên từ file, đều khớp):
+  - 2 trong 7 dòng nói bị ♪ là dòng trùng. Chúng sinh ra vì đoạn sau bị gửi dư 8 s sau một lỗi tải (xem HTTP 429 bên dưới), và người xem thấy bản không có ♪. Tính theo những gì người xem thấy: 61/66 = 0,924.
+  - Nhãn "hát" của 8 dòng trong video 宿敌 chỉ có giám khảo chữ ủng hộ. Nếu thực ra đó là đọc lời thì độ chính xác còn 0,79, nên khoảng nhạy là 0,79–0,92.
+  - Giám khảo chữ đã đọc bản dịch tiếng Việt, mà dòng có ♪ được dịch bằng câu lệnh "lời bài hát". Đây là một đường rò quyết định của hệ thống vào nhãn chuẩn. Lần đo sau chỉ đưa chữ Trung.
+  - Độ phủ chỉ tính trên các dòng có sub: đoạn hát mà ASR không ra chữ thì không được đếm.
+  - 5 dòng có ♪ trong video kinh kịch có nhãn "không rõ". Nhiều khả năng đó là chữ ASR bịa ra trên tiếng đàn. Nếu tính chúng là gắn sai thì độ chính xác là 0,83.
+- **Nguyên nhân của 15 lỗi.** Verifier phản biện xác nhận cả 15 là lỗi của hệ thống.
+  - Gắn ♪ cho 7 dòng nói:
+    - 3 dòng đọc thơ chậm. Trung vị độ dài chữ của câu là 0,40 / 0,34 / 0,40 s, vượt ngưỡng 0,33.
+    - 4 dòng nói nằm trong đoạn bị coi là "cả bài". 3 dòng là lời nói chuyện ngay trước khi hát trong livestream (đoạn có 5/9 câu hát). 1 dòng là câu kêu theo dõi ở cuối video 宿敌 (đoạn có hashtag nhạc, trung vị cả đoạn 0,359, dù chỉ 2/5 câu hát). Chữ của chính các câu này chỉ 0,16–0,18 s.
+  - Thiếu ♪ ở 8 dòng hát:
+    - 5 dòng hát nhanh, câu chỉ 0,24–0,32 s/chữ.
+    - 3 dòng hát chỉ có 3 chữ Hán, dù chữ kéo dài 0,56–1,44 s. Luật cần ít nhất 4 chữ.
+  - Không ngưỡng nào tách sạch được. Câu đọc thơ và câu hát nhanh cùng 0,32 s/chữ. Câu hát có trung vị 0,41 (p10 0,32); câu nói có trung vị 0,16 (p90 0,26, lớn nhất 0,40).
+  - Luật "quá nửa thời gian của dòng nằm trong câu hát" không gây lỗi nào.
+  - ASR nghe sai chữ ở khoảng 28% dòng hát (kinh kịch 6/7 dòng), nên dù ♪ đúng, bản dịch lời hát vẫn hay dựa trên chữ sai.
+- **Tác động:**
+  - Chế độ lời bài hát: dòng nói bị ♪ vẫn hiện, chỉ thêm ♪ và văn dịch kiểu lời hát. Khoảng 1 dòng mỗi phút nói, và chỉ gặp ở 3/13 video. Dòng hát thiếu ♪ vẫn hiện, như lời nói.
+  - Chế độ thường (tắt lời bài hát): câu bị coi là hát bị bỏ. Ước lượng mất 5 dòng nói (khoảng 10 s) trong 7,2 phút nói. Chưa đo trực tiếp.
+- **Thử biến thể luật trên dữ liệu này.** Agent phân tích dựng lại đúng 352/352 cờ của hệ thống từ dữ liệu câu trước khi thử.
+  - Đổi ngưỡng sang 0,30, 0,36 hay 0,40: chỉ đổi lỗi này lấy lỗi khác.
+  - Hai thay đổi theo chữ không làm hỏng dòng nào ở đây:
+    - (a) Trong đoạn "cả bài", dòng thuộc câu có ít nhất 3 chữ và trung vị ≤ 0,20 s/chữ thì không gắn ♪. Ở chế độ thường thì giữ dòng đó lại, thay vì bỏ cả đoạn.
+    - (b) Hạ yêu cầu từ 4 xuống 3 chữ Hán.
+
+    Gộp cả hai: 66 dòng đúng, 3 dòng gắn oan, 5 dòng thiếu (độ chính xác 0,957, độ phủ 0,93).
+  - Cổng âm thanh (theo nốt giữ) sửa được bao nhiêu thì hỏng bấy nhiêu. Làm mịn theo câu bên cạnh thì xấu hơn hiện tại.
+  - Rap chỉ bắt được bằng cách đo nhịp trong âm thanh (21/39 dòng). Số này không độc lập, vì luật đo nhịp được chỉnh trên chính các video này.
+  - **Chưa đổi code.** Mẫu nhỏ (13 video trong một buổi, 15 lỗi), và các mốc 0,20 và 3 chữ được chọn sau khi đã nhìn lỗi.
+    - Cần đo một lô mới trước khi commit: ngâm thơ, livestream nói rồi hát, hát nhanh, và lướt feed ngẫu nhiên.
+    - Với (b), phải xem câu nói ngắn kéo dài (kiểu "好的吧") ở chế độ thường.
+- **Lỗi khác tìm thấy trong cùng đợt:**
+  - **Video mở từ trang tìm kiếm không có sub** (4/4 video thử: 3 trong lúc đo, 1 lần kiểm lại).
+    - Kết quả đầu của trang tìm kiếm tới qua `/aweme/v1/web/general/search/stream/`. Phản hồi này khai là JSON nhưng chia khúc trong thân: một dòng độ dài hex, rồi một khối JSON, cứ thế lặp lại.
+    - `tap.main.js` đọc bằng `res.clone().json()` nên báo `parse_error`, và đường này cũng không có trong `PATHS`. Vì vậy `content.js` không có item cho `modal_id`: không hiện nhãn, không tải gì.
+    - Đã kiểm trực tiếp trong trình duyệt; tải lại hẳn trang tìm kiếm vẫn vậy.
+    - Sửa: tách dòng, bỏ dòng độ dài, parse từng khối JSON; thêm đường này vào `PATHS`.
+  - **Trang kết quả tìm kiếm hiện sub của video khác.**
+    - Sau khi tìm từ feed (chuyển trang phía client), slide feed cũ vẫn nằm trong DOM với `data-e2e="feed-active-video"`. `findActive()` lấy slide đó, còn `videoFor()` lấy thẻ `<video>` lớn nhất đang thấy, tức video xem trước dài 628 s của trang tìm kiếm.
+    - Kết quả: sub "♪ …" của video piano 29 s hiện đè lên một video khác.
+    - Sửa: chỉ nhận slide feed khi `<video>` của chính nó đang thấy.
+  - **Đoạn đầu không được gửi, 30 s mới có sub** (1/13 video, bài hát có đoạn dạo guitar).
+    - Lượt tải đoạn 0–20 bị chậm. Tới giây 20 đoạn đó không còn "cần" nên bị ngắt im lặng (`cancelUnwanted`). Đoạn 20–50 vì thế gửi dư 8 s, và có 0 dòng ngữ cảnh.
+    - Mẩu nhanh 0–10 bị bỏ qua ("quá ít lời") nên không bù được, và mỗi lần đứng yên chỉ xét một mẩu nhanh.
+    - Verifier dựng lại được trong vm khi lượt tải đoạn 0 chậm. Riêng việc mẩu nhanh bị bỏ qua thì không gây lỗi.
+    - Sửa: khi đoạn ở chỗ đang xem tải chậm thì gửi mẩu nhanh tiếp theo hoặc mở thêm một lượt tải; cho xét lại mẩu nhanh khi mẩu trước bị bỏ qua.
+  - **HTTP 429 khi tải video** (1/13 video, 2 đoạn, nhãn lỗi khoảng 24 s). Không rõ 429 đến từ CDN hay từ `/aweme/v1/play/`.
+    - Extension coi 429 như lỗi tải thường: gọi lại ngay một lần, rồi cứ 20 s thử một lần, không đọc `Retry-After`, mỗi đoạn tự chờ riêng; mẩu nhanh mất luôn.
+    - Lượng tải của extension thấp (5–7 lượt cho video 90 s), không có dấu hiệu chính nó gây ra 429.
+    - Sửa: tách 429 thành loại lỗi riêng, giãn dần thời gian chờ và dùng chung cho mọi đoạn, trong lúc chờ thì tạm dừng dịch sẵn.
+  - Bộ mô phỏng `alpha/dev/content-sim-test.mjs`: fetch giả không từ chối khi signal đã bị ngắt từ trước (fetch thật thì từ chối ngay).
+- **Chưa đo:**
+  - Model ASR dự phòng và Gemini với luật này. Gemini không có mốc từng chữ, nên ♪ gần như không bật.
+  - Tiếng Quảng, song ca, giọng trẻ em, lời nói đè lên bài hát có lời.
+  - Đo trực tiếp chế độ thường.
+- Mẫu âm thanh tạm (TOD_DUMP) và ảnh chụp đã xoá sau khi đo. Nhãn và số liệu chỉ để trên máy.
 
 ## 7. Việc tiếp theo trên Mac
 
