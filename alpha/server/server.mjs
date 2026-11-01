@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkFfmpeg, config, dotEnvInfo, makeSubtitles, misplacedOpenAIKey, PIPELINE_VERSION, warmProviders } from './pipeline.mjs';
+import { checkFfmpeg, config, dotEnvInfo, makeSubtitles, mergePronouns, misplacedOpenAIKey, normalizePronouns, PIPELINE_VERSION, pronounChanges, warmProviders } from './pipeline.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -132,8 +132,19 @@ async function handleSubtitles(req, res) {
   const key = file;
   const otherFile = cacheFile(fileSpan, lyrics ? 'vi' : 'vi.lyr');
   const ready = () => { const other = readCache(otherFile); return readCache(file) || (noSinging(other) ? other : null); };
+  const fromCache = (x) => { const { debug: _d, ...c } = x; return { ...c, cached: true }; };
+  // Bảng xưng hô trả cho request này (cả request nhập vào việc đang chạy của request khác, việc đó dịch với bảng của
+  // request kia). Kết quả lấy từ cache mang bảng lúc nó được dịch, có thể cũ hơn bảng extension vừa gửi (tua lại đoạn đã
+  // dịch): bảng extension gửi đứng trước, thêm cặp chỉ file cache có, để extension (giữ bảng mới nhất) không lùi về bảng
+  // cũ. Kết quả vừa dịch: bảng model vừa chốt đứng trước (có thể là cặp sửa), thêm cặp request này gửi mà thiếu.
+  // Chỉ đoạn 'ok' mới có bảng. File cache không đổi.
+  const withPronouns = (x) => {
+    const { pronouns: _p, ...c } = x;
+    const p = c.status === 'ok' ? (c.cached ? mergePronouns(meta.pronouns, x.pronouns) : mergePronouns(x.pronouns, meta.pronouns)) : null;
+    return { ...c, ...(p ? { pronouns: p } : {}) };
+  };
   const hit = ready();
-  if (hit) { const { debug: _d, ...c } = hit; return send(res, 200, { ...c, cached: true }); }
+  if (hit) return send(res, 200, withPronouns(fromCache(hit)));
   let job = inflight.get(key);
   if (job && !job.started) { job.urgent = job.urgent || !!meta.urgent; job.rank = Math.min(job.rank, rankOf(meta.rank)); job.seq = ++seq; pumpQueue(); }   // lại được hỏi: đẩy lên
   if (!job) {
@@ -151,7 +162,9 @@ async function handleSubtitles(req, res) {
       const prevSpan = Array.isArray(meta.prev) && meta.prev.length === 2 && meta.prev.every(num) ? span(meta.prev[0], meta.prev[1]) : null;
       const prev = prevSpan ? cacheFile(prevSpan, MT) : null;
       // Chế độ thường không hiện dòng hát: không lấy chúng làm ngữ cảnh (lời bài hát xưng hô, giọng văn khác lời nói).
-      const lastLines = (f) => { try { return ((readCache(f) || {}).cues || []).filter(c => lyrics || !c.sung).slice(-3).map(c => ({ zh: c.zh, vi: c.vi })); } catch (_) { return []; } };
+      // Cùng file đó cho bảng xưng hô (pronouns) của đoạn: đoạn gửi cùng lúc với đoạn trước, hay sau khi tải lại
+      // extension, không có bảng từ extension (đợt soát 1/11, F2). Server vẫn không giữ trạng thái: chỉ đọc cache.
+      const fromFile = (f) => { try { const x = readCache(f) || {}; return { lines: (x.cues || []).filter(c => lyrics || !c.sung).slice(-3).map(c => ({ zh: c.zh, vi: c.vi })), pronouns: x.status === 'ok' ? normalizePronouns(x.pronouns) : null }; } catch (_) { return { lines: [], pronouns: null }; } };
       const context = async (signal) => {
         if (prev) {
           const pj = inflight.get(prev);
@@ -160,10 +173,10 @@ async function handleSubtitles(req, res) {
           }
           // Đoạn liền trước đã cache mà không có dòng nào (bỏ qua: nhạc, không lời) thì vẫn tìm xa hơn bên dưới; trước
           // đây trả ngữ cảnh rỗng dù đoạn trước nữa đã dịch.
-          const lines = lastLines(prev);
-          if (lines.length) return lines;
-          const otherLines = lastLines(cacheFile(prevSpan, lyrics ? 'vi' : 'vi.lyr'));   // đoạn trước dịch ở chế độ kia
-          if (otherLines.length) return otherLines;
+          const p = fromFile(prev);
+          if (p.lines.length) return p;
+          const o = fromFile(cacheFile(prevSpan, lyrics ? 'vi' : 'vi.lyr'));   // đoạn trước dịch ở chế độ kia
+          if (o.lines.length) return o;
         } else if (!quick) return [];   // đoạn đầu video
         // Đoạn liền trước chưa dịch (vừa tua tới) hoặc không có dòng nào, hoặc mẩu nhanh (không chờ gì): lấy đoạn đã
         // dịch gần nhất phía trước có dòng dịch, để giữ xưng hô, tên riêng.
@@ -171,8 +184,8 @@ async function handleSubtitles(req, res) {
         const near = fs.readdirSync(CACHE).map(f => [f, re.exec(f)]).filter(([, m]) => m && Number(m[2]) <= meta.from)
           .sort((a, b) => Number(b[1][2]) - Number(a[1][2]));
         for (const [f] of near) {
-          const lines = lastLines(path.join(CACHE, f));
-          if (lines.length) return { lines, far: true };
+          const x = fromFile(path.join(CACHE, f));
+          if (x.lines.length) return { ...x, far: true };
         }
         return [];
       };
@@ -194,8 +207,12 @@ async function handleSubtitles(req, res) {
       // (hai tab, hay đổi nút lúc đoạn đang xếp hàng). Dùng luôn, khỏi trả tiền ASR và dịch lần nữa (đợt soát 31/10: việc
       // chạy sau không xem lại cache, file .asr. đã bị việc trước xoá).
       const now = ready();
-      if (now) { const { debug: _d, ...c } = now; return { ...c, cached: true }; }
-      const r = await makeSubtitles({ desc: meta.desc, hashtags: meta.hashtags }, buf, { ...opts, signal, asrCache });
+      if (now) return fromCache(now);
+      // pronouns: bảng xưng hô của video extension giữ từ các lần trả trước (gửi lại nguyên dạng server đã trả); author:
+      // người đăng. Không vào khoá cache: cùng đoạn thì dùng lại kết quả đã có. Request cũ không gửi thì như trước.
+      // Extension gửi author là chuỗi tên, giới tính ở trường riêng authorGender ('male'/'female'): gộp lại cho authorHint.
+      const author = meta.authorGender ? { nickname: typeof meta.author === 'string' ? meta.author : '', gender: meta.authorGender } : meta.author;
+      const r = await makeSubtitles({ desc: meta.desc, hashtags: meta.hashtags, author, pronouns: meta.pronouns }, buf, { ...opts, signal, asrCache });
       const out = { id, ...(chunked ? { from: meta.from, to: meta.to } : {}), ...r };
       // 'untranslated' (dịch không ra dòng nào) không cache: lần sau thử dịch lại, ASR đã có sẵn ở asrFile.
       // Lỗi (kể cả không chạy được ffmpeg) thì báo 'error' qua catch bên dưới, không bao giờ cache.
@@ -215,8 +232,9 @@ async function handleSubtitles(req, res) {
   // Gọi lại, đổi model, lượt rút gọn: cách nhau "; ".
   const netInfo = (calls) => (calls && calls.length ? ' [' + calls.map(c => `đầu ${c.headMs ?? '-'} ms, ` +
     (c.fresh == null ? 'kết nối ?' : c.fresh ? `kết nối mới ${c.connectMs} ms` : `kết nối sẵn${c.byWarm ? ' (làm nóng)' : ''}`)).join('; ') + ']' : '');
+  const pronounsIn = normalizePronouns(meta.pronouns)?.pairs.length || 0;
   try {
-    const out = await job.promise;
+    const out = withPronouns(await job.promise);
     const t = out.timings || {};
     const why = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch không ra dòng nào' };
     console.log(`${new Date().toLocaleTimeString()} ${id}${where} ${out.status}${out.label && out.status !== 'ok' ? ' (' + (why[out.label] || out.label) + ')' : ''}` +
@@ -224,7 +242,11 @@ async function handleSubtitles(req, res) {
       ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${out.asrCached ? 'dùng lại' : (t.asrMs ?? '-') + ' ms'}${out.asrModel ? ' (' + out.asrModel + ')' : ''}${out.cached ? '' : netInfo(out.debug?.net?.asr)}` +
       `, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : netInfo(out.debug?.net?.mt)}` +
       (job.startedAt - job.at > 300 ? ` · xếp hàng ${job.startedAt - job.at} ms` : '') +
-      (out.heard ? `\n    nghe được: ${out.heard}` : ''));
+      (out.heard ? `\n    nghe được: ${out.heard}` : '') +
+      // Bảng xưng hô (để đo trên Douyin thật xem cặp có giữ qua các đoạn không): số cặp nhận từ extension và lấy từ file
+      // cache đoạn trước, bảng trả về, cặp model vừa sửa so với bảng nó nhận.
+      (out.pronouns && !out.cached ? `\n    xưng hô${pronounsIn || out.debug?.pronounsCtx ? ` (nhận ${pronounsIn} cặp${out.debug?.pronounsCtx ? `, từ cache đoạn trước ${out.debug.pronounsCtx} cặp` : ''})` : ''}: ${out.pronouns.pairs.map(p => `${p.who}: ${p.self}/${p.other}`).join('; ')}` +
+        pronounChanges(out.debug?.pronounsIn, out.pronouns).map(c => `\n    xưng hô SỬA: ${c}`).join('') : ''));
     const { debug: _d, ...reply } = out;
     send(res, 200, reply);
   } catch (e) {

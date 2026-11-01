@@ -84,6 +84,7 @@
     });
     const pa = v.play_addr || v.playAddr;
     const images = aw.images || aw.image_post_info || aw.imageInfos;
+    const au = aw.author && typeof aw.author === 'object' ? aw.author : null;
     const kind = (Array.isArray(images) ? images.length > 0 : !!images) ? 'image'
       : (aw.is_ads || aw.raw_ad_data || aw.isAds) ? 'ad'
       : (aw.room || aw.live_room || aw.cell_room) ? 'live' : 'video';
@@ -104,6 +105,12 @@
       // Chỉ dùng làm ngữ cảnh cho bộ mẫu S3 (lưu trên máy người dùng), không vào báo cáo S1.
       desc: typeof aw.desc === 'string' ? aw.desc.slice(0, 300) : null,
       hashtags: Array.isArray(aw.text_extra) ? aw.text_extra.map(t => t && t.hashtag_name).filter(Boolean).slice(0, 10) : [],
+      // Gợi ý xưng hô cho bước dịch (P4, soát xưng hô 1/11: hai video dạy hát của '雨晴教你唱歌' bị dịch thành 'thầy';
+      // người dạy là nữ chỉ suy từ nickname và ghi chú, chưa nghe audio). author.nickname có thật trên Douyin (aweme.jsonl
+      // đợt đo lời bài hát: 374/374 dòng API). gender: cách hiểu 1 nam, 2 nữ là suy luận, chưa thấy trên dữ liệu thật;
+      // thiếu hay giá trị khác thì null.
+      author: au && typeof au.nickname === 'string' && au.nickname.trim() ? au.nickname.trim().slice(0, 60) : null,
+      authorGender: au && au.gender === 1 ? 'male' : au && au.gender === 2 ? 'female' : null,
     };
   }
   function walk(node, out, source, depth) {

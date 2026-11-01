@@ -77,7 +77,7 @@ function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () 
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(EXT, 'cues.js'), 'utf8'), ctx);
   const src = fs.readFileSync(path.join(EXT, 'content.js'), 'utf8')
-    .replace(/\}\)\(\);\s*$/, 'globalThis.__dbg = { vids, get wanted() { return wanted; }, get playhead() { return playhead; } };\n})();');
+    .replace(/\}\)\(\);\s*$/, 'globalThis.__dbg = { vids, get wanted() { return wanted; }, get playhead() { return playhead; }, takePron: typeof takePron === \'function\' ? takePron : null };\n})();');
   vm.runInContext(src, ctx);
   env.dbg = ctx.__dbg;
   env.up = (type, data) => env.listeners.__tod_alpha_up({ detail: JSON.stringify({ type, data }) });
@@ -802,16 +802,157 @@ await t('HTTP 429 lặp lại: nghỉ 5 s, 15 s, 45 s; tải được thì tính
   assert.deepEqual(tc.slice(1).map((x, i) => Math.floor(x - tc[i])), [120], JSON.stringify(tc));
 });
 
+// Xưng hô theo cả video (P2) và người đăng (P4): soát 837 dòng dịch thật 1/11, 62 dòng sai hay lệch xưng hô.
+const PA = { pairs: [{ from: 'người hát (nam)', to: '姐姐', vi: 'em-chị' }] };
+const PB = { pairs: [{ from: 'người hát', to: '姐姐', vi: 'anh-em' }] };
+const J = (x) => JSON.stringify(x);   // đối tượng trong vm khác realm: so bằng JSON
+const sentOf = (e, key) => e.sent.filter((m) => m.type === 'subtitles' && m.key === key).at(-1);
+
+await t('P2 xưng hô: mẩu nhanh về trước, đoạn 0 (gửi cùng lúc) về sau: đoạn sau theo bản của đoạn 0 (dòng đang hiện)', async () => {
+  const e = makeEnv();
+  e.up('items', [{ ...e.item(A, 100000), author: '雨晴教你唱歌' }, e.item(B, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  // Yêu cầu đầu tiên chưa có bản đồ nào.
+  assert.ok(e.sent.filter((m) => m.type === 'subtitles').every((m) => !('pronouns' in m.payload)));
+  assert.equal(sentOf(e, A + ':0').payload.author, '雨晴教你唱歌');
+  assert.equal(sentOf(e, A + ':q2').payload.author, '雨晴教你唱歌');
+  assert.ok(!('author' in sentOf(e, B + ':0').payload), 'B không có người đăng: không gửi');
+  await e.reply(A + ':q2', { status: 'ok', cues: [C(2.2, 4, 'Q')], pronouns: PA });
+  assert.equal(J(e.vid(A).pron), J(PA));
+  // Đoạn 0 gửi cùng bản (chưa có) với mẩu nhanh: dòng của nó thay dòng mẩu nhanh, bản của nó thay bản của mẩu nhanh.
+  await e.reply(A + ':0', { status: 'ok', cues: [C(2.3, 5, 'C0')], pronouns: PB });
+  assert.deepEqual(texts(e.vid(A).cues), ['C0']);
+  assert.equal(J(e.vid(A).pron), J(PB));
+  // Chỉ một lần: kết quả khác gửi với bản cũ (đoạn hay mẩu nhanh) không thay nữa.
+  e.dbg.takePron(e.vid(A), 0, { status: 'ok', pronouns: PA }, false);
+  e.dbg.takePron(e.vid(A), 0, { status: 'ok', pronouns: PA }, true);
+  e.dbg.takePron(e.vid(A), 1, { status: 'ok', pronouns: PA }, false);
+  assert.equal(J(e.vid(A).pron), J(PB));
+  for (let i = 0; i < 4; i++) await e.tick();
+  const later = e.sent.filter((m) => m.type === 'subtitles' && m.key.startsWith(A + ':')).filter((m) => m.key !== A + ':0' && m.key !== A + ':q2');
+  assert.ok(later.some((m) => m.key === A + ':1'), 'có A:1: ' + JSON.stringify(e.subs()));
+  for (const m of later) assert.equal(J(m.payload.pronouns), J(PB), m.key);
+});
+
+await t('P2 xưng hô: mỗi video một bản; video khác gửi sau khi A đã có bản vẫn không nhận bản của A', async () => {
+  const PC = { pairs: [{ from: 'mẹ', to: 'người xem', vi: 'mình-các bạn' }] };
+  const e = makeEnv();
+  e.up('items', [e.item(A, 100000), e.item(B, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':q2', { status: 'ok', cues: [], pronouns: PA });
+  await e.reply(A + ':0', { status: 'ok', cues: [C(3, 5, 'C0')], pronouns: PB });
+  await e.reply(B + ':0', { status: 'ok', cues: [C(3, 5, 'B0')], pronouns: PC });
+  assert.equal(J(e.vid(A).pron), J(PB)); assert.equal(J(e.vid(B).pron), J(PC));
+  // Video mới (sau khi A, B đã có bản): yêu cầu dịch sẵn không mang bản nào.
+  e.up('items', [e.item(C2, 100000)]);
+  for (let i = 0; i < 4; i++) await e.tick();
+  const n0 = e.sent.length;
+  // Lướt sang B, tua tới 40 s: các yêu cầu sau của B mang bản của B.
+  e.activeId = B; e.videos.delete(A); const vb = e.video(B, 40); vb.paused = true;
+  for (let i = 0; i < 6; i++) await e.tick();
+  const forB = e.sent.slice(n0).filter((m) => m.type === 'subtitles' && m.key.startsWith(B + ':'));
+  assert.ok(forB.length, 'B gửi thêm sau khi A có bản: ' + JSON.stringify(e.subs()));
+  for (const m of forB) assert.equal(J(m.payload.pronouns), J(PC), m.key);
+  const forC = e.sent.filter((m) => m.type === 'subtitles' && m.key.startsWith(C2 + ':'));
+  assert.ok(forC.length, 'C2 được dịch sẵn: ' + JSON.stringify(e.subs()));
+  for (const m of forC) assert.ok(!('pronouns' in m.payload), m.key);
+  assert.equal(e.vid(C2).pron, null);
+  assert.equal(J(e.vid(A).pron), J(PB));
+});
+
+await t('P2 xưng hô: kết quả của yêu cầu gửi với bản đang giữ thì cập nhật; kết quả lỗi, rỗng, sai kiểu, quá lớn thì không', async () => {
+  const e = makeEnv();
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':q2', { status: 'ok', cues: [], pronouns: PA });
+  await e.reply(A + ':0', { status: 'ok', sung: 0, label: 'speech', cues: [C(3, 5, 'C0')] });   // không có pronouns: giữ PA
+  assert.equal(J(e.vid(A).pron), J(PA));
+  for (let i = 0; i < 2; i++) await e.tick();
+  assert.equal(J(sentOf(e, A + ':1').payload.pronouns), J(PA));
+  // Yêu cầu A:1 gửi kèm PA: server tinh chỉnh (thêm người mới) thì giữ bản mới.
+  const PA2 = { pairs: [...PA.pairs, { from: 'người hát', to: '大家', vi: 'mình-các bạn' }] };
+  await e.reply(A + ':1', { status: 'ok', sung: 0, label: 'speech', cues: [C(21, 23, 'C1')], pronouns: PA2 });
+  assert.equal(J(e.vid(A).pron), J(PA2));
+  // Đoạn kế gửi kèm bản mới; các kết quả hỏng không thay nó.
+  v.paused = false;
+  for (let s = 2; s < 40 && !sentOf(e, A + ':2'); s += 1) { v.currentTime = s; await e.tick(1000); }
+  assert.equal(J(sentOf(e, A + ':2').payload.pronouns), J(PA2));
+  const bad = [{ status: 'error', error: 'x', pronouns: PB }, { status: 'ok', cues: [], pronouns: [] }, { status: 'ok', cues: [], pronouns: {} },
+    { status: 'ok', cues: [], pronouns: 'em-chị' }, { status: 'ok', cues: [], pronouns: { note: 'x'.repeat(5000) } },
+    { status: 'ok', cues: [], pronouns: [{ from: 'a', to: 'b', vi: 'em-chị' }] }];
+  await e.reply(A + ':2', bad[0]);
+  for (const r of bad.slice(1)) {
+    e.vid(A).pronGen = 99; const g = e.vid(A).pronGen;   // không phụ thuộc thứ tự gửi: chỉ xét kiểu dữ liệu
+    e.dbg.takePron(e.vid(A), g, r);
+    assert.equal(J(e.vid(A).pron), J(PA2), J(r).slice(0, 60));
+    assert.equal(e.vid(A).pronGen, 99);
+  }
+  // Giữ bản sao: sửa đối tượng của kết quả sau đó không đổi bản đang giữ.
+  const r3 = { status: 'ok', cues: [], pronouns: { pairs: [{ from: 'x', to: 'y', vi: 'tớ-cậu' }] } };
+  e.dbg.takePron(e.vid(A), 99, r3);
+  r3.pronouns.pairs[0].vi = 'tôi-bạn';
+  assert.equal(e.vid(A).pron.pairs[0].vi, 'tớ-cậu');
+});
+
+await t('P2 xưng hô: xin lại sau khi đổi chế độ lời bài hát và mẩu nhanh sau khi tua đều gửi kèm bản đồ', async () => {
+  const e = makeEnv();
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':0', { status: 'ok', sung: 2, label: 'singing', cues: [{ ...C(3, 5, '♪ C0'), sung: true }], pronouns: PA });
+  await e.reply(A + ':q2', { status: 'ok', cues: [] });
+  const n0 = e.sent.length;
+  e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+  for (let i = 0; i < 2; i++) await e.tick();
+  const redo = e.sent.slice(n0).filter((m) => m.type === 'subtitles' && m.key === A + ':0');
+  assert.equal(redo.length, 1, J(e.subs()));
+  assert.equal(redo[0].payload.lyrics, false);
+  assert.equal(J(redo[0].payload.pronouns), J(PA));
+  v.currentTime = 75; for (let i = 0; i < 4; i++) await e.tick();
+  assert.equal(J(sentOf(e, A + ':q75').payload.pronouns), J(PA));
+});
+
+await t('P2 xưng hô: kết quả bị bỏ (đổi chế độ lời bài hát lúc đang ở server) không đổi bản đồ', async () => {
+  const e = makeEnv();
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+  const sung = { status: 'ok', sung: 2, label: 'singing', cues: [{ ...C(3, 5, '♪ C0'), sung: true }], pronouns: PB };
+  await e.reply(A + ':q2', sung);
+  await e.reply(A + ':0', sung);
+  assert.equal(e.vid(A).pron, null);
+  for (let i = 0; i < 2; i++) await e.tick();
+  const redo = e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':0');
+  assert.equal(redo.length, 2, J(e.subs()));
+  assert.ok(!('pronouns' in redo[1].payload));
+});
+
+await t('P4 người đăng: gửi { nickname, gender } khi có giới tính; metadata tới sau thiếu hay mới có người đăng đều giữ được', async () => {
+  const e = makeEnv();
+  // A: bản sau nhiều luồng hơn nhưng không có người đăng. B: bản đầu không có, bản sau có (không nhiều luồng hơn).
+  e.up('items', [{ ...e.item(A, 100000), author: '饼仔piano🎹', authorGender: 'male' }, e.item(B, 100000)]);
+  e.up('items', [{ ...e.item(A, 100000), gears: [{ urls: [] }], author: null, authorGender: null }, { ...e.item(B, 100000), author: '小明' }]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  assert.equal(J(sentOf(e, A + ':0').payload.author), J({ nickname: '饼仔piano🎹', gender: 'male' }));
+  assert.ok(!('authorGender' in sentOf(e, A + ':0').payload));
+  assert.equal(sentOf(e, B + ':0').payload.author, '小明');
+});
+
 // ---- tap.main.js trong vm: đọc __pace_f, đồng hồ trình phát.
 const aw = (id) => ({ aweme_id: id, duration: 12000, video: { play_addr: { uri: 'v0d00f' + id, url_list: [] }, bit_rate: [] } });
-function makeTap(href) {
+function makeTap(href, apiList = () => [aw(C2)]) {   // apiList: các video API của trang trả về
   const env = { perf: 0, rafs: [], up: [], listeners: {}, docListeners: {} };
   const ctx = {
     location: new URL(href), performance: { now: () => env.perf }, requestAnimationFrame: (cb) => env.rafs.push(cb), setInterval: () => 0,
     document: { addEventListener: (t, f) => { env.docListeners[t] = f; }, getElementById: () => null },
     XMLHttpRequest: function () {}, URL, JSON, console,
     // Trang gọi API: trả JSON có một video (tap.main.js chỉ đọc bản sao của response).
-    fetch: () => { const body = { aweme_list: [aw(C2)] };
+    fetch: () => { const body = { aweme_list: apiList() };
       const res = { headers: { get: () => 'application/json' }, clone: () => res, json: async () => body }; return Promise.resolve(res); },
     addEventListener: (t, f) => { env.listeners[t] = f; },
     dispatchEvent: (ev) => { if (ev.type === '__tod_alpha_up') env.up.push(JSON.parse(ev.detail)); },
@@ -870,6 +1011,17 @@ await t('F4 tap.main.js gửi vị trí <video> kèm độ lệch: khi đổi, k
   media.paused = true; env.frame(16);
   assert.equal(clocks().length, n1 + 2);
   assert.equal(clocks().at(-1).paused, true);
+});
+
+await t('P4 tap.main.js chép tên người đăng (author.nickname) và giới tính nếu có vào item; thiếu thì null', async () => {
+  const env = makeTap('https://www.douyin.com/user/MS4wLjAB', () => [{ ...aw(A), author: { nickname: '  雨晴教你唱歌 ', gender: 2 } },
+    { ...aw(B), author: { nickname: 'x'.repeat(80), gender: 0 } }, { ...aw(C2), author: { nickname: '小霸王', gender: 1 } }, aw(D)]);
+  env.up.length = 0;
+  await env.ctx.fetch('https://www.douyin.com/aweme/v1/web/tab/feed/?count=10');
+  for (let i = 0; i < 3; i++) await new Promise((r) => setImmediate(r));
+  const its = env.up.filter((m) => m.type === 'items').flatMap((m) => m.data);
+  assert.deepEqual(its.map((it) => [it.id, it.author, it.authorGender]),
+    [[A, '雨晴教你唱歌', 'female'], [B, 'x'.repeat(60), null], [C2, '小霸王', 'male'], [D, null, null]]);
 });
 
 console.log(failed ? `\n${failed} kiểm tra trượt, ${n} đạt.` : `\n${n} kiểm tra đều đạt.`);

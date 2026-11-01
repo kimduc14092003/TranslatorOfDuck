@@ -25,7 +25,9 @@ const MEDIA = { speech12: video(12, 440), song6: video(6, 300), long100: video(1
 
 // ---- dịch vụ AI giả. Fun-ASR trả lời theo độ dài âm thanh nhận được:
 //   < 8 s: lời hát (chữ kéo dài) · 8–20 s: 2 câu ở 1,0 s và 5,0 s · ≥ 20 s (một đoạn của video dài): 2 câu ở 2,0 s và 6,0 s
-const providerHits = { funasr: 0, gemini: 0, withContext: 0, longChunks: [], rateLimited: 0 };
+const providerHits = { funasr: 0, gemini: 0, withContext: 0, longChunks: [], rateLimited: 0, pronIn: 0, authorIn: 0 };
+// Bảng xưng hô model giả trả trong mọi lần dịch (không có trong lượt rút gọn): extension phải gửi lại ở yêu cầu sau.
+const PRON = { pairs: [{ who: 'người kể → người xem', self: 'mình', other: 'các bạn' }] };
 const sentence = (text, b, e) => {
   const chars = Array.from(text.replace(/[，。！]/g, ''));
   const step = (e - b) / chars.length;
@@ -62,9 +64,11 @@ const providers = http.createServer((req, res) => {
       providerHits.gemini++;
       const text = JSON.parse(body).contents[0].parts[0].text;
       if (text.includes('Các dòng ngay trước')) providerHits.withContext++;
+      if (text.includes('Bảng xưng hô đã dùng') && text.includes(JSON.stringify(PRON.pairs))) providerHits.pronIn++;
+      if (text.includes('小李旅行')) providerHits.authorIn++;
       const lines = JSON.parse(text.match(/Các dòng: (.*)$/m)[1]);
       const vi = { '大家好，今天我们去吃火锅。': 'Chào cả nhà, hôm nay đi ăn lẩu.', '走吧！': 'Đi thôi!' };
-      return json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ cues: lines.map(l => ({ id: l.id, vi: vi[l.zh] || 'Dòng ' + l.id })) }) }] } }] });
+      return json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ ...(/^Rút gọn/.test(text) ? {} : { pronouns: PRON }), cues: lines.map(l => ({ id: l.id, vi: vi[l.zh] || 'Dòng ' + l.id })) }) }] } }] });
     }
     res.writeHead(404); res.end();
   });
@@ -92,7 +96,7 @@ const FAV = '7500000000000000009';   // video đã thích ở cột bên, không
 const SIDS = ['7500000000000000011', '7500000000000000012'];   // kết quả tìm kiếm, chỉ có trong search/stream
 const fileFor = { [ids[0]]: 'speech12', [ids[1]]: 'speech12', [ids[2]]: 'song6', [ids[3]]: 'long100', [FAV]: 'speech12', [SIDS[0]]: 'speech12', [SIDS[1]]: 'speech12' };
 const DUR = { speech12: 12000, song6: 6000, long100: 100000 };
-const aweme = (id, desc) => ({ aweme_id: id, desc, duration: DUR[fileFor[id]], text_extra: [],
+const aweme = (id, desc) => ({ aweme_id: id, desc, duration: DUR[fileFor[id]], text_extra: [], ...(fileFor[id] === 'long100' ? { author: { nickname: '小李旅行' } } : {}),
   video: { play_addr: { uri: 'v0d00f' + id, url_list: [`https://v3-web.douyinvod.com/x/${fileFor[id]}.mp4`] }, bit_rate: [] } });
 const feed = { status_code: 0, aweme_list: [aweme(ids[0], '今天吃火锅'), aweme(ids[1], '日常vlog'), aweme(ids[2], '#翻唱 自由的你'), aweme(ids[3], '旅游vlog')] };
 const PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">
@@ -319,6 +323,9 @@ const checks = {
   'search page: video opened from chunked search/stream results is translated (request sent, badge shown, sub at 1.2 s)':
     new RegExp(SIDS[0] + '( \\[[^\\]]+\\])? ok').test(alphaLog) && !!search.badge && search.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
   'search page: next search result (later JSON block of search/stream) prefetched': search.prefetchedNext,
+  // Bảng xưng hô (P2): model trả, server trả về, extension gửi lại ở đoạn sau của cùng video, server đưa vào câu lệnh.
+  'pronoun table round trip: later chunks of the long video carry the table back into the prompt': providerHits.pronIn >= 2,
+  'uploader nickname (author.nickname) reaches the translation prompt': providerHits.authorIn >= 1,
   'no page errors': errors.length === 0,
 };
 console.log('\nCHECKS');

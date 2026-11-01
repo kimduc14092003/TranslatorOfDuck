@@ -199,9 +199,14 @@
       if (!prev || (d.gears.length + d.audio.length) > (prev.gears.length + prev.audio.length)) {
         // Lần đầu có metadata và từ đâu (mốc item).
         Object.assign(d, prev ? { seenAt: prev.seenAt, seenSrc: prev.seenSrc } : { seenAt: performance.now(), seenSrc: d.source || null });
+        // Bản metadata mới (nhiều luồng hơn) có thể từ nguồn không có người đăng: giữ người đăng của bản trước.
+        if (prev && !d.author && prev.author) Object.assign(d, { author: prev.author, authorGender: d.authorGender || prev.authorGender || null });
         items.set(d.id, d);
         const r = marks.get(d.id);
         if (r && r.at0 != null && !('item' in r.ev)) { r.src = d.seenSrc; mark(d.id, 'item', d.seenAt); }
+      } else if (!prev.author && d.author) {
+        // Chiều ngược lại: bản đang giữ không có người đăng, bản tới sau có (không nhiều luồng hơn nên không thay cả bản).
+        Object.assign(prev, { author: d.author, authorGender: d.authorGender || null });
       }
       const name = d.feed === true ? 'feed' : d.feed;
       if (!name) continue;
@@ -261,7 +266,30 @@
 
   // ---------------------------------------------------------------- dịch trước
   // redo: k -> phần âm thanh gửi dư (PRE hay PRE_SEEK) của đoạn bị bỏ khi đổi chế độ lời bài hát (resetResults).
-  const vid = (id) => { let v = vids.get(id); if (!v) { v = { chunks: new Map(), quick: new Map(), cues: [], redo: new Map() }; vids.set(id, v); } return v; };
+  // pron, pronGen, pronQuick: bản đồ xưng hô của video (takePron).
+  const vid = (id) => { let v = vids.get(id); if (!v) { v = { chunks: new Map(), quick: new Map(), cues: [], redo: new Map(), pron: null, pronGen: 0, pronQuick: false }; vids.set(id, v); } return v; };
+  // Xưng hô theo cả video (P2, soát 837 dòng 1/11: khoảng 26/62 lỗi xưng hô là trôi khi sang đoạn mới, vd.
+  // 7492643322209619257 nói 'chị' mà đoạn hát sau thành 'em'). Server trả "pronouns" (ai nói với ai, cặp đã chọn;
+  // extension không đọc bên trong) trong kết quả; giữ theo video và gửi kèm mọi yêu cầu sau của video đó (đoạn, mẩu
+  // nhanh, dịch sẵn, xin lại sau đổi chế độ hay lỗi). Server không giữ trạng thái (PLAN.md:141). Không gửi cho video khác.
+  // Chỉ kết quả của yêu cầu gửi kèm đúng bản đang giữ (gen) mới thay nó: các yêu cầu gửi song song với cùng một bản (vd.
+  // đoạn 0 và mẩu nhanh lúc mở video) không thay nhau qua lại. Riêng bản đến từ mẩu nhanh: kết quả đoạn 30 s gửi cùng lúc
+  // với mẩu đó (gen - 1) thay nó một lần, vì dòng của đoạn thay dòng mẩu nhanh trên màn hình (mergeCues); đoạn sau theo
+  // cặp của dòng đang hiện, không đổi cặp ở giây 30.
+  const PRON_MAX = 4000;   // ký tự JSON; lớn hơn là bất thường, bỏ qua
+  const pronPayload = (v) => (v.pron ? { pronouns: v.pron } : {});
+  function takePron(v, gen, r, quick) {
+    const p = r && r.status !== 'error' && r.status !== 'cancelled' ? r.pronouns : null;
+    if (!p || typeof p !== 'object' || Array.isArray(p) || !Object.keys(p).length) return;
+    if (gen !== v.pronGen && !(!quick && v.pronQuick && gen === v.pronGen - 1)) return;
+    let s;
+    try { s = JSON.stringify(p); } catch (_) { return; }
+    if (s.length > PRON_MAX) return;
+    v.pron = JSON.parse(s); v.pronGen++; v.pronQuick = !!quick;
+  }
+  // Người đăng (tap.main.js): gợi ý vai, giới cho xưng hô (P4). Server đọc author dạng chuỗi hoặc { nickname, gender }.
+  // Thiếu thì không gửi.
+  const authorPayload = (d) => (!d.author ? {} : { author: d.authorGender ? { nickname: d.author, gender: d.authorGender } : d.author });
   const eligible = (d) => d && d.kind === 'video' && d.playUri && !/^https?:/.test(d.playUri);
   // Lưới đoạn cố định theo thời lượng (cùng video thì luôn cùng lưới, để cache dùng lại được).
   function planFor(id) {
@@ -839,11 +867,13 @@
     const d = items.get(id);
     const q = { status: 'pending', from, to, ctl: new AbortController() };
     v.quick.set(from, q);
-    const done = (r) => {
+    // pg: bản xưng hô gửi kèm (takePron), chỉ xét khi giữ kết quả.
+    const done = (r, pg) => {
       if (v.quick.get(from) !== q) return;
       if (r.status === 'cancelled') { v.quick.delete(from); return; }
       // Gửi khi chế độ lời bài hát còn khác (đổi nút lúc mẩu này đang ở server) mà có câu hát: bỏ, xin mẩu mới.
       if (q.sent && q.lyrics !== lyricsOn() && !modeFree(r)) { v.quick.delete(from); quickTried = -1; return; }
+      if (pg != null) takePron(v, pg, r, true);
       Object.assign(q, r, { from, to, at: Date.now() });
       mergeCues(v);
     };
@@ -874,10 +904,11 @@
       if (!quickWanted(id, q)) { if (v.quick.get(from) === q) { v.quick.delete(from); if (!act) quickTried = -1; } return; }
       q.sent = true; q.lyrics = lyricsOn();
       mark(id, 'quickPost');
+      const pg = v.pronGen;
       chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':q' + from, payload: {
-        id, desc: d.desc, hashtags: d.hashtags, durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
-        quick: true, urgent: true, rank: 0, lyrics: q.lyrics, aac: toBase64(aac) } })
-        .then((r) => { mark(id, 'quickReply'); r = r && r.status ? r : { status: 'error', error: (r && r.error) || 'không có phản hồi', unreachable: true }; noteReply(r); done(r); })
+        id, desc: d.desc, hashtags: d.hashtags, ...authorPayload(d), durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
+        quick: true, urgent: true, rank: 0, lyrics: q.lyrics, ...pronPayload(v), aac: toBase64(aac) } })
+        .then((r) => { mark(id, 'quickReply'); r = r && r.status ? r : { status: 'error', error: (r && r.error) || 'không có phản hồi', unreachable: true }; noteReply(r); done(r, pg); })
         .catch((e) => { mark(id, 'quickReply'); const r = { status: 'error', error: e.message, unreachable: true }; noteReply(r); done(r); });
       if (id === currentId) pump(lanes.prefetch);   // hàng dịch sẵn hết nhường (prefetchHeld)
     } catch (e) {
@@ -895,7 +926,7 @@
     const entry = { status: 'pending', ctl: new AbortController(), made: performance.now() };
     // sent: kết quả của yêu cầu đã gửi qua background.js. Lỗi server trả về thì đếm (fails) để giãn lần thử lại; không
     // gọi được server và lỗi tải video thì giữ số đếm cũ nhưng chờ 20 s (RETRY_MS).
-    const done = (r, sent) => {
+    const done = (r, sent, pg) => {
       if (sent && entry.head) mark(id, 'chunkReply');
       const down = sent && noteReply(r);
       if (v.chunks.get(k) !== entry) return;
@@ -904,6 +935,7 @@
       // schedule() xin lại theo chế độ mới với đúng phần âm thanh này (server đã giữ ASR). Không có câu hát thì như nhau.
       if (sent && entry.lyrics !== lyricsOn() && !modeFree(r)) { v.chunks.delete(k); v.redo.set(k, entry.pre); return; }
       if (r.status !== 'error') v.redo.delete(k);
+      if (pg != null) takePron(v, pg, r, false);
       const paid = sent && !down;
       const n = fails + (paid ? 1 : 0);
       v.chunks.set(k, { ...r, pre: entry.pre, at: Date.now(), ...(r.status === 'error'
@@ -942,11 +974,12 @@
       const next = upcoming().indexOf(id);
       Object.assign(entry, { sent: true, sentAt: Date.now(), from, to, urgent: urgentChunk(id, k, plan), lyrics: lyricsOn() });
       if (entry.head) mark(id, 'chunkPost');
+      const pg = v.pronGen;
       chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':' + k, payload: {
-        id, desc: d.desc, hashtags: d.hashtags, durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
-        prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, prefetch: id !== currentId, lyrics: entry.lyrics,
+        id, desc: d.desc, hashtags: d.hashtags, ...authorPayload(d), durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
+        prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, prefetch: id !== currentId, lyrics: entry.lyrics, ...pronPayload(v),
         rank: id === currentId ? 0 : next >= 0 ? next + 1 : PREFETCH, aac: toBase64(aac) } })
-        .then((r) => done(r && r.status ? { ...r, from, to } : { status: 'error', error: (r && r.error) || 'không có phản hồi', unreachable: true, from, to }, true))
+        .then((r) => done(r && r.status ? { ...r, from, to } : { status: 'error', error: (r && r.error) || 'không có phản hồi', unreachable: true, from, to }, true, pg))
         .catch((e) => done({ status: 'error', error: e.message, unreachable: true, from, to }, true));
       if (id === currentId) pump(lanes.prefetch);   // hàng dịch sẵn hết nhường (prefetchHeld)
     } catch (e) {
