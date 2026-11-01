@@ -8,7 +8,7 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     for (const k of msg.keys || []) { const c = pending.get(tab + ':' + k); if (c) c.abort(); }
     return false;
   }
-  if (!msg || (msg.type !== 'subtitles' && msg.type !== 'bump')) return false;
+  if (!msg || (msg.type !== 'subtitles' && msg.type !== 'bump' && msg.type !== 'warm')) return false;
   const base = String(msg.server || 'http://127.0.0.1:8787').replace(/\/+$/, '');
   if (!/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(base)) {
     reply({ status: 'error', error: 'Bản Alpha chỉ gọi server trên máy (127.0.0.1 hoặc localhost).' });
@@ -17,6 +17,13 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   // Video được dịch sẵn vừa thành video đang xem: báo server làm đoạn đó trước.
   if (msg.type === 'bump') {
     fetch(base + '/v1/bump', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(msg.payload) }).catch(() => {});
+    return false;
+  }
+  // Mở video chưa có kết quả: server làm nóng kết nối tới nhà cung cấp nhận dạng, dịch. Không chờ, bỏ qua mọi lỗi (server
+  // cũ không có /v1/warm thì trả 404). Phải là application/json như /v1/bump: server chỉ nhận kiểu đó (rejectForeign),
+  // thiếu thì trả 415 và không làm nóng gì.
+  if (msg.type === 'warm') {
+    fetch(base + '/v1/warm', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).catch(() => {});
     return false;
   }
   const pk = tab + ':' + msg.key;

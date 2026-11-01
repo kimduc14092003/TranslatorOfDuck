@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkFfmpeg, config, dotEnvInfo, makeSubtitles, misplacedOpenAIKey, PIPELINE_VERSION } from './pipeline.mjs';
+import { checkFfmpeg, config, dotEnvInfo, makeSubtitles, misplacedOpenAIKey, PIPELINE_VERSION, warmProviders } from './pipeline.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -210,13 +210,19 @@ async function handleSubtitles(req, res) {
   res.on('close', () => { if (!res.writableEnded && --job.waiters <= 0) job.cancel(); });
   const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
   const where = chunked ? ` [${quick ? 'nhanh ' : ''}${mmss(meta.from)}–${mmss(meta.to)}${lyrics ? ' ♪' : ''}]` : '';
+  // Mỗi lần gọi HTTP của bước đó: "đầu" = thời gian tới khi có header trả lời; kết nối mới (kèm thời gian mở) hay dùng lại
+  // kết nối sẵn có ("(làm nóng)": kết nối do /v1/warm mở). Ví dụ "ASR 1048 ms [đầu 1010 ms, kết nối mới 180 ms]".
+  // Gọi lại, đổi model, lượt rút gọn: cách nhau "; ".
+  const netInfo = (calls) => (calls && calls.length ? ' [' + calls.map(c => `đầu ${c.headMs ?? '-'} ms, ` +
+    (c.fresh == null ? 'kết nối ?' : c.fresh ? `kết nối mới ${c.connectMs} ms` : `kết nối sẵn${c.byWarm ? ' (làm nóng)' : ''}`)).join('; ') + ']' : '');
   try {
     const out = await job.promise;
     const t = out.timings || {};
     const why = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch không ra dòng nào' };
     console.log(`${new Date().toLocaleTimeString()} ${id}${where} ${out.status}${out.label && out.status !== 'ok' ? ' (' + (why[out.label] || out.label) + ')' : ''}` +
       `${out.cues ? ' ' + out.cues.length + ' dòng' : ''}${chunked && meta.from > 0 && out.status === 'ok' && !out.cached ? ` (ngữ cảnh ${out.context || 0} dòng${out.contextFar ? ' ở đoạn xa' : ''}${out.before ? `, lời ngay trước ${out.before} câu` : ''})` : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu${!lyrics ? (out.song && out.status === 'ok' ? ', cả đoạn là bài hát: chỉ giữ câu nói' : `, ${out.sung ?? 0} câu hát bị bỏ`) : out.status === 'ok' ? `, ${out.cues.filter(c => c.sung).length} dòng hát được dịch` : ''}` +
-      ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${out.asrCached ? 'dùng lại' : (t.asrMs ?? '-') + ' ms'}${out.asrModel ? ' (' + out.asrModel + ')' : ''}, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : ''}` +
+      ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${out.asrCached ? 'dùng lại' : (t.asrMs ?? '-') + ' ms'}${out.asrModel ? ' (' + out.asrModel + ')' : ''}${out.cached ? '' : netInfo(out.debug?.net?.asr)}` +
+      `, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : netInfo(out.debug?.net?.mt)}` +
       (job.startedAt - job.at > 300 ? ` · xếp hàng ${job.startedAt - job.at} ms` : '') +
       (out.heard ? `\n    nghe được: ${out.heard}` : ''));
     const { debug: _d, ...reply } = out;
@@ -232,6 +238,15 @@ async function handleSubtitles(req, res) {
     console.log(`${new Date().toLocaleTimeString()} ${id}${chunked ? ` [${meta.from}–${meta.to} s]` : ''} LỖI ${e.message}`);
     send(res, 502, { id, status: 'error', error: String(e.message).slice(0, 300), ...(e.retryAfterMs ? { retryAfterMs: e.retryAfterMs } : {}) });
   }
+}
+
+// Extension vừa mở video chưa có sub ở chỗ đang xem: trả lời ngay rồi mở sẵn kết nối tới dịch vụ ASR, dịch
+// (warmProviders ở pipeline.mjs). Body bỏ qua.
+async function handleWarm(req, res) {
+  req.resume();
+  res.writeHead(204);
+  res.end();
+  warmProviders();
 }
 
 // Người xem vừa lướt tới video đã được gửi dịch sẵn (lúc đó chưa gấp): đoạn còn xếp hàng thì đẩy lên đầu.
@@ -252,7 +267,7 @@ async function handleBump(req, res) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://local');
   if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, version: PIPELINE_VERSION, ...config(), running, queued: queue.length });
-  const handler = req.method === 'POST' && { '/v1/subtitles': handleSubtitles, '/v1/bump': handleBump }[url.pathname];
+  const handler = req.method === 'POST' && { '/v1/subtitles': handleSubtitles, '/v1/bump': handleBump, '/v1/warm': handleWarm }[url.pathname];
   if (!handler) return send(res, 404, { error: 'not_found' });
   if (rejectForeign(req, res)) return;
   // Lỗi không lường trước trong một request (body lạ, đĩa lỗi) chỉ làm hỏng request đó, không làm server thoát.

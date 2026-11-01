@@ -58,6 +58,18 @@
   // Độ lệch tối đa giữa <video>.currentTime và vị trí tap.main.js đọc được (đã tính thời gian trôi) để còn coi là cùng
   // thẻ <video>, cùng lúc phát.
   const CLOCK_TOL = 1;
+  // Mở video chưa dịch sẵn (chỗ đang xem chưa có kết quả, chưa gửi server): hàng dịch sẵn không bắt đầu lượt tải mới cho
+  // video khác tới khi video này gửi được mẩu đầu (mẩu nhanh hay đoạn ở chỗ đang xem), tối đa bấy nhiêu ms để lượt tải
+  // treo (CDN treo 15–37 s, §6f) không chặn dịch sẵn. HANDOFF §6i: mẩu nhanh chỉ "tải một mình" khi hàng dịch sẵn rảnh.
+  // Mô phỏng (mở kết quả tìm kiếm, 4 video kế, video 2 Mbit/s, RTT 150 ms): q0 gửi lúc 2300 → 1300 ms (đường truyền
+  // 6 MB/s), 3800 → 1800 ms (3 MB/s), 7800 → 2800 ms (1,5 MB/s); video kế dịch sẵn xong muộn hơn 1,2–1,7 s.
+  // Lượt tải dịch sẵn đang chạy lúc mở thì để chạy tiếp: ngắt chúng (mô phỏng lướt feed mỗi 4 s, 3 MB/s) thì 0/9 video có
+  // sẵn kết quả khi lướt tới thay vì 4/9; 6 MB/s: 6/9 thay vì 7/9, tải bỏ phí 19,4 MB thay vì 10,4 MB.
+  const PF_HOLD_MAX = 2500;
+  // Cũng lúc đó: báo server làm nóng kết nối tới nhà cung cấp nhận dạng, dịch (POST /v1/warm), tối đa một lần mỗi bấy
+  // nhiêu ms. Node đóng kết nối nghỉ quá ~4 s (đo: nghỉ 3,5 s dùng lại, 4,5 s mở mới), lần gọi đầu của video mới thường
+  // trả thêm TCP+TLS; extension tải âm thanh 0,5–1,5 s rồi mới gửi, đủ che lần làm nóng.
+  const WARM_GAP = 3000;
 
   // lyrics: dịch cả lời bài hát (dòng hát hiện "♪"); tắt thì bỏ qua bài hát như trước (PLAN §15). Mặc định bật (31/10).
   let settings = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0, lyrics: true };
@@ -116,15 +128,79 @@
     return v.currentTime;
   }
   let wanted = new Set();        // "id:k" các đoạn đang cần (schedule() tính lại 4 lần/giây)
+  // Lần mở video đang xem (PF_HOLD_MAX, WARM_GAP): need: chỗ đang xem chưa có kết quả lúc mở (null: chưa xét được, chưa có
+  // metadata hay không phải video); hold: hàng dịch sẵn đang nhường; since: lúc xét; warm: đã báo làm nóng.
+  let opened = { id: null, need: null, hold: false, since: 0, warm: false };
+  let warmAt = -Infinity;        // lần báo làm nóng gần nhất (performance.now())
 
   const alive = () => { try { return !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; } };
+
+  // ---------------------------------------------------------------- mốc thời gian lần mở video
+  // Chỉ để đo sub đầu ra chậm ở đâu, không đổi hành vi. Trả trong câu trả lời {type:'status'} (cuối file) dưới tên marks:
+  // [{ id, page, src, wall, t: { mốc: ms } }], tối đa MARKS_MAX video gần nhất đã là video đang xem, cũ trước.
+  //   page: trang lúc video thành video đang xem: 'video' (/video/<id>, /note/<id>), 'modal' (?modal_id=), 'feed' (/,
+  //     /jingxuan), 'other'. src: metadata lấy từ đâu (tap.main.js: 'ssr', 'fetch', 'xhr', 'player').
+  //   wall: Date.now() lúc thành video đang xem (để khớp với log server).
+  //   t: ms theo performance.now() tính từ lúc đó, xếp theo thời gian, mỗi mốc chỉ lần đầu; số âm: làm trước khi lướt tới
+  //     (dịch sẵn). Mốc: current (0) thành video đang xem; item có metadata; video thấy thẻ <video> của nó; ready
+  //     readyState >= 1; play thời gian phát chạy; settle bắt đầu tính "đứng yên" (SETTLE); moov, moovEnd tải mục lục;
+  //     quickDl, quickDlEnd tải âm thanh mẩu nhanh; quickPost, quickReply gửi, nhận mẩu nhanh; chunkDl, chunkDlEnd,
+  //     chunkPost, chunkReply như vậy cho đoạn ở chỗ đang xem (video chưa xem: đoạn 0); drawn vẽ dòng sub đầu tiên.
+  // Video chưa là video đang xem mà đã có mốc (dịch sẵn) giữ riêng, cũng tối đa MARKS_MAX.
+  const MARKS_MAX = 20;
+  const marks = new Map();       // id -> { at0, wall, page, src, ct, ev: { mốc: performance.now() } }
+  function trimMarks() {
+    for (const cur of [true, false]) {
+      const ids = [...marks].filter(([, r]) => (r.at0 != null) === cur).map(([id]) => id);
+      for (const id of ids.slice(0, Math.max(0, ids.length - MARKS_MAX))) marks.delete(id);
+    }
+  }
+  function mark(id, name, at = performance.now()) {
+    if (!id) return;
+    let r = marks.get(id);
+    if (!r) { marks.set(id, r = { at0: null, wall: null, page: null, src: null, ct: null, ev: {} }); trimMarks(); }
+    if (!(name in r.ev)) r.ev[name] = at;
+  }
+  function pageKind() {
+    const u = new URL(location.href);
+    if (u.searchParams.get('modal_id')) return 'modal';
+    if (/^\/(video|note)\/\d+/.test(u.pathname)) return 'video';
+    return /^\/(jingxuan\/?)?$/.test(u.pathname) ? 'feed' : 'other';
+  }
+  function markCurrent(id) {
+    // Xếp cuối danh sách (trimMarks bỏ cũ trước, status trả cũ trước). Video dịch sẵn giữ các mốc đã có (số âm); quay lại
+    // video đã xem thì mốc mới.
+    const old = marks.get(id);
+    marks.delete(id);
+    if (old && old.at0 == null) marks.set(id, old);
+    mark(id, 'current');
+    const r = marks.get(id), d = items.get(id);
+    Object.assign(r, { at0: r.ev.current, wall: Date.now(), page: pageKind() });
+    if (d) { r.src = d.seenSrc || null; mark(id, 'item', d.seenAt); }
+    trimMarks();
+  }
+  function markVideo(pv) {
+    const r = marks.get(currentId);
+    if (!r || r.at0 == null) return;
+    mark(currentId, 'video');
+    if (pv.readyState >= 1) mark(currentId, 'ready');
+    if ('play' in r.ev) return;
+    if (!pv.paused && pv.readyState >= 1 && r.ct != null && pv.currentTime !== r.ct) mark(currentId, 'play');
+    r.ct = pv.currentTime;
+  }
 
   // ---------------------------------------------------------------- metadata từ trang
   function onItems(list) {
     for (const d of list) {
       if (!d || !d.id || d.id === 'undefined') continue;
       const prev = items.get(d.id);
-      if (!prev || (d.gears.length + d.audio.length) > (prev.gears.length + prev.audio.length)) items.set(d.id, d);
+      if (!prev || (d.gears.length + d.audio.length) > (prev.gears.length + prev.audio.length)) {
+        // Lần đầu có metadata và từ đâu (mốc item).
+        Object.assign(d, prev ? { seenAt: prev.seenAt, seenSrc: prev.seenSrc } : { seenAt: performance.now(), seenSrc: d.source || null });
+        items.set(d.id, d);
+        const r = marks.get(d.id);
+        if (r && r.at0 != null && !('item' in r.ev)) { r.src = d.seenSrc; mark(d.id, 'item', d.seenAt); }
+      }
       const name = d.feed === true ? 'feed' : d.feed;
       if (!name) continue;
       const order = orders.get(name) || [];
@@ -271,6 +347,9 @@
         if (onFeed) for (const [id, k] of lanes.prefetch.queue) wanted.add(id + ':' + k);
         else lanes.prefetch.queue = [];
         cancelUnwanted();
+        // Hàng dịch sẵn có thể đang nhường video cũ (prefetchHeld, nay hết vì không còn video đang xem): chạy lại ngay,
+        // không chờ tới hết PF_HOLD_MAX (setTimeout trong opening()).
+        if (onFeed) pump(lanes.prefetch);
       }
       return;
     }
@@ -287,8 +366,40 @@
     cancelUnwanted();
     dropSlow(plan);
     maybeQuick(plan);
+    opening(plan);
     pump(lanes.current);
     pump(lanes.prefetch);
+  }
+  // Video đang xem vừa mở: lần đầu có metadata thì xét chỗ đang xem đã có kết quả chưa (kết quả cuối, hay đoạn đó đã gửi
+  // server lúc dịch sẵn). Chưa có: hàng dịch sẵn nhường (prefetchHeld) và báo server làm nóng kết nối (WARM_GAP: báo
+  // muộn hơn nếu vừa báo cho video trước, thôi nếu đã có kết quả trước lúc đó).
+  function opening(plan) {
+    const o = opened;
+    if (o.id !== currentId) return;
+    const v = vids.get(currentId), ph = headOf === currentId ? playhead : 0;
+    const c = v && v.chunks.get(plan ? chunkAt(plan, ph) : 0);
+    const final = (x) => !!x && x.status !== 'pending' && x.status !== 'error';
+    const done = final(c) || (!!v && [...v.quick.values()].some((q) => q.status === 'ok' && ph >= q.from && ph < q.to));
+    if (o.need === null) {
+      if (!eligible(items.get(currentId))) return;
+      o.need = o.hold = !(done || (c && c.sent));
+      o.since = performance.now();
+      // Hết hạn nhường thì chạy lại hàng dịch sẵn, kể cả khi schedule() không chạy (<video> chưa sẵn sàng: readyState 0).
+      if (o.hold) setTimeout(() => pump(lanes.prefetch), PF_HOLD_MAX + 50);
+    }
+    if (!o.need || o.warm || done || performance.now() - warmAt < WARM_GAP || !alive()) return;
+    o.warm = true; warmAt = performance.now();
+    chrome.runtime.sendMessage({ type: 'warm', server: settings.server }).catch(() => {});
+  }
+  // Hàng dịch sẵn đang nhường video vừa mở: tới khi video đó gửi được mẩu đầu, hay quá PF_HOLD_MAX. Lượt tải dịch sẵn
+  // đang chạy thì để chạy tiếp, chỉ không bắt đầu lượt mới.
+  function prefetchHeld() {
+    const o = opened;
+    if (!o.hold) return false;
+    const v = vids.get(currentId);
+    if (o.id !== currentId || performance.now() - o.since >= PF_HOLD_MAX
+      || (v && ([...v.quick.values()].some((q) => q.sent) || [...v.chunks.values()].some((c) => c.sent)))) o.hold = false;
+    return o.hold;
   }
   // Video sắp lướt tới: các video sau video đang xem trong danh sách chứa nó (danh sách nhận thêm video gần nhất nếu có
   // nhiều). Video đang xem không có trong danh sách nào (đo khi vào trang: 1–2 video đầu chỉ thấy qua player, feed tới
@@ -388,6 +499,7 @@
   }
   async function loadMedia(id, v) {
     const api = 'https://www.douyin.com/aweme/v1/play/?video_id=' + encodeURIComponent(items.get(id).playUri);
+    mark(id, 'moov');
     // Đoạn đầu file nhỏ (64 KB): quá 4 s là treo; treo hoặc lỗi mạng (đo được: máy chủ video cắt ngang,
     // ERR_CONTENT_LENGTH_MISMATCH) thì gọi lại một lần, có thể sang máy chủ video khác.
     const probe = await rangeFetch(api, 0, 65535, null, 4000)
@@ -397,6 +509,7 @@
     const moov = head <= probe.buf.byteLength ? probe.buf : (await rangeFetch(probe.url || api, 0, head - 1)).buf;
     v.media = TodMp4.parse(moov);
     v.media.total = probe.total;
+    mark(id, 'moovEnd');
     v.api = api; v.url = probe.url || api;
     // Chỉ giữ mục lục của 20 video gần nhất (video dài có mục lục vài MB).
     const withMedia = [...vids.entries()].filter(([, x]) => x.media);
@@ -558,16 +671,20 @@
         for (const c of v.chunks.values()) if (c.status === 'pending' && !c.sent && c.ctl && !(c.made < settle.from)) c.ctl.abort();
       }
       let bytes;
+      mark(id, 'quickDl');
       try { bytes = await fetchBytes(v, media, w.start, w.end - 1, q.ctl.signal); } finally { open(); if (gate && v.quickGate === gate) v.quickGate = null; }
+      mark(id, 'quickDlEnd');
       const aac = w.build(bytes);
       if (!act) await actBack(id);
       if (!quickWanted(id, q)) { if (v.quick.get(from) === q) { v.quick.delete(from); if (!act) quickTried = -1; } return; }
       q.sent = true; q.lyrics = lyricsOn();
+      mark(id, 'quickPost');
       chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':q' + from, payload: {
         id, desc: d.desc, hashtags: d.hashtags, durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
         quick: true, urgent: true, rank: 0, lyrics: q.lyrics, aac: toBase64(aac) } })
-        .then((r) => { r = r && r.status ? r : { status: 'error', error: (r && r.error) || 'không có phản hồi', unreachable: true }; noteReply(r); done(r); })
-        .catch((e) => { const r = { status: 'error', error: e.message, unreachable: true }; noteReply(r); done(r); });
+        .then((r) => { mark(id, 'quickReply'); r = r && r.status ? r : { status: 'error', error: (r && r.error) || 'không có phản hồi', unreachable: true }; noteReply(r); done(r); })
+        .catch((e) => { mark(id, 'quickReply'); const r = { status: 'error', error: e.message, unreachable: true }; noteReply(r); done(r); });
+      if (id === currentId) pump(lanes.prefetch);   // hàng dịch sẵn hết nhường (prefetchHeld)
     } catch (e) {
       if (q.ctl.signal.aborted) { if (v.quick.get(from) === q) v.quick.delete(from); return; }
       // 429: bỏ mẩu này, hết nghỉ thì maybeQuick xét lại.
@@ -584,6 +701,7 @@
     // sent: kết quả của yêu cầu đã gửi qua background.js. Lỗi server trả về thì đếm (fails) để giãn lần thử lại; không
     // gọi được server và lỗi tải video thì giữ số đếm cũ nhưng chờ 20 s (RETRY_MS).
     const done = (r, sent) => {
+      if (sent && entry.head) mark(id, 'chunkReply');
       const down = sent && noteReply(r);
       if (v.chunks.get(k) !== entry) return;
       if (r.status === 'cancelled') { v.chunks.delete(k); return; }   // tua lại tới đây thì gửi lại
@@ -614,7 +732,11 @@
       if (!w) return done({ status: 'no_audio', from, to });
       if (v.quickGate) await v.quickGate;   // mẩu nhanh của video này đang tải: nhường đường truyền
       entry.bytes = w.end - w.start;   // tiến độ tải (since, got) ghi vào entry, cho dropSlow
+      // Mốc chunk*: đoạn ở chỗ đang xem (video chưa xem: đoạn 0, chỗ bắt đầu phát khi lướt tới).
+      entry.head = k === (id === currentId && headOf === id ? chunkAt(plan, playhead) : 0);
+      if (entry.head) mark(id, 'chunkDl');
       const aac = w.build(await fetchBytes(v, media, w.start, w.end - 1, entry.ctl.signal, entry));
+      if (entry.head) mark(id, 'chunkDlEnd');
       // Trong lúc tải, người xem đã tua/lướt đi chỗ khác: khỏi gửi (quay lại tới đây thì làm lại).
       // Không thấy video đang xem: chờ nó quay lại (actBack); vẫn không thấy (vừa đóng modal) thì khỏi gửi, kẻo gửi rồi lại
       // huỷ giữa lúc nhận dạng.
@@ -624,12 +746,14 @@
       // rank: 0 là video đang xem, 1–4 là video dịch sẵn theo thứ tự sẽ lướt tới (server làm video gần trước).
       const next = upcoming().indexOf(id);
       Object.assign(entry, { sent: true, sentAt: Date.now(), from, to, urgent: urgentChunk(id, k, plan), lyrics: lyricsOn() });
+      if (entry.head) mark(id, 'chunkPost');
       chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':' + k, payload: {
         id, desc: d.desc, hashtags: d.hashtags, durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
         prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, prefetch: id !== currentId, lyrics: entry.lyrics,
         rank: id === currentId ? 0 : next >= 0 ? next + 1 : PREFETCH, aac: toBase64(aac) } })
         .then((r) => done(r && r.status ? { ...r, from, to } : { status: 'error', error: (r && r.error) || 'không có phản hồi', unreachable: true, from, to }, true))
         .catch((e) => done({ status: 'error', error: e.message, unreachable: true, from, to }, true));
+      if (id === currentId) pump(lanes.prefetch);   // hàng dịch sẵn hết nhường (prefetchHeld)
     } catch (e) {
       if (entry.ctl.signal.aborted) { if (v.chunks.get(k) === entry) v.chunks.delete(k); return; }
       done({ status: 'error', error: e.message, ...(e.rateLimited ? { rateLimited: true } : {}) });   // 429: tải lại khi hết nghỉ
@@ -653,12 +777,13 @@
     }
     return false;
   }
-  // Đang nghỉ sau 429 thì không bắt đầu lượt tải nào, cả hàng dịch sẵn.
+  // Đang nghỉ sau 429 thì không bắt đầu lượt tải nào, cả hàng dịch sẵn. Hàng dịch sẵn nhường video vừa mở (prefetchHeld).
+  const laneWait = (lane) => rateWait() || (lane === lanes.prefetch && prefetchHeld());
   function pump(lane) {
-    while (lane.busy < lane.max && lane.queue.length && !rateWait()) { lane.busy++; drain(lane).finally(() => { lane.busy--; }); }
+    while (lane.busy < lane.max && lane.queue.length && !laneWait(lane)) { lane.busy++; drain(lane).finally(() => { lane.busy--; }); }
   }
   async function drain(lane) {
-    while (lane.queue.length && alive() && settings.enabled && !rateWait()) {
+    while (lane.queue.length && alive() && settings.enabled && !laneWait(lane)) {
       const [id, k] = lane.queue.shift();
       if (needsWork(id, k) && !holdBack(id, k)) await runChunk(id, k);
     }
@@ -726,8 +851,13 @@
       lastFind = now;
       act = findActive();
       if (act) actAt = now;
-      if (act && act.id !== currentId) { currentId = act.id; watched.add(currentId); }
+      if (act && act.id !== currentId) {
+        currentId = act.id; watched.add(currentId);
+        markCurrent(currentId);
+        opened = { id: currentId, need: null, hold: false, since: 0, warm: false };
+      }
       const pv = settings.enabled && act ? videoFor(act) : null;
+      if (pv) markVideo(pv);
       playing = !!pv && !pv.paused; playRate = (pv && pv.playbackRate) || 1;
       // Đo trên Douyin thật: giữa lúc phát, trình phát có lúc trả currentTime = 0 (đang dừng) rồi quay lại chỗ cũ. Tin
       // con số đó thì huỷ nhầm đoạn đang dịch rồi phải gửi lại. Bỏ qua lần đọc khi video chưa sẵn sàng, và cú nhảy về 0
@@ -745,6 +875,7 @@
         const expect = settle.ph + (pv && !pv.paused ? (now - settle.at) / 1000 * (pv.playbackRate || 1) : 0);
         // from: cú nhảy đầu của cả lượt kéo (các cú nhảy cách nhau dưới SETTLE tính là một lượt).
         if (settle.id !== currentId || Math.abs(ph - expect) > 1) {
+          if (settle.id !== currentId) mark(currentId, 'settle');
           if (settle.id !== currentId || now - settle.since >= SETTLE) settle.from = now;
           settle.since = now;
         }
@@ -802,6 +933,7 @@
     const text = (c.sung ? '♪ ' : '') + c.vi;   // dòng hát (chế độ lời bài hát)
     if (subEl.textContent !== text) subEl.textContent = text;
     subEl.style.display = 'block';
+    mark(currentId, 'drawn');
   }
 
   // ---------------------------------------------------------------- cài đặt, khởi động
@@ -853,7 +985,10 @@
         const st = ['ok', 'pending', 'error', 'skipped', 'no_audio'].find(x => sts.includes(x));
         if (st) counts[st] = (counts[st] || 0) + 1;
       }
-      reply({ seen: items.size, counts, chunks });
+      // marks: mốc thời gian lần mở video (định dạng: mục "mốc thời gian lần mở video" ở đầu file); page: trang hiện tại.
+      const list = [...marks].filter(([, r]) => r.at0 != null).map(([id, r]) => ({ id, page: r.page, src: r.src, wall: r.wall,
+        t: Object.fromEntries(Object.entries(r.ev).sort((a, b) => a[1] - b[1]).map(([k, x]) => [k, Math.round(x - r.at0)])) }));
+      reply({ seen: items.size, counts, chunks, page: pageKind(), marks: list });
     }
   });
 })();

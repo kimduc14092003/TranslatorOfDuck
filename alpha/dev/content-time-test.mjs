@@ -70,7 +70,7 @@ function makeEnv(dir, { bw = 9000, stall = () => 0, total = () => 99999999, auto
     }
   };
   const chrome = {
-    runtime: { id: 'x', onMessage: { addListener() {} },
+    runtime: { id: 'x', onMessage: { addListener: (f) => { env.onMsg = f; } },
       sendMessage: (msg) => {
         env.sent.push({ at: env.now, perf: env.perf, ...msg, payload: msg.payload && { ...msg.payload, aac: undefined } });
         if (msg.type !== 'subtitles') return Promise.resolve();
@@ -115,6 +115,8 @@ function makeEnv(dir, { bw = 9000, stall = () => 0, total = () => 99999999, auto
   };
   env.reply = async (key, r) => { const f = env.replies.get(key); if (!f) throw new Error('no pending ' + key); env.replies.delete(key); f(r); await env.flush(); };
   env.subs = () => env.sent.filter((m) => m.type === 'subtitles');
+  env.warms = () => env.sent.filter((m) => m.type === 'warm');
+  env.status = () => { let r = null; env.onMsg({ type: 'status' }, {}, (x) => { r = x; }); return r; };   // như popup.js hỏi
   env.cancels = () => env.sent.filter((m) => m.type === 'cancel').flatMap((m) => m.keys);
   env.vid = (id) => env.dbg.vids.get(id);
   env.media = () => env.fetches.filter((f) => f.b !== 65535);
@@ -240,22 +242,27 @@ await t('Đường truyền chậm đều lúc vào trang (2 video dịch sẵn,
   // Mô phỏng của verifier 1/11: mẩu nhanh nối tiếp, lượt tải thêm bật ra khi chưa đo được tốc độ (rate = 0) thì chia nhỏ
   // băng thông rồi bị ngắt. 2500 B/s: 60 s đầu không có sub nào (bản 31/10: có từ giây 48). Số dưới đây là của bản 31/10.
   const B = '7500000000000000005', C3 = '7500000000000000006';
-  for (const [bw, keys, cover] of [[2500, ['1'], 2.25], [3500, ['1', '2', '3'], 23.25], [4500, ['1', '2', '3'], 28.75]]) {
+  // Mở video chưa dịch sẵn: hàng dịch sẵn nhường tới khi video đó gửi được mẩu đầu, tối đa 2,5 s (PF_HOLD_MAX). Ở 3500 và
+  // 4500 B/s q0 nay tải kịp: sub đầu lúc 9,75 s và 6,75 s, bản 0.2.24 lúc 37 s và 31,5 s (q0 bị bỏ vì tải không kịp). Đổi
+  // lại: ở 2500 B/s q0 vẫn không kịp mà 2 video dịch sẵn xong muộn hơn 2,5 s nên đoạn [20,50) có sub muộn hơn 1,7 s (0,75 s
+  // thay vì 2,25 s); ở 3500 B/s có sub 21,75 s thay vì 23,25 s trong 60 s đầu; ở 4500 B/s 31,75 s thay vì 28,75 s.
+  for (const [bw, keys, cover, early] of [[2500, ['1'], 0.75, 60], [3500, ['q0', '1', '2', '3'], 21.75, 11], [4500, ['q0', '1', '2', '3'], 31.75, 8]]) {
     const e = makeEnv(EXT, { bw, autoReplyMs: 1500 });
     e.up('items', [e.item(A, 87100), e.item(B, 60000), e.item(C3, 90000)]);
     e.activeId = A; e.video(A, 0);
-    let cov = 0;
+    let cov = 0, first = null;
     for (let i = 0; i < 240; i++) {
       await e.tick(250);
       const cv = e.vid(A), ph = e.dbg.playhead;
       if (!cv || !cv.plan) continue;
       let ok = (cv.chunks.get(cv.plan.findIndex(([a, b]) => ph >= a && ph < b)) || {}).status === 'ok';
       for (const q of cv.quick.values()) if (ph >= q.from && ph < q.to && q.status === 'ok') ok = true;
-      if (ok) cov += 0.25;
+      if (ok) { cov += 0.25; if (first == null) first = ph; }
     }
     const sent = e.subs().filter((m) => m.key.startsWith(A)).map((m) => m.key.slice(20));
     assert.deepEqual(sent, keys, bw + ' B/s: ' + sent);
-    assert.ok(cov >= cover, bw + ' B/s: có sub ' + cov + ' s trong 60 s đầu (bản 31/10: ' + cover + ' s)');
+    assert.ok(cov >= cover, bw + ' B/s: có sub ' + cov + ' s trong 60 s đầu (cần ' + cover + ' s)');
+    assert.ok(first != null && first < early, bw + ' B/s: sub đầu ở giây ' + first);
   }
 });
 
@@ -343,6 +350,140 @@ await t('Rời feed sang trang không có video (tìm kiếm): sau 1 s không t�
   const pre = f.subs().filter((m) => m.key !== ids[0] + ':0' && m.key.endsWith(':0')).map((m) => m.key.slice(16));
   assert.ok(pre.length >= 3, 'dịch sẵn trên feed khi slide là livestream: ' + pre);
   assert.ok(!f.subs().some((m) => m.key.startsWith(ids[0]) && m.key !== ids[0] + ':0'), 'không gửi thêm gì cho video cũ: ' + f.subs().map((m) => m.key.slice(16)));
+  // Slide mất video ngay khi hàng dịch sẵn còn đang nhường video cũ (chưa gửi được gì): sau 1 s chờ thì dịch sẵn chạy lại
+  // ngay, không chờ hết 2,5 s nhường (mô phỏng: lượt tải đầu lúc 1000 ms sau khi mất video, chờ hết hạn thì 2350 ms).
+  const g = makeEnv(EXT);
+  g.up('items', ids.map((id) => g.item(id, 60000)));
+  g.activeId = ids[0]; g.video(ids[0], 0);
+  await g.tick(250);
+  const lost = g.perf;
+  g.activeId = null; g.videos.get(ids[0]).paused = true;
+  for (let ms = 0; ms < 3000; ms += 250) await g.tick(250);
+  const pf = g.fetches.find((x) => x.vid !== ids[0]);
+  assert.ok(pf && pf.start - lost <= 1300, 'dịch sẵn bắt đầu ' + (pf && pf.start - lost) + ' ms sau khi slide mất video');
+});
+
+// ---- Lần mở video (đợt first load 1/11): hàng dịch sẵn nhường video vừa mở, báo server làm nóng, mốc thời gian.
+const S = ['7500000000000000021', '7500000000000000022', '7500000000000000023', '7500000000000000024', '7500000000000000025'];
+// Mở kết quả tìm kiếm đầu (modal), 4 kết quả kế được dịch sẵn. hang: các lượt tải âm thanh của video đang xem treo.
+// drop: lúc đó (ms) <video> về readyState 0 (trình phát nạp lại khi CDN treo): schedule() thôi chạy, chỉ còn setTimeout
+// lúc hết PF_HOLD_MAX chạy lại hàng dịch sẵn.
+async function openSearch({ hang = false, drop = null } = {}) {
+  const e = makeEnv(EXT, { autoReplyMs: 2600, pause: (rec) => hang && rec.vid === S[0] });
+  e.href = 'https://www.douyin.com/search/abc?modal_id=' + S[0];
+  const v = e.video(S[0], 0);
+  const t0 = e.perf;
+  e.up('items', S.map((id) => e.item(id, 45000, 'search')));
+  for (let i = 0; i < 160; i++) { if (drop != null && e.perf - t0 === drop) Object.assign(v, { readyState: 0, paused: true }); await e.tick(50); }
+  const f = e.fetches.find((x) => x.vid && x.vid !== S[0]);   // lượt tải đầu tiên (cả mục lục) của video khác
+  const pf = f ? f.start - t0 : null;
+  const first = e.subs().find((m) => m.key.startsWith(S[0]));
+  return { e, t0, pf, first: first && first.perf - t0, q0: (e.subs().find((m) => m.key === S[0] + ':q0') || {}).perf - t0 };
+}
+
+await t('Mở kết quả tìm kiếm chưa dịch sẵn, 4 kết quả kế chờ dịch sẵn: mẩu nhanh gửi sớm hơn hẳn, hàng dịch sẵn chạy lại ngay sau lần gửi đầu', async () => {
+  // HANDOFF §6i: mẩu nhanh chỉ "tải một mình" khi hàng dịch sẵn rảnh. Trước đây q0 gửi lúc 5000 ms (tải chung với 2 video
+  // dịch sẵn), nay 2000 ms.
+  const r = await openSearch();
+  assert.ok(r.q0 <= 2500, 'q0 gửi lúc ' + r.q0 + ' ms');
+  assert.ok(r.pf != null && r.pf >= r.first && r.pf <= r.first + 300, 'lượt tải dịch sẵn đầu lúc ' + r.pf + ' ms, mẩu đầu gửi lúc ' + r.first + ' ms');
+});
+
+await t('Mở video chưa dịch sẵn mà lượt tải âm thanh của nó treo: hàng dịch sẵn chỉ nhường 2,5 s, kể cả khi <video> về readyState 0', async () => {
+  for (const drop of [null, 500]) {
+    const r = await openSearch({ hang: true, drop });
+    assert.equal(r.first, undefined, 'không gửi được gì cho video đang xem');
+    assert.ok(r.pf != null && r.pf >= 2400 && r.pf <= 2900, (drop ? 'readyState 0 từ ' + drop + ' ms: ' : '') + 'lượt tải dịch sẵn đầu lúc ' + r.pf + ' ms');
+  }
+});
+
+await t('Báo server làm nóng (warm): một lần cho mỗi video vừa mở chưa có kết quả, cách nhau ít nhất 3 s; lướt tới video đã dịch sẵn (xong hay đã gửi, đang chờ server) thì không báo, không nhường; mốc xếp theo lúc xem', async () => {
+  const ids = ['7500000000000000031', '7500000000000000032', '7500000000000000033', '7500000000000000034', '7500000000000000035', '7500000000000000036', '7500000000000000037'];
+  const e = makeEnv(EXT, { autoReplyMs: 2600 });
+  e.up('items', ids.map((id) => e.item(id, 45000)));
+  e.activeId = ids[0]; e.video(ids[0], 0);
+  const at = [e.perf];
+  const swipe = (i) => { e.videos.get(ids[i - 1]).paused = true; e.activeId = ids[i]; e.video(ids[i], 0); at[i] = e.perf; };
+  await e.tick(1000);
+  swipe(1);              // video 2 chưa dịch sẵn: báo, nhưng chờ đủ 3 s sau lần báo trước
+  await e.tick(25000);   // video 3–6 dịch sẵn xong, hàng dịch sẵn rảnh
+  const w = e.warms();
+  assert.equal(w.length, 2, 'số lần báo: ' + w.map((m) => m.perf));
+  assert.ok(w[0].perf - at[0] <= 300, 'lần báo đầu lúc ' + (w[0].perf - at[0]) + ' ms');
+  assert.ok(w[1].perf - w[0].perf >= 3000 && w[1].perf - w[0].perf <= 3300, 'hai lần báo cách nhau ' + (w[1].perf - w[0].perf) + ' ms');
+  assert.equal(w[0].server, 'http://127.0.0.1:8787');
+  // Video 3 đã dịch xong trước khi lướt tới: không báo, và hàng dịch sẵn bắt đầu ngay video kế mới (video 7) không chờ.
+  assert.ok(e.log.some(([, , k]) => k === ids[2] + ':0'), 'video 3 phải dịch sẵn xong');
+  const n = e.fetches.length;
+  swipe(2);
+  await e.tick(500);
+  assert.equal(e.warms().length, 2, 'báo cho video đã dịch sẵn');
+  const f7 = e.fetches.slice(n).find((f) => f.vid === ids[6]);
+  assert.ok(f7 && f7.start - at[2] <= 300, 'dịch sẵn video 7 bắt đầu lúc ' + (f7 && f7.start - at[2]) + ' ms sau khi lướt');
+  // Đoạn 0 đã gửi lúc dịch sẵn nhưng server chưa trả lời: cũng không báo, không nhường (kết quả đang tới). Mở kết quả tìm
+  // kiếm thứ 3, rồi thứ 2 (dịch sẵn của nó bị huỷ khi mở kết quả 3: không còn là kết quả kế, nên lần này có báo): mốc xếp
+  // theo lúc thành video đang xem, không theo lúc có mốc dịch sẵn đầu tiên.
+  const g = makeEnv(EXT);   // server không trả lời
+  const gs = ['7500000000000000041', '7500000000000000042', '7500000000000000043', '7500000000000000044', '7500000000000000045', '7500000000000000046', '7500000000000000047'];
+  g.href = 'https://www.douyin.com/search/abc?modal_id=' + gs[0];
+  g.up('items', gs.map((id) => g.item(id, 45000, 'search')));
+  g.video(gs[0], 0);
+  const sent = (id) => g.subs().some((m) => m.key === id + ':0');
+  for (let ms = 0; ms < 20000 && !(sent(gs[1]) && sent(gs[2]) && sent(gs[3]) && sent(gs[4])); ms += 250) await g.tick(250);
+  assert.ok(sent(gs[2]) && sent(gs[4]), 'chưa dịch sẵn xong: ' + g.subs().map((m) => m.key.slice(16)));
+  await g.tick(3000);   // quá WARM_GAP: nếu có báo thì đã báo
+  const nw = g.warms().length, nf = g.fetches.length;
+  const open = (i) => { g.videos.clear(); g.href = 'https://www.douyin.com/search/abc?modal_id=' + gs[i]; g.video(gs[i], 0); return g.perf; };   // modal mới thay <video> cũ
+  const at2 = open(2);
+  await g.tick(500);
+  assert.equal(g.warms().length, nw, 'báo cho video đã gửi dịch sẵn, đang chờ server');
+  const f6 = g.fetches.slice(nf).find((f) => f.vid === gs[5]);
+  assert.ok(f6 && f6.start - at2 <= 300, 'dịch sẵn kết quả 6 bắt đầu lúc ' + (f6 && f6.start - at2) + ' ms sau khi mở');
+  open(1);
+  await g.tick(500);
+  assert.equal(g.warms().length, nw + 1, 'kết quả 2 (dịch sẵn đã huỷ) phải báo');
+  const order = g.status().marks.map((x) => x.id.slice(16)).join();   // mảng tạo trong vm: so chuỗi
+  assert.equal(order, [gs[0], gs[2], gs[1]].map((id) => id.slice(16)).join(), 'thứ tự mốc: ' + order);
+});
+
+await t('Mốc thời gian lần mở video trong câu trả lời status: có đủ, đúng lúc theo kịch bản, kèm kiểu trang và nguồn metadata', async () => {
+  const e = makeEnv(EXT);
+  e.href = 'https://www.douyin.com/video/' + A;
+  const v = e.video(A, 0); v.readyState = 0; v.paused = true;
+  let wall = null;
+  for (let ms = 0; ms < 8000; ms += 250) {
+    if (ms === 0) wall = e.now + 50;
+    if (ms === 500) e.up('items', [{ ...e.item(A, 45000, null), source: 'ssr' }]);
+    if (ms === 1000) v.readyState = 4;
+    if (ms === 1250) v.paused = false;
+    await e.tick(250);
+    for (const m of e.subs()) {
+      if (!e.replies.has(m.key) || e.perf - m.perf < 1000) continue;
+      const p = m.payload;
+      await e.reply(m.key, { status: 'ok', sung: 0, cues: [{ start: p.from, end: p.to, se: p.to, vi: 'x' }] });
+    }
+  }
+  const st = e.status();
+  assert.ok(st && Array.isArray(st.marks), 'không có marks: ' + JSON.stringify(st));
+  assert.equal(st.page, 'video');
+  const mk = st.marks.find((x) => x.id === A);
+  assert.ok(mk, 'không có mốc của video đang xem');
+  assert.equal(mk.page, 'video'); assert.equal(mk.src, 'ssr'); assert.equal(mk.wall, wall);
+  const t_ = mk.t;
+  for (const k of ['current', 'item', 'video', 'ready', 'play', 'settle', 'moov', 'moovEnd', 'quickDl', 'quickDlEnd', 'quickPost', 'quickReply', 'chunkDl', 'chunkDlEnd', 'chunkPost', 'chunkReply', 'drawn']) {
+    assert.ok(typeof t_[k] === 'number', 'thiếu mốc ' + k + ': ' + JSON.stringify(t_));
+  }
+  // Mốc so với các điểm cố định của kịch bản (thành video đang xem ở lượt dò đầu, lúc 50 ms): metadata lúc 500 ms,
+  // readyState 4 lúc 1000 ms, phát lúc 1250 ms; dò 4 lần/giây; server trả lời sau ít nhất 1 s.
+  const near = (k, a, b) => assert.ok(t_[k] >= a && t_[k] <= b, k + ' lúc ' + t_[k] + ' (cần ' + a + '–' + b + '): ' + JSON.stringify(t_));
+  assert.equal(t_.current, 0);
+  near('video', 0, 0); near('item', 400, 500); near('moov', 400, 550); near('ready', 950, 1250); near('settle', 950, 1250);
+  near('play', 1200, 1750);
+  assert.ok(t_.quickReply - t_.quickPost >= 1000 && t_.chunkReply - t_.chunkPost >= 1000, 'trả lời sớm hơn 1 s: ' + JSON.stringify(t_));
+  for (const chain of [['current', 'video', 'ready', 'play'], ['item', 'moov', 'moovEnd', 'quickDl', 'quickDlEnd', 'quickPost', 'quickReply'], ['moovEnd', 'chunkDl', 'chunkDlEnd', 'chunkPost', 'chunkReply']]) {
+    assert.ok(chain.every((k, i) => i === 0 || t_[k] >= t_[chain[i - 1]]), chain.join(' ≤ ') + ': ' + JSON.stringify(t_));
+  }
+  assert.ok(t_.drawn <= Math.min(t_.quickReply, t_.chunkReply) + 300, 'drawn lúc ' + t_.drawn);
 });
 
 console.log(failed ? `\n${failed} kiểm tra trượt, ${n} đạt.` : `\n${n} kiểm tra đều đạt.`);

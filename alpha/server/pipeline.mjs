@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import dc from 'node:diagnostics_channel';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -161,17 +163,53 @@ function pausedError(service) {
   if ((configErrorUntil.get(service)?.until || 0) > Date.now()) return configError(service);
   return null;
 }
+// Đo từng lần gọi HTTP (chỉ để ghi log, không đổi cách gọi): thời gian tới khi có header trả lời (headMs), có phải mở
+// kết nối mới không (fresh) và mất bao lâu từ lúc tạo request tới lúc gửi header (connectMs ≈ DNS + TCP + TLS). fetch của
+// Node (undici) giữ kết nối nghỉ trong (thời gian máy chủ gợi ý ở header Keep-Alive − 2 s), hoặc 4 s nếu máy chủ không
+// gợi ý (đo trên máy, Node 26.5 / undici 8.7: không gợi ý → nghỉ 3,5 s dùng lại, 4,5 s mở mới; "timeout=5" → 2,8 s dùng
+// lại, 3,2 s mở mới), nên lần gọi ASR/dịch đầu của một video thường phải mở kết nối mới. Dùng các kênh
+// diagnostics_channel của undici; Node không có các kênh đó thì fresh = null (log ghi "kết nối ?").
+const netCtx = new AsyncLocalStorage();   // { calls: [] } của một bước (ASR, dịch); thêm rec trong lúc gọi fetch
+const netRec = new WeakMap();             // request của undici → bản ghi lần gọi
+const freshSockets = new WeakSet();       // kết nối vừa mở, chưa gửi request nào
+const warmSockets = new WeakSet();        // kết nối do lần làm nóng mở, chưa có lệnh gọi thật nào dùng
+const onChannel = (name, fn) => (dc.subscribe ? dc.subscribe(name, fn) : dc.channel(name).subscribe(fn));
+onChannel('undici:request:create', ({ request }) => {
+  const rec = netCtx.getStore()?.rec;
+  if (rec) { rec.createdAt = Date.now(); netRec.set(request, rec); }
+});
+onChannel('undici:client:connected', ({ socket }) => { freshSockets.add(socket); });
+onChannel('undici:client:sendHeaders', ({ request, socket }) => {
+  const fresh = freshSockets.delete(socket);   // mọi request (cả lần làm nóng) đều đánh dấu kết nối đã dùng
+  const rec = netRec.get(request);
+  if (!rec) return;
+  rec.fresh = fresh;
+  if (fresh) rec.connectMs = Date.now() - rec.createdAt;
+  // Lệnh gọi thật đầu tiên chạy trên kết nối do làm nóng mở: log ghi "kết nối sẵn (làm nóng)".
+  if (rec.warm) { if (fresh) warmSockets.add(socket); } else if (!fresh && warmSockets.delete(socket)) rec.byWarm = true;
+});
+// Lần gần nhất có lệnh gọi thật tới mỗi origin (lúc bắt đầu và lúc xong): warmProviders bỏ qua origin vừa dùng.
+const lastReal = new Map();
 async function httpJson(url, init, timeoutMs = 20000) {
   const host = new URL(url).host;
+  const origin = new URL(url).origin;
   const service = serviceOf(url);
   const paused = pausedError(service);
   if (paused) throw paused;
   for (let i = 0; ; i++) {
     let res, text;
+    const calls = netCtx.getStore()?.calls;
+    const rec = { headMs: null, fresh: null };
+    calls?.push(rec);
     try {
       const limit = AbortSignal.timeout(timeoutMs);
-      res = await fetch(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, limit]) : limit });
-      text = await res.text();
+      const t0 = Date.now();
+      lastReal.set(origin, t0);
+      try {
+        res = await netCtx.run({ calls, rec }, () => fetch(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, limit]) : limit }));
+        rec.headMs = Date.now() - t0;
+        text = await res.text();
+      } finally { lastReal.set(origin, Date.now()); }
     } catch (e) {
       if (init.signal?.aborted) throw e;
       const timedOut = e.name === 'TimeoutError';
@@ -341,6 +379,59 @@ async function geminiAsr(mp3, signal) {
   const segments = (r.segments || []).map(x => ({ start: Number(x.start), end: Number(x.end), text: String(x.text || '') }));
   return { provider: 'gemini', text: segments.map(x => x.text).join(''), segments, words: [] };
 }
+// ---------------------------------------------------------------- làm nóng kết nối
+// Extension báo vừa mở video chưa có sub (POST /v1/warm): mở sẵn kết nối tới đúng các dịch vụ đang dùng, để lần gọi ASR,
+// dịch đầu tiên của video không phải trả thêm DNS + TCP + TLS. Extension còn tải âm thanh ~0,5–1,5 s trước khi gửi, đủ
+// để kết nối mở xong. Mỗi origin một request GET / không key, không body, hạn 3 s, bỏ qua mọi lỗi và mã trả về; không
+// qua httpJson nên không bao giờ tính vào hạn mức hay tạm dừng. Không dùng HEAD: undici luôn đóng kết nối sau một request
+// HEAD (đo trên máy, Node 26: HEAD rồi POST → POST mở kết nối mới; GET hay OPTIONS rồi POST → dùng lại).
+// Mỗi origin tối đa một lần mỗi 3 s; bỏ qua origin vừa có lệnh gọi thật trong 3 s (thường kết nối đó còn mở; máy chủ
+// gợi ý Keep-Alive ngắn hơn 5 s thì có thể đã đóng: dòng log làm nóng ghi header keep-alive để đo trên dịch vụ thật).
+// Mỗi lần làm nóng ghi một dòng log: origin, mã trả về, thời gian tới header, kết nối mới hay sẵn, header keep-alive.
+const WARM_GAP_MS = 3000;
+const lastWarm = new Map();
+async function drainSmall(res) {
+  // Đọc hết body nhỏ để kết nối trở về hàng chờ dùng lại; body lớn bất thường thì thôi không đọc nữa.
+  const reader = res.body?.getReader();
+  for (let size = 0; reader;) {
+    const { done, value } = await reader.read();
+    if (done) return;
+    if ((size += value.length) > 64 * 1024) return reader.cancel();
+  }
+}
+export function warmProviders() {
+  const mt = mtProvider();
+  // Chưa có key dịch, hay dịch đang tạm dừng: makeSubtitles báo lỗi trước cả bước ASR, làm nóng vô ích.
+  if (!mt || pausedError(mtService())) return [];
+  // Dịch vụ nhận dạng của transcribe(): có key DashScope thì chỉ Fun-ASR (không chuyển sang Gemini), không thì Gemini.
+  // Không có, hay đang tạm dừng (hết hạn mức mọi model, key sai): đoạn của video mới hỏng ở bước ASR, dịch không được
+  // gọi tới, nên cũng không làm nóng gì.
+  let asrBase = null;
+  if (ENV.DASHSCOPE_API_KEY) { if (!pausedError('DashScope') && asrModelNow()) asrBase = DASHSCOPE_BASE; }
+  else if (ENV.GEMINI_API_KEY && !pausedError('Gemini')) asrBase = GEMINI_BASE;
+  if (!asrBase) return [];
+  const bases = [mt === 'openai' ? OPENAI_BASE : GEMINI_BASE, asrBase];
+  const now = Date.now();
+  const warmed = [];
+  for (const origin of new Set(bases.map(b => new URL(b).origin))) {
+    if (now - (lastWarm.get(origin) ?? -Infinity) < WARM_GAP_MS || now - (lastReal.get(origin) ?? -Infinity) < WARM_GAP_MS) continue;
+    lastWarm.set(origin, now);
+    warmed.push(origin);
+    const rec = { warm: true, headMs: null, fresh: null };
+    const host = new URL(origin).host;
+    netCtx.run({ rec }, () => fetch(origin + '/', { redirect: 'manual', signal: AbortSignal.timeout(3000) }))
+      .then((res) => {
+        rec.headMs = Date.now() - now;
+        console.log(`${new Date().toLocaleTimeString()} làm nóng ${host}: HTTP ${res.status}, đầu ${rec.headMs} ms, ` +
+          (rec.fresh == null ? 'kết nối ?' : rec.fresh ? `kết nối mới ${rec.connectMs} ms` : 'kết nối sẵn') +
+          `, keep-alive: ${res.headers.get('keep-alive') || 'không có'}`);
+        return drainSmall(res);
+      })
+      .catch((e) => console.log(`${new Date().toLocaleTimeString()} làm nóng ${host}: hỏng (${e.name === 'TimeoutError' ? 'quá 3 s' : e.message})`));
+  }
+  return warmed;
+}
+
 export async function transcribe(mp3, signal) {
   if (ENV.DASHSCOPE_API_KEY) return funasr(mp3, signal);
   if (ENV.GEMINI_API_KEY) return geminiAsr(mp3, signal);
@@ -606,7 +697,9 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   const audio = saved ? { seconds: saved.seconds } : await extractAudio(buf, opts.kind);
   const tAudio = Date.now();
   if (!audio) return { status: 'no_audio', timings: { audioMs: tAudio - t0 } };
-  let asr = saved ? saved.asr : resplitSentences(await transcribe(audio.mp3, opts.signal));
+  // Từng lần gọi HTTP của bước ASR và bước dịch (net.asr, net.mt: headMs, fresh, connectMs): server ghi vào dòng log.
+  const net = { asr: [], mt: [] };
+  let asr = saved ? saved.asr : resplitSentences(await netCtx.run({ calls: net.asr }, () => transcribe(audio.mp3, opts.signal)));
   if (!saved) opts.asrCache?.save({ seconds: audio.seconds, asr });
   const tAsr = Date.now();
   // Âm thanh gửi dư trước đoạn ≥ 4 s: extension báo đoạn trước chưa dịch (vừa tua tới). Lấy lời nói phần đó làm
@@ -622,7 +715,7 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   // song: kết quả của đoạn cả bài khác nhau ở hai chế độ kể cả khi sung = 0 (điệp khúc câu 3 chữ), nên server và
   // extension không dùng chung nó giữa hai chế độ (noSinging, modeFree).
   const base = { asr: asr.provider, ...(asr.model && asr.model !== FUNASR_MODEL ? { asrModel: asr.model } : {}), ...(saved ? { asrCached: true } : {}), seconds: audio.seconds, heard: (asr.text || '').slice(0, 40), sung: split.sung, sentences: split.total,
-    ...(song ? { song: true } : {}), debug: { features: cls, sentences: split.sentences } };
+    ...(song ? { song: true } : {}), debug: { features: cls, sentences: split.sentences, net } };
   const skip = (label) => ({ status: 'skipped', label, ...base, timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio } });
   if (cls.label !== 'speech' && cls.label !== 'singing') return skip(cls.label);
   let cues;
@@ -646,7 +739,7 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   const context = Array.isArray(ctxRaw) ? ctxRaw : (ctxRaw.lines || []);
   const far = !Array.isArray(ctxRaw) && !!ctxRaw.far;
   opts.signal?.throwIfAborted();
-  const vi = cues.length ? await translate(meta, cues, context, opts.signal, { far, before: context.length && !far ? [] : before, condense: opts.condense !== false }) : [];
+  const vi = cues.length ? await netCtx.run({ calls: net.mt }, () => translate(meta, cues, context, opts.signal, { far, before: context.length && !far ? [] : before, condense: opts.condense !== false })) : [];
   opts.signal?.throwIfAborted();   // huỷ giữa lượt rút gọn (lượt đó tự bắt lỗi): không trả kết quả dở
   const tMt = Date.now();
   return { status: vi.length ? 'ok' : 'skipped', label: vi.length ? 'speech' : 'untranslated', ...base, context: context.length,
