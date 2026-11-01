@@ -86,11 +86,12 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 | Lệnh | Kiểm tra gì |
 |---|---|
 | `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới, đánh dấu dòng hát, tiếng đệm trong lời hát, dòng nói ngắn gộp vào dòng hát (18 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới ở cả hai chế độ lời bài hát, `rank`), Gemini hết lượt trong ngày (9 kiểm tra). `asr-fallback-test.mjs`: Fun-ASR hết hạn mức thì chuyển sang model dự phòng, giới hạn theo phút thì gọi lại (20 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON (11 kiểm tra). `lyrics-test.mjs`: chế độ lời bài hát, kể cả điệp khúc câu ngắn, ngữ cảnh ở chế độ thường, hai chế độ cùng lúc (14 kiểm tra) |
-| `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng (37 kiểm tra) |
-| `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước (3 kiểm tra) |
+| `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng, slide feed bị ẩn, trang kết quả tìm kiếm, đóng modal, HTTP 429 (43 kiểm tra) |
+| `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước, đoạn đầu tải chậm qua máy chủ chậm (trang video và feed), tải nhanh rồi chậm hẳn, rời feed, tải chậm vừa phải, đường truyền chậm đều, khựng giữa chừng, tua về sau khi bỏ đoạn (11 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms (4 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
-| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua, đồng hồ trình phát lệch 50 s, CDN treo một lần, lời bài hát ♪, bấm ô tắt lời bài hát trong popup (24 kiểm tra) |
+| `node alpha/dev/tap-test.mjs` | tap.main.js đọc response API với Response thật (fetch, XHR): thân chia khúc của search/stream, thân hỏng, giữ thứ tự danh sách tìm kiếm khi search/single đọc xong trước (3 kiểm tra) |
+| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua, đồng hồ trình phát lệch 50 s, CDN treo một lần, lời bài hát ♪, bấm ô tắt lời bài hát trong popup, video mở từ trang tìm kiếm (26 kiểm tra) |
 
 Cần cho các test: Node 18+, `playwright`, `ffmpeg`, `openssl`.
 
@@ -518,26 +519,99 @@ Chế độ lời bài hát bật mặc định, mà phần phân loại câu h�
     - Kết quả đầu của trang tìm kiếm tới qua `/aweme/v1/web/general/search/stream/`. Phản hồi này khai là JSON nhưng chia khúc trong thân: một dòng độ dài hex, rồi một khối JSON, cứ thế lặp lại.
     - `tap.main.js` đọc bằng `res.clone().json()` nên báo `parse_error`, và đường này cũng không có trong `PATHS`. Vì vậy `content.js` không có item cho `modal_id`: không hiện nhãn, không tải gì.
     - Đã kiểm trực tiếp trong trình duyệt; tải lại hẳn trang tìm kiếm vẫn vậy.
-    - Sửa: tách dòng, bỏ dòng độ dài, parse từng khối JSON; thêm đường này vào `PATHS`.
+    - Đã sửa ở extension 0.2.23 (§6m).
   - **Trang kết quả tìm kiếm hiện sub của video khác.**
     - Sau khi tìm từ feed (chuyển trang phía client), slide feed cũ vẫn nằm trong DOM với `data-e2e="feed-active-video"`. `findActive()` lấy slide đó, còn `videoFor()` lấy thẻ `<video>` lớn nhất đang thấy, tức video xem trước dài 628 s của trang tìm kiếm.
     - Kết quả: sub "♪ …" của video piano 29 s hiện đè lên một video khác.
-    - Sửa: chỉ nhận slide feed khi `<video>` của chính nó đang thấy.
+    - Đã sửa ở extension 0.2.23 (§6m).
   - **Đoạn đầu không được gửi, 30 s mới có sub** (1/13 video, bài hát có đoạn dạo guitar).
     - Lượt tải đoạn 0–20 bị chậm. Tới giây 20 đoạn đó không còn "cần" nên bị ngắt im lặng (`cancelUnwanted`). Đoạn 20–50 vì thế gửi dư 8 s, và có 0 dòng ngữ cảnh.
     - Mẩu nhanh 0–10 bị bỏ qua ("quá ít lời") nên không bù được, và mỗi lần đứng yên chỉ xét một mẩu nhanh.
     - Verifier dựng lại được trong vm khi lượt tải đoạn 0 chậm. Riêng việc mẩu nhanh bị bỏ qua thì không gây lỗi.
-    - Sửa: khi đoạn ở chỗ đang xem tải chậm thì gửi mẩu nhanh tiếp theo hoặc mở thêm một lượt tải; cho xét lại mẩu nhanh khi mẩu trước bị bỏ qua.
+    - Đã sửa ở extension 0.2.23 (§6m), không tải song song.
   - **HTTP 429 khi tải video** (1/13 video, 2 đoạn, nhãn lỗi khoảng 24 s). Không rõ 429 đến từ CDN hay từ `/aweme/v1/play/`.
     - Extension coi 429 như lỗi tải thường: gọi lại ngay một lần, rồi cứ 20 s thử một lần, không đọc `Retry-After`, mỗi đoạn tự chờ riêng; mẩu nhanh mất luôn.
     - Lượng tải của extension thấp (5–7 lượt cho video 90 s), không có dấu hiệu chính nó gây ra 429.
-    - Sửa: tách 429 thành loại lỗi riêng, giãn dần thời gian chờ và dùng chung cho mọi đoạn, trong lúc chờ thì tạm dừng dịch sẵn.
-  - Bộ mô phỏng `alpha/dev/content-sim-test.mjs`: fetch giả không từ chối khi signal đã bị ngắt từ trước (fetch thật thì từ chối ngay).
+    - Đã sửa ở extension 0.2.23 (§6m).
+  - Bộ mô phỏng `alpha/dev/content-sim-test.mjs`: fetch giả không từ chối khi signal đã bị ngắt từ trước (fetch thật thì từ chối ngay). Đã sửa (§6m).
 - **Chưa đo:**
   - Model ASR dự phòng và Gemini với luật này. Gemini không có mốc từng chữ, nên ♪ gần như không bật.
   - Tiếng Quảng, song ca, giọng trẻ em, lời nói đè lên bài hát có lời.
   - Đo trực tiếp chế độ thường.
 - Mẫu âm thanh tạm (TOD_DUMP) và ảnh chụp đã xoá sau khi đo. Nhãn và số liệu chỉ để trên máy.
+
+## 6m. Sửa các lỗi phụ của đợt đo 1/11 (extension 0.2.23)
+
+Quá trình sửa:
+- Workflow 9 agent: hai thợ code làm song song trên bản sao (một người sửa `tap.main.js`, một người sửa `content.js`); mỗi bản vá có một verifier soi, một lượt sửa rồi kiểm lại; cuối cùng một agent ghép thử cả hai.
+- Lượt 2 (tôi sửa): phần đoạn tải chậm, trang tìm kiếm, đóng modal. Hai verifier soi: phần chi phí và tài liệu đạt, phần lịch tải còn 3 lỗi lớn.
+- Lượt 3: sửa 3 lỗi đó và các lỗi nhỏ, mỗi lỗi có test dựng từ kịch bản của verifier (trượt trên bản lượt 2). Một verifier khác kiểm lại: không còn lỗi lớn, còn 5 lỗi nhỏ.
+- Lượt 4: sửa 5 lỗi nhỏ đó. Hai lỗi có test (trượt trên bản lượt 3); ba lỗi còn lại tôi kiểm bằng chính kịch bản của verifier. Sau lượt này không có agent nào soi lại.
+
+- **Video mở từ trang tìm kiếm có sub** (`tap.main.js`):
+  - Khi JSON.parse cả thân phản hồi hỏng (thân chia khúc), đọc từng dòng bắt đầu bằng `{` hay `[` (bỏ dòng độ dài hex), rồi walk từng khối. Trang vẫn đọc phản hồi gốc như cũ; bản sao dự phòng chỉ được đọc dạng chữ khi JSON hỏng.
+  - Thêm `/aweme/v1/web/general/search/stream` vào `PATHS`, thuộc danh sách `search`.
+  - Trong lúc stream (kết quả đầu) còn đọc, item của `search/single` (các trang sau) được giữ lại tối đa 20 s, để danh sách theo đúng thứ tự trang. Danh sách này quyết định video kế tiếp được dịch sẵn. Đo trên Douyin thật: stream đọc xong khoảng 1,5 s sau khi tìm, `single` xong sau đó 1,2 s.
+  - Test:
+    - `tap-test.mjs` (mới, 3 kiểm tra, dùng Response thật): thân chia khúc qua fetch và XHR; thân hỏng; thứ tự khi `single` xong trước.
+    - e2e thêm 2 kiểm tra: video mở từ kết quả đầu có sub; kết quả kế tiếp được dịch sẵn.
+- **Trang tìm kiếm không dịch video chưa mở** (`content.js`):
+  - `findActive()`: khi đường dẫn có `/search/`, chỉ video mở trong modal (`?modal_id=`) mới là video đang xem. Thẻ kết quả và video xem trước tự phát không tính, để không trả tiền cho video người xem chưa mở.
+- **Slide feed bị ẩn không còn làm hiện sub của nó lên video khác:**
+  - Slide đó (vẫn mang `feed-active-video` sau khi tìm từ feed) không còn được nhận.
+  - `videoFor()` không mượn `<video>` khác khi `<video>` của chính slide không thấy.
+- **Đóng modal, trang không còn video nào:**
+  - Quá 1 s không thấy video nào thì bỏ video đang xem và huỷ việc đã gửi của chính video đó.
+  - Việc dịch sẵn video khác đã gửi tới server thì giữ, vì đóng modal rồi mở kết quả kế là luồng thường.
+  - Việc dịch sẵn chưa gửi: rời feed sang trang không có video thì thôi, không tải, không gửi thêm. Còn ở feed mà slide đang xem không có video (livestream, quảng cáo) thì dịch sẵn tiếp, để lướt tới video kế là có sub ngay. Đo 1/11: feed tải lại có lúc mở đầu bằng một slide livestream.
+  - Không thấy video lúc một đoạn hay mẩu nhanh vừa tải xong: chờ tối đa khoảng 1,2 s xem video có quay lại không. Một lượt dò hụt thì vẫn gửi bình thường; vừa đóng modal thì bỏ, không gửi rồi lại huỷ.
+  - Trước đây chỗ đang xem về 0, và còn gửi thêm đoạn [0,20) của video vừa đóng.
+- **Đoạn ở chỗ đang xem tải chậm** (`dropSlow`):
+  - Nếu theo ước tính đoạn chỉ có sub khi chỗ đang xem đã đi qua nó, thì bỏ đoạn đó. Ước tính dùng tốc độ 3 s gần nhất của chính lượt tải (không tính các khoảng hơn 0,5 s không có byte), cộng 4 s xử lý ở server.
+  - Khi đó hàng tải chạy ngay đoạn kế, gửi dư 8 s cho mạch câu (§6e). Chỗ đang xem được phủ bằng mẩu nhanh nối tiếp, tới hết đoạn bị bỏ.
+  - Chỉ bỏ khi riêng lượt tải đó chậm:
+    - tốc độ dưới 1/3 lượt tải xong gần nhất của cùng video;
+    - không có lượt tải của video khác đang nhận byte;
+    - video đang phát;
+    - vừa có byte về trong 1 s qua. Lượt tải khựng hay đứng hẳn thì vẫn để `rangeFetch` cắt sau 6 s rồi gọi lại.
+  - Đoạn đã bỏ không được tải lại khi chỗ đang xem còn trong nó. Chỗ đang xem ra khỏi nó (kể cả tua lùi về đoạn trước) thì xoá; quay lại thì tải lại từ đầu.
+  - Mẩu nối tiếp chỉ gửi khi còn ít nhất 5 s (theo tốc độ phát) trước cuối mẩu, để kết quả về kịp.
+  - Không tải song song đoạn kế. Bản vá đầu có thêm một lượt tải song song tới cùng máy chủ video; đã bỏ, vì §6d ghi đó là việc chủ dự án quyết.
+  - Bản vá đầu còn gửi mẩu nối tiếp cả khi đoạn đã tới server. Verifier đo được: thêm khoảng 23 s nhận dạng mỗi video khi máy chủ chậm cỡ 2000 B/s, mà sub không ra sớm hơn.
+  - Mô phỏng ca 1/11 (đoạn [0,20) tải 1040 B/s, q0 bị bỏ qua):
+    - sub đầu ở giây 12,5, trước đây khoảng giây 29;
+    - đoạn [20,50) gửi ở giây 9,5. Trước đây nó chỉ bắt đầu tải ở giây 20, gửi ở khoảng giây 25;
+    - chỉ thêm 1 mẩu nhanh (q9), tức 16,5 s âm thanh.
+
+    Kết quả cũng như vậy trên feed, khi đoạn đầu chậm đã bắt đầu tải từ lúc dịch sẵn, và khi đoạn tải nhanh 1/4 đầu rồi mới chậm hẳn. Ở 2000–2200 B/s (đoạn vẫn kịp), khi đường truyền chậm đều (có 2 video dịch sẵn), và khi khựng 2,5 s giữa chừng, kết quả giống hệt bản trước.
+  - Giới hạn:
+    - Cần một lượt tải khác của cùng video đã xong nhanh hơn hẳn (thường là q0) để so. Máy chủ video chậm với mọi lượt tải thì không bỏ gì, như bản 0.2.22.
+    - Trên feed có nhiều video đang dịch sẵn mà đường truyền chậm, phải đợi dịch sẵn xong mới bỏ được, thường là quá muộn (verifier đo: 7 video, 9 KB/s).
+- **HTTP 429 khi tải video:**
+  - Không gọi lại ngay. Mọi lượt tải (cả hai hàng, mọi video) cùng nghỉ 5 s, rồi 15 s và 45 s nếu lại bị 429. Nếu đọc được `Retry-After` mà dài hơn thì theo nó, tối đa 2 phút.
+  - Tải được một lượt bắt đầu sau lần 429 cuối, hoặc 10 phút không bị 429, thì tính lại từ 5 s.
+  - Hết thời gian nghỉ thì đoạn bị 429 tải lại, và mẩu nhanh được xét lại.
+  - Nhãn: "VI · lỗi: Douyin tạm chặn tải video (HTTP 429), thử lại sau N s".
+  - Một lần 429 của video dịch sẵn cũng làm video đang xem nghỉ 5 s. Nghỉ chung là cố ý: không dồn thêm request khi Douyin đang chặn.
+- **Bộ mô phỏng:**
+  - Fetch giả nay từ chối khi signal đã bị ngắt từ trước.
+  - `content-time-test` trả đúng số byte vừa tải. Trước đây mỗi lần đọc chỉ trả 16 byte, nên không đếm được tiến độ.
+  - `content-time-test` có thêm `pause` (khựng giữa chừng) và `cap` theo từng video.
+  - `content-sim-test` có thêm `env.center`, phần tử ở giữa màn hình.
+- **Test:**
+  - content-sim-test 43 kiểm tra, thêm 6: slide feed ẩn, trang kết quả tìm kiếm, đóng modal (giữ việc dịch sẵn kết quả kế), đóng modal lúc đang tải, 429, 429 lặp lại.
+  - content-time-test 11 kiểm tra, thêm 8: đoạn đầu tải chậm, đoạn đầu chậm ở hàng dịch sẵn trên feed, tải nhanh rồi chậm hẳn, rời feed sang trang không có video (còn ở feed với slide livestream thì dịch sẵn tiếp), tải chậm vừa phải, đường truyền chậm đều, khựng giữa chừng, tua về sau khi bỏ đoạn. Bốn ca sau cố ý đạt cả trên bản 0.2.22, để canh hồi quy do chính bản sửa có thể gây ra.
+  - tap-test 3, e2e 26.
+  - Mọi kiểm tra mới còn lại đều trượt trên bản 0.2.22.
+- **Kiểm trên Douyin thật** (1/11, Chromium test, bản 0.2.23; chạy lại sau lượt 3 và lượt 4):
+  - Từ feed, gõ tìm "吉他弹唱 情歌" (chuyển trang phía client). Trang kết quả 12 s không có nhãn, không có sub, server không nhận yêu cầu nào. `tap.main.js` báo `search/stream` đọc được (chia khúc, 5 khối, 9 video), không còn `parse_error`.
+  - Bấm kết quả đầu: nhãn "đang dịch…" sau 1 s, sub "♪ …" từ giây 8,5. Server dịch sẵn 4 kết quả kế tiếp, vì modal tự phát tiếp kết quả sau.
+  - Đóng modal: nhãn và sub tắt, không có yêu cầu mới. Quay lại feed: sub hiện lại ngay; lướt tiếp vẫn có sub. Bài ảnh (图文) không có nhãn, như trước.
+  - Chưa gặp lại đoạn đầu tải chậm hay HTTP 429 trên trang thật: hai phần này mới kiểm bằng mô phỏng.
+- **Còn mở:**
+  - Mở một kết quả tìm kiếm thì 4 kết quả kế được dịch sẵn (cùng luật với feed), tốn nhận dạng cho video người xem có thể không xem.
+  - Modal tìm kiếm có thể mượn `<video>` xem trước của trang kết quả trong lúc `<video>` của modal chưa gắn vào trang: tải và gửi nhầm một đoạn rồi huỷ. Lỗi này có từ trước (verifier đo trong mô phỏng, chưa thấy trên trang thật).
+  - Các ngưỡng của `dropSlow` (6 s, 1/3, 4 s, 1 s) chưa đo trên Douyin.
 
 ## 7. Việc tiếp theo trên Mac
 

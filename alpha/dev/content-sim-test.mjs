@@ -12,7 +12,8 @@ const EXT = path.join(ROOT, 'extension');
 
 // ---- content.js trong vm. Đồng hồ: env.now (Date.now), env.perf (performance.now, requestAnimationFrame).
 // fetchHang(a, b): lượt tải treo tới khi bị ngắt. total(a, b): cỡ file máy chủ báo trong Content-Range.
-function makeEnv({ fetchHang = () => false, total = () => 99999999 } = {}) {
+// status(a, b): mã HTTP trả về (vd. 429). retryAfter(a, b): header Retry-After (null: không đọc được).
+function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () => 206, retryAfter = () => null } = {}) {
   const env = { now: 1_000_000, perf: 0, sent: [], replies: new Map(), fetches: [], rafs: [], listeners: {}, videos: new Map(), activeId: null,
     href: 'https://www.douyin.com/', onChanged: null };
   const el = () => ({ style: {}, textContent: '' });
@@ -23,17 +24,21 @@ function makeEnv({ fetchHang = () => false, total = () => 99999999 } = {}) {
     querySelector: (s) => {
       if (s !== '[data-e2e="feed-active-video"]' || !env.activeId) return null;
       const id = env.activeId;
-      return { getAttribute: (n) => (n === 'data-e2e-vid' ? id : null), querySelector: () => env.videos.get(id) };
+      return { getAttribute: (n) => (n === 'data-e2e-vid' ? id : null), querySelector: () => env.videos.get(id),
+        getBoundingClientRect: () => ({ left: 0, top: 0, right: 640, bottom: 480, width: 640, height: 480 }) };
     },
     querySelectorAll: () => [...env.videos.values()],
-    elementFromPoint: () => null,
+    elementFromPoint: () => env.center || null,   // env.center: phần tử ở giữa màn hình (thẻ kết quả tìm kiếm…)
   };
   const fakeFetch = (url, init) => new Promise((resolve, reject) => {
+    // Như fetch thật: signal đã bị ngắt từ trước thì từ chối ngay, không gọi mạng.
+    if (init.signal.aborted) { env.preAborted = (env.preAborted || 0) + 1; return reject(init.signal.reason); }
     const m = /bytes=(\d+)-(\d+)/.exec(init.headers.Range); const a = +m[1], b = +m[2];
-    const rec = { url, a, b, aborted: false };
+    const rec = { url, a, b, aborted: false, at: env.now, status: status(a, b, url) };
     env.fetches.push(rec);
-    const size = total(a, b);
-    const fin = () => resolve({ status: 206, url: 'https://cdn.example/x.mp4', headers: { get: (h) => (h === 'content-range' ? `bytes ${a}-${b}/${size}` : null) },
+    const size = total(a, b), ra = retryAfter(a, b);
+    const fin = () => resolve({ status: rec.status, url: 'https://cdn.example/x.mp4',
+      headers: { get: (h) => (h === 'content-range' ? `bytes ${a}-${b}/${size}` : h === 'retry-after' ? ra : null) },
       body: { getReader: () => { let d = false; return { read: async () => (d ? { done: true } : (d = true, { done: false, value: new Uint8Array(16) })) }; } } });
     init.signal.addEventListener('abort', () => { rec.aborted = true; reject(init.signal.reason); }, { once: true });
     if (fetchHang(a, b, url)) rec.release = fin; else queueMicrotask(fin);
@@ -200,6 +205,8 @@ await t('F7 S4: đoạn 30 s tải chậm, phát liền 0 → 30 s: chỉ một 
     v.currentTime = s; await e.tick(250);
     for (const k of [...e.replies.keys()]) if (k.includes(':q')) await e.reply(k, { status: 'ok', cues: [] });
   }
+  // Ở đây chưa lượt tải nào đo được tốc độ (tải xong ngay hay treo), nên không có mẩu nối tiếp (SLOW_SLOT). Mẩu nối tiếp
+  // khi một đoạn tải chậm bất thường: content-time-test.mjs.
   assert.deepEqual(e.subs().filter((k) => k.includes(':q')), [A + ':q0']);
 });
 
@@ -625,6 +632,141 @@ await t('F10 nhiều danh sách: video kế tiếp lấy theo danh sách chứa 
   e.activeId = D; e.videos.clear(); e.video(D, 1).paused = true;   // không thuộc danh sách nào: video feed chưa xem
   await e.tick();
   assert.deepEqual([...e.dbg.wanted].sort(), [B + ':0', C2 + ':0', D + ':0']);
+});
+
+await t('Trang tìm kiếm sau khi tìm từ feed: slide feed cũ (ẩn) vẫn mang feed-active-video, video khác đang phát: không hiện sub và nhãn của video feed lên nó', async () => {
+  // Đo 1/11: chuyển trang phía client, slide feed cũ ở lại trong DOM; sub "♪ …" của video 29 s hiện đè lên video xem trước
+  // 628 s của trang tìm kiếm (videoFor lấy thẻ <video> lớn nhất đang thấy).
+  // Video feed đang xem ở giây 200: chỗ đang xem đọc ra 0 (không thấy video nào) thì từng tải và gửi dịch [0,20), [20,50).
+  const e = makeEnv();
+  e.up('items', [e.item(A, 300000)]);
+  e.activeId = A; const fv = e.video(A, 200); fv.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':7', { status: 'ok', cues: [C(199, 211, 'Sub của video feed')] });
+  await e.tick();
+  assert.equal(e.subText(), 'Sub của video feed');
+  const nSent = e.subs().length;
+  e.href = 'https://www.douyin.com/root/search/x?aid=1';
+  fv.getBoundingClientRect = () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 });
+  const pv = e.video('preview', 5);
+  for (let i = 0; i < 4; i++) { pv.currentTime += 0.26; await e.tick(); }
+  assert.equal(e.subText(), null);
+  assert.equal(e.badge(), null);
+  e.up('items', [e.item(B, 60000, 'search')]);   // kết quả tìm kiếm tới sau
+  for (let i = 0; i < 4; i++) { pv.currentTime += 0.26; await e.tick(); }
+  assert.deepEqual(e.subs().slice(nSent), [], 'không gửi dịch gì cho video không có trên màn hình');
+});
+
+await t('Trang kết quả tìm kiếm (chưa mở video): không dịch thẻ kết quả hay video xem trước tự phát; mở modal thì dịch', async () => {
+  // Verifier 1/11: bản vá trang tìm kiếm làm các kết quả đầu thành video dịch được; thẻ ở giữa màn hình mang data-e2e-vid
+  // thì content.js lấy nó làm video đang xem, dịch đoạn đầu và dịch sẵn 4 kết quả sau mà người xem chưa bấm gì.
+  const e = makeEnv();
+  const S = ['7600000000000000001', '7600000000000000002', '7600000000000000003'];
+  e.href = 'https://www.douyin.com/search/abc';
+  e.up('items', S.map((id) => e.item(id, 120000, 'search')));
+  const pv = e.video('preview', 3);
+  const card = { getAttribute: (n) => (n === 'data-e2e-vid' ? S[0] : null), querySelector: (q) => (q === 'video' ? pv : null) };
+  card.closest = () => card;
+  e.center = card;
+  for (let i = 0; i < 20; i++) await e.tick();
+  e.href = 'https://www.douyin.com/video/' + S[1] + '/search/abc';   // tìm từ trang /video/: kết quả phủ lên trang video
+  for (let i = 0; i < 20; i++) await e.tick();
+  assert.deepEqual(e.subs(), []);
+  assert.equal(e.badge(), null);
+  e.href = 'https://www.douyin.com/search/abc?modal_id=' + S[0];
+  for (let i = 0; i < 3; i++) await e.tick();
+  assert.ok(e.subs().includes(S[0] + ':0'), String(e.subs()));
+});
+
+await t('Đóng modal (không còn video nào đang thấy): không gửi thêm, sau ~1 s huỷ việc đã gửi của video đó, giữ việc dịch sẵn kết quả kế', async () => {
+  const e = makeEnv();
+  const M = '7600000000000000009', N = '7600000000000000010';
+  e.href = 'https://www.douyin.com/search/abc?modal_id=' + M;
+  e.up('items', [e.item(M, 300000, 'search'), e.item(N, 60000, 'search')]);
+  const v = e.video(M, 200);
+  for (let i = 0; i < 4; i++) { v.currentTime += 0.26; await e.tick(); }
+  const sent = e.subs().filter((k) => k.startsWith(M));
+  assert.ok(sent.length >= 2, String(sent));
+  assert.ok(e.subs().includes(N + ':0'), 'kết quả kế được dịch sẵn: ' + e.subs());
+  e.href = 'https://www.douyin.com/search/abc'; e.videos.delete(M);
+  await e.tick(); await e.tick();   // ~0,5 s: chưa huỷ (lúc lướt, giữa hai slide có thể không thấy video nào)
+  assert.deepEqual(e.cancels(), []);
+  for (let i = 0; i < 6; i++) await e.tick();
+  // Trước đây: chỗ đang xem về 0, gửi thêm :0 và q0 của video vừa đóng; bản vá trước: không gửi thêm nhưng cũng không huỷ.
+  assert.deepEqual(e.subs().filter((k) => k.startsWith(M)), sent);
+  assert.deepEqual(e.cancels().sort(), [...sent].sort());
+  // Đóng modal rồi mở kết quả kế là luồng thường: việc dịch sẵn N:0 không bị huỷ rồi gửi lại (verifier 1/11).
+  e.href = 'https://www.douyin.com/search/abc?modal_id=' + N; e.video(N, 0);
+  for (let i = 0; i < 4; i++) await e.tick();
+  assert.equal(e.subs().filter((k) => k === N + ':0').length, 1, String(e.subs()));
+});
+
+await t('Đóng modal lúc một đoạn của video đó đang tải: tải xong trong 1 s chờ thì không gửi', async () => {
+  // Verifier 1/11: trong 1 s chờ, đoạn tải xong vẫn được gửi rồi mới bị huỷ (server có thể đã bắt đầu nhận dạng).
+  const M = '7600000000000000009';
+  const e = makeEnv({ fetchHang: (a, b) => b !== 65535 && a >= 18000 && a < 19000 });
+  e.href = 'https://www.douyin.com/search/abc?modal_id=' + M;
+  e.up('items', [e.item(M, 300000, 'search')]);
+  e.video(M, 0);
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(M + ':0', { status: 'ok', cues: [] });   // đoạn [0,20) xong thì đoạn [20,50) mới tải (holdBack)
+  for (let i = 0; i < 2; i++) await e.tick();
+  const hung = e.fetches.find((f) => f.a >= 18000 && f.a < 19000 && f.release);
+  assert.ok(hung, 'đoạn [20,50) phải đang tải: ' + e.fetches.map((f) => f.a));
+  e.href = 'https://www.douyin.com/search/abc'; e.videos.delete(M);
+  await e.tick();
+  hung.release(); await e.flush();
+  await e.tick();
+  assert.ok(!e.subs().includes(M + ':1'), String(e.subs()));
+});
+
+await t('HTTP 429 khi tải video: không gọi lại ngay, mọi lượt tải (cả dịch sẵn) nghỉ 5 s, nhãn nói rõ; hết nghỉ thì tải lại và gửi mẩu nhanh', async () => {
+  // Đo 1/11: nhãn "lỗi: tải video: HTTP 429" ~24 s. Trước đây gọi lại ngay bằng link kia, đoạn kế cũng tải (lại 429),
+  // rồi mỗi đoạn tự chờ 20 s; mẩu nhanh mất luôn.
+  let block = true;
+  const e = makeEnv({ status: (a, b) => (block && b !== 65535 ? 429 : 206) });
+  e.up('items', [e.item(A, 87000)]);
+  e.activeId = A; const v = e.video(A, 3); v.paused = true;
+  await e.tick();
+  const media = () => e.fetches.filter((f) => f.b !== 65535);
+  assert.equal(media().length, 1, 'số lượt tải phần âm thanh: ' + JSON.stringify(media().map((f) => [f.a, f.status])));
+  const t429 = media()[0].at;
+  await e.tick();
+  assert.equal(e.badge(), 'VI · lỗi: Douyin tạm chặn tải video (HTTP 429), thử lại sau 5 s');
+  e.up('items', [e.item(B, 60000)]);   // video kế tiếp tới trong lúc nghỉ
+  block = false;
+  const n0 = e.fetches.length;
+  while (e.now < t429 + 4900) await e.tick();
+  assert.equal(e.fetches.length, n0, 'không tải gì trong lúc nghỉ (cả mục lục, dịch sẵn, mẩu nhanh)');
+  assert.deepEqual(e.subs(), []);
+  for (let i = 0; i < 4; i++) await e.tick();
+  const next = e.fetches[n0];
+  assert.ok(next && next.at - t429 >= 5000 && next.at - t429 <= 5300, 'tải lại sau ' + (next && next.at - t429) + ' ms');
+  for (const k of [A + ':q3', A + ':0', B + ':0']) assert.ok(e.subs().includes(k), k + ' chưa gửi: ' + JSON.stringify(e.subs()));
+});
+
+await t('HTTP 429 lặp lại: nghỉ 5 s, 15 s, 45 s; tải được thì tính lại từ đầu; Retry-After dài hơn thì theo nó', async () => {
+  let block = 3, ra = null;   // số lượt tải phần âm thanh còn bị 429; header Retry-After
+  const e = makeEnv({ status: (a, b) => (b !== 65535 && block > 0 ? (block--, 429) : 206), retryAfter: () => ra });
+  e.up('items', [e.item(A, 12000)]);
+  e.activeId = A; e.video(A, 3).paused = true;
+  const times = () => e.fetches.filter((f) => f.b !== 65535).map((f) => (f.at - 1_000_000) / 1000);
+  for (let s = 0; s < 120 && !e.replies.has(A + ':0'); s++) await e.tick(1000);
+  const ta = times();
+  assert.deepEqual(ta.slice(1).map((x, i) => Math.floor(x - ta[i])), [5, 15, 45], JSON.stringify(ta));
+  await e.reply(A + ':0', { status: 'ok', cues: [] });
+  block = 1; ra = '30';
+  e.up('items', [e.item(B, 12000)]);
+  for (let s = 0; s < 60 && !e.replies.has(B + ':0'); s++) await e.tick(1000);
+  const tb = times().slice(ta.length);
+  assert.deepEqual(tb.slice(1).map((x, i) => Math.floor(x - tb[i])), [30], JSON.stringify(tb));   // không phải 45 s: đã tính lại
+  // Retry-After quá dài (600 s) chỉ theo tới 2 phút: mọi video đều không tải được trong lúc nghỉ.
+  await e.reply(B + ':0', { status: 'ok', cues: [] });
+  block = 1; ra = '600';
+  e.up('items', [e.item(C2, 12000)]);
+  for (let s = 0; s < 300 && !e.replies.has(C2 + ':0'); s++) await e.tick(1000);
+  const tc = times().slice(ta.length + tb.length);
+  assert.deepEqual(tc.slice(1).map((x, i) => Math.floor(x - tc[i])), [120], JSON.stringify(tc));
 });
 
 // ---- tap.main.js trong vm: đọc __pace_f, đồng hồ trình phát.

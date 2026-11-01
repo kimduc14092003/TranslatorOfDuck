@@ -30,10 +30,12 @@
   // kế tiếp là video sau video đang xem trong chính danh sách chứa nó. Trước đây mọi API gộp vào một danh sách, nên xem
   // trên feed mà trang tải thêm video liên quan (hay kết quả tìm) thì chúng chen vào hàng dịch sẵn. detail chỉ là một
   // video (trang /video/…), không có video kế tiếp: không thuộc danh sách nào.
+  // Trang tìm kiếm: kết quả đầu chỉ tới qua search/stream, kết quả sau qua search/single (đo 01/11), cùng danh sách.
+  // 'head': API trả phần đầu của danh sách (xem holdList).
   const PATHS = [
     ['/aweme/v1/web/tab/feed', 'feed'], ['/aweme/v2/web/module/feed', 'feed'], ['/aweme/v1/web/module/feed', 'feed'],
     ['/aweme/v1/web/aweme/related', 'related'], ['/aweme/v1/web/aweme/detail', null], ['/aweme/v1/web/aweme/post', 'post'],
-    ['/aweme/v1/web/general/search/single', 'search'], ['/aweme/v1/web/search/item', 'search'], ['/aweme/v1/web/mix/aweme', 'mix'],
+    ['/aweme/v1/web/general/search/single', 'search'], ['/aweme/v1/web/general/search/stream', 'search', 'head'], ['/aweme/v1/web/search/item', 'search'], ['/aweme/v1/web/mix/aweme', 'mix'],
     ['/aweme/v1/web/follow/feed', 'follow'], ['/aweme/v1/web/familiar/feed', 'familiar'], ['/aweme/v1/web/channel/feed', 'channel'],
   ];
   function classify(rawUrl) {
@@ -43,7 +45,7 @@
     const p = u.pathname;
     if (!p.startsWith('/aweme/') || p.startsWith('/aweme/v1/play')) return null;
     const known = PATHS.find(([x]) => p.startsWith(x));
-    return { path: known ? known[0] : p.replace(/\/\d+/g, '/:n'), known: !!known, list: known ? known[1] : null };
+    return { path: known ? known[0] : p.replace(/\/\d+/g, '/:n'), known: !!known, list: known ? known[1] : null, head: !!(known && known[2]) };
   }
 
   // ---- nhận dạng item theo hình dạng JSON (snake_case hoặc camelCase) ----
@@ -119,14 +121,55 @@
       if (x && typeof x === 'object') walk(x, out, source, depth + 1);
     }
   }
-  function handleJson(data, info, via) {
+  function handleJson(docs, info, via, chunked) {
     const items = [];
-    walk(data, items, via, 0);
+    for (const d of docs) walk(d, items, via, 0);
     // feed: tên danh sách video (PATHS) chứa item, theo đúng thứ tự trang hiện. Video từ API khác (vd. /aweme/favorite/:
     // video đã thích ở cột bên) không phải video sẽ lướt tới, không dùng để đoán video kế tiếp (feed = null).
     for (const it of items) it.feed = info.list;
-    emit('endpoint', { path: info.path, known: info.known, via, items: items.length });
-    if (items.length) emit('items', items);
+    // chunked, docs: chỉ để soi lỗi trong log sự kiện, không nơi nào đọc.
+    emit('endpoint', { path: info.path, known: info.known, via, items: items.length, ...(chunked ? { chunked: true, docs: docs.length } : {}) });
+    if (!items.length) return;
+    const h = info.list && held.get(info.list);
+    if (h && h.n > 0 && !info.head) h.items.push(...items);
+    else emit('items', items);
+  }
+  // content.js xếp video của một danh sách theo thứ tự nhận. search/stream (~800 KB) chỉ có item khi đã đọc hết thân;
+  // chưa đo nó hay search/single (các trang sau) đọc xong trước. Nếu single xong trước, video cuối của single sẽ dịch
+  // sẵn nhầm các kết quả đầu. Nên trong lúc một API 'head' còn đang đọc, item khác của cùng danh sách giữ lại, gửi ngay
+  // sau item của nó (giữ tối đa 20 s). Trả về hàm gọi khi API đó xong (thành công hay lỗi).
+  const held = new Map();   // danh sách -> { n: số API 'head' đang đọc, items }
+  function holdList(list) {
+    const h = held.get(list) || { n: 0, items: [] };
+    held.set(list, h);
+    h.n++;
+    let open = true;
+    const release = () => {
+      if (!open) return;
+      open = false;
+      if (--h.n === 0 && h.items.length) emit('items', h.items.splice(0));
+    };
+    setTimeout(release, 20000);
+    return release;
+  }
+  // Thân khai là JSON nhưng chia khúc ngay trong thân (đo 01/11 trên /general/search/stream/, 824 KB: dòng độ dài hex,
+  // xuống dòng, một khối JSON gọn, xuống dòng, …): JSON.parse cả thân hỏng ở vị trí 3, trước đây mất hết kết quả đầu
+  // của trang tìm kiếm. Khi đó đọc từng dòng bắt đầu bằng { hay [ (JSON gọn không có xuống dòng bên trong). Giới hạn
+  // 120 item của walk tính chung cho mọi khối; khối đầu (kết quả đầu) đọc trước nên luôn được giữ.
+  function handleText(text, info, via) {
+    let data;
+    try { data = JSON.parse(text); } catch (_) {
+      const docs = [];
+      for (const line of String(text).split('\n')) {
+        const s = line.trim();
+        if (s[0] !== '{' && s[0] !== '[') continue;   // dòng độ dài hex
+        try { docs.push(JSON.parse(s)); } catch (_) { /* dòng hỏng: bỏ */ }
+      }
+      if (docs.length) handleJson(docs, info, via, true);
+      else emit('parse_error', { path: info.path, via });
+      return;
+    }
+    handleJson([data], info, via);
   }
 
   // ---- T0: bọc fetch/XHR, chỉ đọc. Cài một lần, không bao giờ gán lại. ----
@@ -139,13 +182,19 @@
         const url = typeof input === 'string' ? input : (input && input.url) || String(input);
         const info = classify(url);
         if (info) {
+          const done = info.head ? holdList(info.list) : () => {};
           p.then(res => {
-            try {
-              const ct = (res.headers.get('content-type') || '').toLowerCase();
-              if (!ct.includes('json')) { emit('endpoint', { path: info.path, known: info.known, via: 'fetch', items: 0, nonJson: true }); return; }
-              res.clone().json().then(d => handleJson(d, info, 'fetch'), () => emit('parse_error', { path: info.path, via: 'fetch' }));
-            } catch (_) { /* không làm hỏng trang */ }
-          }, () => {});
+            const ct = (res.headers.get('content-type') || '').toLowerCase();
+            if (!ct.includes('json')) { emit('endpoint', { path: info.path, known: info.known, via: 'fetch', items: 0, nonJson: true }); return; }
+            // Bản sao thứ hai chỉ để đọc lại dạng chữ khi JSON.parse cả thân hỏng (thân chia khúc, xem handleText): lúc
+            // đó trang đã đọc response gốc, không sao chép được nữa. Đọc được JSON thì bỏ nó ngay.
+            const spare = res.clone();
+            const fail = () => emit('parse_error', { path: info.path, via: 'fetch' });
+            return res.clone().json().then(d => {
+              try { if (spare.body) spare.body.cancel().catch(() => {}); } catch (_) { /* bỏ qua */ }
+              handleJson([d], info, 'fetch');
+            }, () => spare.text().then(t => handleText(t, info, 'fetch'), fail));
+          }).then(done, done);   // lỗi ở đây không làm hỏng trang (đã bắt)
         }
       } catch (_) { /* không làm hỏng trang */ }
       return p;
@@ -165,13 +214,12 @@
           xhr.addEventListener('load', () => {
             try {
               const rt = xhr.responseType;
-              let data = null;
-              if (rt === '' || rt === 'text') data = JSON.parse(xhr.responseText);
-              else if (rt === 'json') data = xhr.response;
-              else { emit('endpoint', { path: info.path, known: info.known, via: 'xhr', items: 0, responseType: rt }); return; }
-              handleJson(data, info, 'xhr');
+              if (rt === '' || rt === 'text') handleText(xhr.responseText, info, 'xhr');
+              else if (rt === 'json') handleJson([xhr.response], info, 'xhr');
+              else emit('endpoint', { path: info.path, known: info.known, via: 'xhr', items: 0, responseType: rt });
             } catch (_) { emit('parse_error', { path: info.path, via: 'xhr' }); }
           });
+          if (info.head) xhr.addEventListener('loadend', holdList(info.list));   // loadend: sau load, cả khi lỗi hay huỷ
         }
       } catch (_) { /* không làm hỏng trang */ }
       return origSend.apply(this, arguments);

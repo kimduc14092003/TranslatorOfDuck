@@ -89,7 +89,8 @@ execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days
   '-addext', 'subjectAltName=DNS:www.douyin.com,DNS:v3-web.douyinvod.com', '-keyout', path.join(TMP, 'k.pem'), '-out', path.join(TMP, 'c.pem')], { stdio: 'ignore' });
 const ids = ['7500000000000000001', '7500000000000000002', '7500000000000000003', '7500000000000000004'];
 const FAV = '7500000000000000009';   // video đã thích ở cột bên, không nằm trong feed
-const fileFor = { [ids[0]]: 'speech12', [ids[1]]: 'speech12', [ids[2]]: 'song6', [ids[3]]: 'long100', [FAV]: 'speech12' };
+const SIDS = ['7500000000000000011', '7500000000000000012'];   // kết quả tìm kiếm, chỉ có trong search/stream
+const fileFor = { [ids[0]]: 'speech12', [ids[1]]: 'speech12', [ids[2]]: 'song6', [ids[3]]: 'long100', [FAV]: 'speech12', [SIDS[0]]: 'speech12', [SIDS[1]]: 'speech12' };
 const DUR = { speech12: 12000, song6: 6000, long100: 100000 };
 const aweme = (id, desc) => ({ aweme_id: id, desc, duration: DUR[fileFor[id]], text_extra: [],
   video: { play_addr: { uri: 'v0d00f' + id, url_list: [`https://v3-web.douyinvod.com/x/${fileFor[id]}.mp4`] }, bit_rate: [] } });
@@ -111,6 +112,18 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body styl
   };
   window.activate(0);
 </script></body></html>`;
+// Trang tìm kiếm: kết quả đầu chỉ tới qua /general/search/stream/, thân khai là JSON nhưng chia khúc như đo trên Douyin
+// thật 01/11 (dòng độ dài hex, xuống dòng, một khối JSON gọn, xuống dòng, …). Bấm kết quả đầu: mở ?modal_id= với một
+// <video> đang phát; kết quả thứ hai (khối JSON sau) là video kế tiếp của danh sách tìm kiếm.
+const searchStream = [{ status_code: 0, data: [{ type: 1, aweme_info: aweme(SIDS[0], '吉他弹唱') }] }, { status_code: 0, data: [{ type: 1, aweme_info: aweme(SIDS[1], '情歌') }] },
+  { status_code: 0, has_more: 1, cursor: 2 }].map(d => { const j = JSON.stringify(d); return Buffer.byteLength(j).toString(16) + '\n' + j + '\n'; }).join('');
+const SEARCH_PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0"><div id="modal"></div>
+<script>
+  fetch('/aweme/v1/web/general/search/stream/?keyword=x').then(r => r.text()).then(() => new Promise(r => setTimeout(r, 500))).then(() => {
+    history.pushState(null, '', location.pathname + '?modal_id=${SIDS[0]}');
+    document.getElementById('modal').innerHTML = '<video muted playsinline autoplay src="/media/${SIDS[0]}.mp4" style="width:640px;height:480px;display:block"></video>';
+  });
+</script></body></html>`;
 const playRequested = new Set();
 const cdnSong = [];   // lần tải phần âm thanh video bài hát (lần đầu bị treo)
 const playRequestedAt = {};
@@ -120,6 +133,8 @@ const douyin = https.createServer({ key: fs.readFileSync(path.join(TMP, 'k.pem')
   const send = (s, h, b) => { res.writeHead(s, h); res.end(b); };
   if (req.headers.host.startsWith('www.douyin.com')) {
     if (u.pathname === '/') return send(200, { 'content-type': 'text/html; charset=utf-8' }, PAGE);
+    if (u.pathname.startsWith('/search/')) return send(200, { 'content-type': 'text/html; charset=utf-8' }, SEARCH_PAGE);
+    if (u.pathname.startsWith('/aweme/v1/web/general/search/stream')) return send(200, { 'content-type': 'application/json' }, searchStream);
     if (u.pathname.startsWith('/aweme/v1/web/tab/feed')) { feedServedAt = feedServedAt || Date.now(); return send(200, { 'content-type': 'application/json' }, JSON.stringify(feed)); }
     if (u.pathname.startsWith('/aweme/v1/web/aweme/favorite')) return send(200, { 'content-type': 'application/json' }, JSON.stringify({ status_code: 0, aweme_list: [aweme(ids[0], '今天吃火锅'), aweme(FAV, '收藏')] }));
     if (u.pathname.startsWith('/aweme/v1/play/')) {
@@ -131,7 +146,8 @@ const douyin = https.createServer({ key: fs.readFileSync(path.join(TMP, 'k.pem')
     if (!u.pathname.startsWith('/media/')) return send(404, {}, '');
   }
   // CDN giả, có hỗ trợ Range (video trên trang cũng cần Range để tua được).
-  const body = u.pathname.startsWith('/media/') ? MEDIA[fileFor[ids[Number(u.pathname.slice(7, -4))]]] : MEDIA[u.pathname.split('/').pop().replace('.mp4', '')];
+  const mk = u.pathname.slice(7, -4);   // /media/<số thứ tự trong feed hoặc id>.mp4
+  const body = u.pathname.startsWith('/media/') ? MEDIA[fileFor[mk] || fileFor[ids[Number(mk)]]] : MEDIA[u.pathname.split('/').pop().replace('.mp4', '')];
   const h = { 'access-control-allow-origin': 'https://www.douyin.com', 'access-control-expose-headers': 'content-range', 'content-type': 'video/mp4', 'accept-ranges': 'bytes' };
   if (!body) return send(404, h, '');
   const m = /bytes=(\d+)-(\d*)/.exec(req.headers.range || '');
@@ -241,7 +257,28 @@ await page.evaluate(() => {
 long.clock85 = await waitSub(35.0, 'Đi thôi!');
 await page.evaluate(() => { window.player = undefined; });
 
-console.log({ health, first, atGap, atSecond, delayed, savedDelay, status, song, songOff, long, providerHits, cdnSongGapsMs: cdnSong.map(t => t - cdnSong[0]) });
+// Mở video từ trang tìm kiếm (đo 01/11: trước đây không có nhãn, không dịch vì không đọc được search/stream).
+const spage = await ctx.newPage();
+spage.on('pageerror', e => errors.push(String(e)));
+await spage.goto('https://www.douyin.com/search/test');
+const search = { sub: null, badge: null };
+for (let i = 0; i < 60 && search.sub !== 'Chào cả nhà, hôm nay đi ăn lẩu.'; i++) {
+  await spage.waitForTimeout(250);
+  Object.assign(search, await spage.evaluate(async () => {
+    const v = document.querySelector('#modal video');
+    if (!v || !/modal_id=/.test(location.search)) return {};
+    v.pause(); v.currentTime = 1.2;
+    await new Promise(r => setTimeout(r, 300));
+    const host = [...document.querySelectorAll('div')].find(d => d.shadowRoot && d.shadowRoot.querySelector('.sub'));
+    if (!host) return {};
+    const sub = host.shadowRoot.querySelector('.sub'), badge = host.shadowRoot.querySelector('.badge');
+    return { sub: sub.style.display === 'block' ? sub.textContent : null, badge: badge.style.display === 'block' ? badge.textContent : null };
+  }));
+}
+for (let i = 0; i < 20 && !playRequested.has(SIDS[1]); i++) await spage.waitForTimeout(250);
+search.prefetchedNext = playRequested.has(SIDS[1]);
+
+console.log({ health, first, atGap, atSecond, delayed, savedDelay, status, song, songOff, long, search, providerHits, cdnSongGapsMs: cdnSong.map(t => t - cdnSong[0]) });
 console.log('server log:\n' + alphaLog.trim());
 const checks = {
   'popup sees the server': /Server chạy/.test(health),
@@ -271,6 +308,9 @@ const checks = {
   'first translation got HTTP 429, server retried (first video still has subs)': providerHits.rateLimited > 1 && first.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
   'player clock 50 s ahead of <video> (feed seek): sub follows the player': long.clock85.sub === 'Đi thôi!',
   'audio-only upload: chunk audio ≈ 26/38/38/22 s': JSON.stringify([...long.chunks].sort((a, b) => a - b)) === '[22,26,38,38]',
+  'search page: video opened from chunked search/stream results is translated (request sent, badge shown, sub at 1.2 s)':
+    new RegExp(SIDS[0] + '( \\[[^\\]]+\\])? ok').test(alphaLog) && !!search.badge && search.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
+  'search page: next search result (later JSON block of search/stream) prefetched': search.prefetchedNext,
   'no page errors': errors.length === 0,
 };
 console.log('\nCHECKS');
