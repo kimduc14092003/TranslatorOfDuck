@@ -418,7 +418,7 @@ Chủ dự án muốn hiểu cả video bài hát. Log ngày 31/10: 35/232 video
 
 Còn mở:
 - **Nhận dạng lời hát kém hơn lời nói** khi nhạc to hoặc hát luyến: có chỗ sai chữ, câu dịch lệch nghĩa.
-- **Đánh dấu ♪ theo từng câu** dựa vào độ dài chữ (> 0,33 s/chữ), nên câu nói kéo dài, la hét có thể bị đánh dấu ♪ (ví dụ "冲刺冲 → Tăng tốc nào!"). Trong một đoạn có cả câu hát lẫn câu nói, câu hát không đủ dài có thể không có ♪. Đã đo trên 13 video thật ngày 1/11 (§6l): ♪ đúng khoảng 90% số dòng được gắn, phủ khoảng 89% dòng hát có sub; rap và hô vè không bao giờ có ♪. Lô 2 (22 video mới, §6n), luật trước khi sửa: với Fun-ASR, ♪ đúng 93% nhưng chỉ phủ 59% dòng hát (nhiều bài hát nhanh); với model dự phòng, video đọc chậm (thơ, thiền, 三字经) bị gắn ♪ hàng loạt.
+- **Đánh dấu ♪ theo từng câu** dựa vào độ dài chữ (> 0,33 s/chữ), nên câu nói kéo dài, la hét có thể bị đánh dấu ♪ (ví dụ "冲刺冲 → Tăng tốc nào!"). Trong một đoạn có cả câu hát lẫn câu nói, câu hát không đủ dài có thể không có ♪. Đã đo trên 13 video thật ngày 1/11 (§6l): ♪ đúng khoảng 90% số dòng được gắn, phủ khoảng 89% dòng hát có sub; rap và hô vè không bao giờ có ♪. Lô 2 (22 video mới, §6n), luật trước khi sửa: với Fun-ASR, ♪ đúng 93% nhưng chỉ phủ 59% dòng hát (nhiều bài hát nhanh); với model dự phòng, video đọc chậm (thơ, thiền, 三字经) bị gắn ♪ hàng loạt. Sau đó chủ dự án quyết định đọc theo nhịp (三字经, đồng dao, vè) tính là hát; số tính lại ở §6n.
 - **Server ngắt ASR khi người xem tua đi**, trước khi lưu `.asr.` (có từ trước). Sửa được bằng cách để lệnh ASR chạy nốt rồi lưu, nhưng nên biết trước lệnh bị ngắt có tính tiền không.
 - **Bản quyền:** khi có cache dùng chung cho nhiều người, việc lưu và phát bản dịch lời bài hát cần xem lại.
 
@@ -634,7 +634,7 @@ Hai luật ứng viên ở §6l được chọn sau khi nhìn lỗi của lô 1,
   - 2 người phản biện không biết cờ của hệ thống. Một người tự viết bộ đo âm thanh riêng. Mỗi dòng mà một ứng viên đổi cờ được cả hai người xét.
   - 1 agent phân tích tự viết lại luật từ code, và 1 critic.
   - Nhãn cuối: 313 nói, 150 hát, 9 rap, 13 không rõ.
-- **Quyết định.** Script của tôi, agent phân tích và critic tính độc lập ra cùng các số dưới đây.
+- **Quyết định** (theo nhãn lúc đo: đọc theo nhịp là lời nói; theo nhãn mới kết luận vẫn vậy, xem mục quyết định của chủ dự án). Script của tôi, agent phân tích và critic tính độc lập ra cùng các số dưới đây.
   - (a): sửa 4 dòng, hỏng 0 (F 2/0, Q 2/0). Chế độ thường mất 70 dòng nói thay vì 74 (195 s thay vì 203 s). **Áp.**
   - (b): sửa 1 (ở F), hỏng 5 (đều ở Q: 4 dòng ngâm thơ và câu "来关掉。"). Chế độ thường mất thêm 6 dòng. **Không áp.** Còn 1 dòng tranh chấp ("啊，姐姐。", cả hai người phản biện đều không chắc); tính là hỏng thì hỏng 6, quyết định không đổi.
   - (a)+(b): sửa 5, hỏng 5. Không áp.
@@ -656,14 +656,14 @@ Hai luật ứng viên ở §6l được chọn sau khi nhìn lỗi của lô 1,
   - Thay đổi chỉ chạm đoạn cả bài có câu nói nhanh: 8/837 dòng ở hai lô.
   - Tăng thì mọi kết quả `.vi.` và `.vi.lyr.` bị bỏ, phải nhận dạng và dịch lại. Lý do: file `.asr.` chỉ còn ở đoạn có hát, và tên file đó cũng có phiên bản.
   - File cũ của các đoạn đó giữ cách cũ (♪ cho câu nói; chế độ thường bỏ cả đoạn), không tệ hơn trước. Một đoạn có thể lệch giữa hai chế độ nếu chỉ một chế độ còn file cũ.
-- **Luật alpha-8 trước (a), trên lô 2** (tính hát với nói, bỏ rap và dòng không rõ; ba số là độ chính xác của ♪, độ phủ, tỉ lệ dòng nói bị ♪):
+- **Luật alpha-8 trước (a), trên lô 2, theo nhãn lúc đo** (tính hát với nói, bỏ rap và dòng không rõ; ba số là độ chính xác của ♪, độ phủ, tỉ lệ dòng nói bị ♪):
   - Cả lô: 0,602 / 0,747 / 23,6%.
   - Tầng F: 0,93 / 0,589 / 2,7%. Độ chính xác gần lô 1, độ phủ thấp hơn vì nhiều bài hát nhanh.
   - Tầng Q: 0,457 / 0,983 / 42,4%.
   - 6 video feed ra sub (đều ở F): 0,875 / 0,368 / 1,2%. Trên feed, lỗi chính là thiếu ♪ ở bài hát nhanh.
   - Gộp hai lô: 0,684 / 0,792. Riêng phần Fun-ASR: 0,913 / 0,720.
   - Sau (a): cả lô 0,615 / 0,747 / 22,4%; F 0,964 / 0,589 / 1,4%; Q 0,465 / 0,983 / 41,2%; gộp hai lô 0,706 / 0,792. Feed không đổi.
-- **Lỗi chính còn lại:**
+- **Lỗi chính còn lại, theo nhãn lúc đo** (theo nhãn mới ở mục quyết định của chủ dự án):
   - Đọc chậm bị coi là hát: 66/70 dòng gắn nhầm ở Q.
     - Bé đọc 三字经 có 23/23 dòng ♪ (cả đoạn là bài hát); 三字经 tiếng Quảng 28/39; thiền 12/27; thơ 3/16.
     - Trung vị độ dài chữ của câu nói trong 4 video này là 0,34 s, trên ngưỡng 0,33.
@@ -671,7 +671,7 @@ Hai luật ứng viên ở §6l được chọn sau khi nhìn lỗi của lô 1,
   - Số này phụ thuộc vào luật gán nhãn "đọc theo nhịp mà không có giai điệu là lời nói".
     - Ba video đọc (hai video 三字经 và video thơ, không gồm video thiền) chiếm 54/74 dòng gắn nhầm. Bỏ chúng thì độ chính xác 0,85 và dòng nói bị ♪ còn 8,5%.
     - Critic thấy dấu hiệu, chưa chắc, rằng 三字经 được đọc theo lưới nhịp 0,32 s, gần với hô vè. Ở video tiếng Quảng, nhịp đó có thể đến từ nhạc nền.
-    - **Cần chủ dự án quyết:** đọc theo nhịp (三字经, đồng dao, vè) có nên hiện ♪ không, và ở chế độ thường có nên giữ phụ đề không.
+    - Chủ dự án đã quyết: đọc theo nhịp tính là hát (mục ngay dưới).
   - Hát nhanh thiếu ♪ ở tầng F: 35/37 dòng, câu ≤ 0,33 s/chữ (cover DJ 0/10, 雅俗共赏, 有何不可).
   - Chưa tách được phần do nội dung với phần do ASR, vì mọi video đọc chậm rơi vào tầng Q. Với lời nói hội thoại, trung vị độ dài chữ của hai ASR gần bằng nhau (0,16 và 0,15 s). qwen có đuôi dài hơn (19% câu > 0,33 so với 3%), nhưng mẫu nhỏ.
 - **Hạn chế của phép đo:**
@@ -690,11 +690,36 @@ Hai luật ứng viên ở §6l được chọn sau khi nhìn lỗi của lô 1,
   - Mỗi kiểm tra mới trượt trên code trước nó (HEAD, hay bản sửa đầu với ca sung = 0).
   - Sáu bản đột biến đều bị bắt: bỏ điều kiện tiếng đệm, bỏ điều kiện quá nửa, chọn câu theo mốc đầu, dùng `<` thay `≤`, chế độ thường lọc theo câu như bản sửa đầu, bỏ luật dưới 4 chữ Hán.
   - Soát độc lập 2 vòng. Vòng 1 có 2 verifier (code; độ khớp với phép đo và tài liệu). Vòng 2 có 1 verifier kiểm lại các chỗ sửa. Hai ca test thêm sau vòng 2 tôi tự kiểm bằng hai bản đột biến của verifier.
+- **Quyết định của chủ dự án (1/11): đọc theo nhịp (三字经, đồng dao, vè) tính là hát.**
+  - Chủ dự án trả lời "tính là hát" cho câu hỏi về 三字经, đồng dao, vè. "Hát" (có ♪; chế độ thường bỏ) giờ gồm hát có giai điệu và đọc theo nhịp những bài có vần, nhịp cố định. Vẫn là lời nói: ngâm thơ tự do (thơ 艾青), giọng hướng dẫn thiền, nói chuyện thường.
+  - Chưa rõ: rap, và video livestream bán hàng 喊麦 ở lô 1. §6l gọi video này là "hô vè", nhưng nó tự gọi là 说唱 (rap), lời ứng tác trên nền nhạc. Xếp nó vào "vè" là cách hiểu của agent. Số bên dưới tính hai cách: A (喊麦 là hát) và B (喊麦 để riêng như rap).
+  - **Không đổi code; người dùng thấy y như trước.** Chỉ cách chấm thay đổi: 51 dòng ♪ trước đây tính là sai, nay tính là đúng.
+  - Gán lại nhãn:
+    - 51 dòng đọc 三字经 ở lô 2 thành hát (23 dòng của bé, 28 dòng của hai cha con; 11 dòng trò chuyện vẫn là nói).
+    - Cách hiểu A: thêm 21 dòng 喊麦, cộng 4 dòng giám khảo phân vân giữa hát và đọc theo nhịp.
+    - Rap (18 dòng 崂山道士 ở lô 1, 9 dòng rap trong lớp ở lô 2) để riêng.
+  - Luật hiện hành (có (a)), theo cách tính mới, ba số như trên:
+    - Lô 2, ngoài mẫu: 0,896 / 0,811 / 7,3% (theo nhãn lúc đo: 0,615 / 0,747 / 22,4%).
+      - Tầng F 0,964 / 0,589 / 1,4%; tầng Q 0,866 / 0,991 / 14,9%.
+      - 6 video feed: 0,875 / 0,368 / 1,2% (không đổi).
+    - Lô 1: A 0,955 / 0,656 / 1,4% (25 dòng 喊麦 không có ♪); B 0,955 / 0,887 / 1,4%.
+    - Gộp hai lô: A 0,911 / 0,761 / 4,6%, phần Fun-ASR 0,959 / 0,624. B 0,911 / 0,831 / 4,6%, phần Fun-ASR 0,959 / 0,720. Nếu rap cũng là hát, độ phủ gộp là 0,698 (A) hay 0,706 (B).
+    - Số lô 1 và số gộp có phần trong mẫu, vì (a) được chọn từ lỗi của lô 1.
+    - Chế độ thường, lô 2: mất 19 dòng nói (63 s) với (a), 23 dòng (71 s) trước (a); 12 dòng trong đó thuộc video thiền. Các dòng đọc 三字经 không có sub ở chế độ thường là đúng ý; 11 dòng trò chuyện vẫn có.
+  - 三字经 có ♪ chỉ vì model dự phòng cho độ dài chữ 0,36 s. Đó cũng là cơ chế đang gắn ♪ nhầm cho thiền và thơ; hệ thống không nhận ra nhịp. Đọc nhanh hơn 0,33 s/chữ thì sẽ không có ♪. 喊麦 và rap vẫn hiện như lời nói ở chế độ thường, và không có ♪ ở chế độ lời bài hát.
+  - Luật (a) không đổi kết luận: 8 dòng nó đổi ở hai lô đều là lời nói thường.
+    - Rủi ro còn treo: dòng hát hay đọc theo nhịp mà nhanh (≤ 0,20 s/chữ, ≥ 3 chữ) sẽ mất ♪ nếu nằm trong đoạn cả bài, ví dụ một đoạn rap giữa bài hát.
+    - Dòng nhanh như vậy ở hai lô: 30/48 dòng 喊麦 và rap (lô 1: 21/39; lô 2: 9/9 dòng rap), 17/221 dòng hát (đều ở lô 2), 0/51 dòng 三字经. Chưa dòng nào nằm trong đoạn cả bài.
+  - Lỗi chính đổi chỗ:
+    - Bài hát nhanh, 喊麦 và rap không có ♪: 37 dòng hát ở tầng F lô 2, 25 dòng 喊麦 ở lô 1 (cách hiểu A), cộng 27 dòng rap nếu tính. Độ dài chữ không tách được loại này; cần đo nhịp từ âm thanh (§8).
+    - Lời nói chậm bị ♪: thiền 12 dòng, thơ 3 dòng ở mỗi lô. Ở chế độ thường, các dòng này mất.
+    - Chưa biết Fun-ASR có gắn ♪ cho 三字经 không, vì hai video đọc đều chạy model dự phòng.
 - **Lần đo sau:**
   - Ghi trước luật mới cho lời nói chậm trên model dự phòng.
   - Cần video đọc chậm chạy trên cả Fun-ASR lẫn qwen, nên phải có Fun-ASR trở lại.
   - Thêm livestream bán hàng và bài hát nhanh nằm trong đoạn cả bài (rủi ro của (a)).
   - Quy trình: agent phân xử có thư mục được ghi; người phản biện không thấy nhãn chuẩn; giám khảo chạy trong thư mục chỉ có dữ liệu mù.
+  - Nhãn: đọc theo nhịp (三字经, đồng dao, vè) gán là hát; 喊麦 và rap gán nhãn riêng tới khi chủ dự án quyết.
 - Mẫu âm thanh, ảnh chụp và cache đo đã xoá sau khi đo. Nhãn và số liệu chỉ để trên máy.
 
 ## 7. Việc tiếp theo trên Mac
@@ -721,6 +746,6 @@ Hai luật ứng viên ở §6l được chọn sau khi nhìn lỗi của lô 1,
 
 - Đo hiệu quả bước rút gọn dòng quá dài trên dữ liệu thật. Ở S3 có 44/99 dòng vượt 17 ký tự/giây.
 - Thu thêm khoảng 100 mẫu có lời nói, kèm bản chép tay để đo tỉ lệ lỗi chữ (CER).
-- Bộ phân loại nói/hát theo âm thanh (ví dụ SenseVoice) thay cho đặc trưng văn bản.
+- Bộ phân loại nói/hát theo âm thanh (ví dụ SenseVoice) thay cho đặc trưng văn bản. Từ 1/11 đọc theo nhịp tính là hát, nên bộ này đáng giá hơn: vè, 喊麦, rap và bài hát nhanh không bắt được bằng độ dài chữ (§6n).
 - Bỏ khoảng lặng và nhạc trước khi gửi ASR (VAD), vì Fun-ASR tính tiền theo giây.
 - Bảng tên riêng và xưng hô theo cả video. Cache dùng chung giữa người dùng khi có server thật.
