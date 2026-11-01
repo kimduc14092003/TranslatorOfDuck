@@ -462,16 +462,23 @@ export function isFiller(zh) {
   const words = s.replace(/\p{Script=Han}/gu, ' ').split(/[\p{P}\p{S}\s]+/u).filter(Boolean);
   return !!(han || words.length) && (!han || FILLER.test(han)) && words.every(w => SOUND.test(w) || SOUND_TWICE.test(w));
 }
+// Câu nói nhanh trong đoạn cả bài (≥ 3 chữ Hán, trung vị ≤ 0,20 s/chữ): lời chào, câu hỏi người qua đường, tiêu đề đọc
+// lên ngay trước hay giữa bài hát, không phải lời hát. Đo trên Douyin thật: lô 1 (13 video) có 4 dòng nói bị ♪ chỉ vì
+// luật cả bài, chữ 0,16–0,18 s; lô 2 (22 video mới, ngưỡng định trước khi đo) sửa 4 dòng, không hỏng dòng hát nào.
+// Ngưỡng sát: dòng hát nhanh nhất trong đoạn cả bài ở lô 2 là 0,24–0,25 s/chữ, ngưỡng 0,25 làm hỏng cả hai (HANDOFF §6n).
+// Tiếng đệm nói nhanh ("哈哈哈哈") không tính: vẫn là dòng hát, rồi bị bỏ như mọi dòng hát chỉ có tiếng đệm.
+const SONG_TALK = 0.20;
+const talkInSong = (x) => !!x && !x.sung && x.medCharDur != null && x.medCharDur <= SONG_TALK && ((x.text || '').match(HAN) || []).length >= 3 && !isFiller(x.text);
 // Dòng là dòng hát khi quá nửa thời gian nói của nó nằm trong câu hát. Trước đây chỉ xét mốc bắt đầu: segmentCues gộp
 // một dòng nói rất ngắn ("好。") vào dòng hát ngay sau, dòng gộp bắt đầu trong câu nói nên mất ♪ (đợt soát 31/10).
+// Đoạn cả bài thì mọi dòng là dòng hát, trừ dòng có câu của nó (câu trùng thời gian nhiều nhất) là câu nói nhanh.
 export function lyricCues(r, cls, split) {
   const wholeSong = cls.label === 'singing';
-  const sungShare = (c) => {
-    const a = c.start, b = Math.max(c.se || c.end, a + 0.01);
-    return split.sentences.reduce((s, x) => s + (x.sung ? Math.max(0, Math.min(b, x.end) - Math.max(a, x.start)) : 0), 0) / (b - a);
-  };
+  const overlap = (c, x) => Math.max(0, Math.min(Math.max(c.se || c.end, c.start + 0.01), x.end) - Math.max(c.start, x.start));
+  const sungShare = (c) => split.sentences.reduce((s, x) => s + (x.sung ? overlap(c, x) : 0), 0) / (Math.max(c.se || c.end, c.start + 0.01) - c.start);
+  const own = (c) => split.sentences.reduce((best, x) => (!best || overlap(c, x) > overlap(c, best) ? x : best), null);
   const hasHan = (t) => /\p{Script=Han}/u.test(t);
-  return segmentCues(r).map(c => ({ ...c, sung: wholeSong || sungShare(c) > 0.5 }))
+  return segmentCues(r).map(c => ({ ...c, sung: sungShare(c) > 0.5 || (wholeSong && !talkInSong(own(c))) }))
     .filter(c => !((c.sung || !hasHan(c.zh)) && isFiller(c.zh)));
 }
 
@@ -609,20 +616,25 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   if (opts.from != null) asr = windowAsr(asr, opts.offset || 0, opts.from, opts.to, preRoll);
   const cls = classifySpeech(meta, asr);
   const split = splitSung(asr);
+  // Cả đoạn là bài hát khi: lặp lời, hoặc quá nửa số câu là câu hát, hoặc chữ kéo dài kèm hashtag nhạc.
+  // Hashtag nhạc cộng nói thưa (vlog có nhạc nền, nhiều khoảng lặng) thì không đủ: chỉ lọc từng câu.
+  const song = cls.label === 'singing' && ((cls.repeat && slowChars(cls.medCharDur)) || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33));
+  // song: kết quả của đoạn cả bài khác nhau ở hai chế độ kể cả khi sung = 0 (điệp khúc câu 3 chữ), nên server và
+  // extension không dùng chung nó giữa hai chế độ (noSinging, modeFree).
   const base = { asr: asr.provider, ...(asr.model && asr.model !== FUNASR_MODEL ? { asrModel: asr.model } : {}), ...(saved ? { asrCached: true } : {}), seconds: audio.seconds, heard: (asr.text || '').slice(0, 40), sung: split.sung, sentences: split.total,
-    debug: { features: cls, sentences: split.sentences } };
+    ...(song ? { song: true } : {}), debug: { features: cls, sentences: split.sentences } };
   const skip = (label) => ({ status: 'skipped', label, ...base, timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio } });
   if (cls.label !== 'speech' && cls.label !== 'singing') return skip(cls.label);
   let cues;
   if (opts.lyrics) {
-    // Chế độ lời bài hát: không bỏ câu hát, đánh dấu để hiện "♪". Cả đoạn là bài hát theo đúng điều kiện bên dưới.
-    const song = cls.label === 'singing' && ((cls.repeat && slowChars(cls.medCharDur)) || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33));
+    // Chế độ lời bài hát: không bỏ câu hát, đánh dấu để hiện "♪".
     cues = lyricCues(asr, { ...cls, label: song ? 'singing' : 'speech' }, split);
     if (!cues.length) return skip(song ? 'singing' : 'too_short');
+  } else if (song) {
+    // Đoạn cả bài bị bỏ, trừ đúng các dòng chế độ lời bài hát hiện không có ♪ (câu nói nhanh), để hai chế độ khớp nhau.
+    cues = lyricCues(asr, { ...cls, label: 'singing' }, split).filter(c => !c.sung).map(({ sung: _s, ...c }) => c);
+    if ((cues.map(c => c.zh).join('').match(HAN) || []).length < 4) return skip('singing');
   } else {
-    // Cả đoạn là bài hát khi: lặp lời, hoặc quá nửa số câu là câu hát, hoặc chữ kéo dài kèm hashtag nhạc.
-    // Hashtag nhạc cộng nói thưa (vlog có nhạc nền, nhiều khoảng lặng) thì không đủ: chỉ lọc từng câu.
-    if (cls.label === 'singing' && ((cls.repeat && slowChars(cls.medCharDur)) || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33))) return skip('singing');
     if (((split.r.text || '').match(HAN) || []).length < 4) return skip('singing');
     // Dòng chỉ có tiếng đệm chữ Latin ("yeah yeah") bỏ như ở chế độ lời bài hát: đoạn không có câu hát thì hai chế độ
     // dùng chung một kết quả (noSinging ở server.mjs), nên phải ra cùng các dòng.

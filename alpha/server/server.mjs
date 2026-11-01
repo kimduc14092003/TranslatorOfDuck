@@ -123,10 +123,11 @@ async function handleSubtitles(req, res) {
   // nào thì hai chế độ ra cùng một kết quả: dùng lại file của chế độ kia, đổi chế độ không phải dịch lại.
   // Không có câu hát nào: sung (số câu hát) = 0, không phải bài hát, không có dòng ♪. Cả đoạn là bài hát mà không câu
   // nào tự đủ dài để tính là câu hát (điệp khúc câu 3 chữ; ASR Gemini không có mốc từng chữ) thì sung = 0 mà mọi dòng là
-  // dòng hát: trước đây chế độ thường nhận nhầm kết quả đó, hiện cả các dòng ♪.
+  // dòng hát: trước đây chế độ thường nhận nhầm kết quả đó, hiện cả các dòng ♪. Đoạn cả bài (song) cũng không dùng chung:
+  // chế độ thường chỉ giữ câu nói nhanh, kết quả có thể là ok, sung = 0, không dòng ♪ mà vẫn thiếu lời hát (§6n).
   const lyrics = meta.lyrics === true;
   const MT = lyrics ? 'vi.lyr' : 'vi';
-  const noSinging = (x) => x && typeof x.sung === 'number' && x.sung === 0 && x.label !== 'singing' && !(x.cues || []).some(c => c.sung);
+  const noSinging = (x) => x && typeof x.sung === 'number' && x.sung === 0 && x.label !== 'singing' && !x.song && !(x.cues || []).some(c => c.sung);
   const file = cacheFile(fileSpan, MT);
   const key = file;
   const otherFile = cacheFile(fileSpan, lyrics ? 'vi' : 'vi.lyr');
@@ -214,7 +215,7 @@ async function handleSubtitles(req, res) {
     const t = out.timings || {};
     const why = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch không ra dòng nào' };
     console.log(`${new Date().toLocaleTimeString()} ${id}${where} ${out.status}${out.label && out.status !== 'ok' ? ' (' + (why[out.label] || out.label) + ')' : ''}` +
-      `${out.cues ? ' ' + out.cues.length + ' dòng' : ''}${chunked && meta.from > 0 && out.status === 'ok' && !out.cached ? ` (ngữ cảnh ${out.context || 0} dòng${out.contextFar ? ' ở đoạn xa' : ''}${out.before ? `, lời ngay trước ${out.before} câu` : ''})` : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu${!lyrics ? `, ${out.sung ?? 0} câu hát bị bỏ` : out.status === 'ok' ? `, ${out.cues.filter(c => c.sung).length} dòng hát được dịch` : ''}` +
+      `${out.cues ? ' ' + out.cues.length + ' dòng' : ''}${chunked && meta.from > 0 && out.status === 'ok' && !out.cached ? ` (ngữ cảnh ${out.context || 0} dòng${out.contextFar ? ' ở đoạn xa' : ''}${out.before ? `, lời ngay trước ${out.before} câu` : ''})` : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu${!lyrics ? (out.song && out.status === 'ok' ? ', cả đoạn là bài hát: chỉ giữ câu nói' : `, ${out.sung ?? 0} câu hát bị bỏ`) : out.status === 'ok' ? `, ${out.cues.filter(c => c.sung).length} dòng hát được dịch` : ''}` +
       ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${out.asrCached ? 'dùng lại' : (t.asrMs ?? '-') + ' ms'}${out.asrModel ? ' (' + out.asrModel + ')' : ''}, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : ''}` +
       (job.startedAt - job.at > 300 ? ` · xếp hàng ${job.startedAt - job.at} ms` : '') +
       (out.heard ? `\n    nghe được: ${out.heard}` : ''));

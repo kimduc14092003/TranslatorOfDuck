@@ -76,17 +76,17 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
   1. ffmpeg chuyển sang mp3 16 kHz, có `aresample first_pts=0`.
   2. Fun-ASR; hết hạn mức thì tự chuyển sang `qwen-audio-3.1-asr-flash` (§6k).
   3. `windowAsr`: đổi mốc về thời gian video, chỉ giữ câu **bắt đầu** trong đoạn.
-  4. `classifySpeech` và `splitSung`: lọc hát theo từng câu, trung vị > 0,33 s/chữ hoặc lời lặp.
+  4. `classifySpeech` và `splitSung`: lọc hát theo từng câu, trung vị > 0,33 s/chữ hoặc lời lặp. Trong đoạn cả bài, dòng có câu là câu nói nhanh (≥ 3 chữ Hán, ≤ 0,20 s/chữ) không phải lời hát; đủ điều kiện ở §6n.
   5. `segmentCues`: ≤ 7 s và ≤ 16 chữ Hán mỗi dòng.
   6. `translate`: kèm 3 dòng cuối của đoạn trước làm ngữ cảnh; rút gọn dòng quá dài.
-- **Đổi logic thì tăng `PIPELINE_VERSION`** để bỏ kết quả cũ trong cache.
+- **Đổi logic thì tăng `PIPELINE_VERSION`** để bỏ kết quả cũ trong cache. Ngoại lệ có lý do ghi ở §6j và §6n: thay đổi nhỏ mà file cũ vẫn dùng được.
 
 ### Kiểm thử (đều chạy được không cần key)
 
 | Lệnh | Kiểm tra gì |
 |---|---|
-| `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới, đánh dấu dòng hát, tiếng đệm trong lời hát, dòng nói ngắn gộp vào dòng hát (18 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới ở cả hai chế độ lời bài hát, `rank`), Gemini hết lượt trong ngày (9 kiểm tra). `asr-fallback-test.mjs`: Fun-ASR hết hạn mức thì chuyển sang model dự phòng, giới hạn theo phút thì gọi lại (20 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON (11 kiểm tra). `lyrics-test.mjs`: chế độ lời bài hát, kể cả điệp khúc câu ngắn, ngữ cảnh ở chế độ thường, hai chế độ cùng lúc (14 kiểm tra) |
-| `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng, slide feed bị ẩn, trang kết quả tìm kiếm, đóng modal, HTTP 429 (43 kiểm tra) |
+| `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới, đánh dấu dòng hát, tiếng đệm trong lời hát, dòng nói ngắn gộp vào dòng hát, câu nói nhanh trong đoạn cả bài (20 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới ở cả hai chế độ lời bài hát, `rank`), Gemini hết lượt trong ngày (9 kiểm tra). `asr-fallback-test.mjs`: Fun-ASR hết hạn mức thì chuyển sang model dự phòng, giới hạn theo phút thì gọi lại (20 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON (11 kiểm tra). `lyrics-test.mjs`: chế độ lời bài hát, kể cả điệp khúc câu ngắn, ngữ cảnh ở chế độ thường, hai chế độ cùng lúc, đoạn cả bài có câu nói nhanh ở hai chế độ, kể cả khi không câu nào tự đủ là câu hát (19 kiểm tra) |
+| `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng, slide feed bị ẩn, trang kết quả tìm kiếm, đóng modal, HTTP 429, đoạn cả bài không dùng chung giữa hai chế độ (44 kiểm tra) |
 | `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước, đoạn đầu tải chậm qua máy chủ chậm (trang video và feed), tải nhanh rồi chậm hẳn, rời feed, tải chậm vừa phải, đường truyền chậm đều, khựng giữa chừng, tua về sau khi bỏ đoạn (11 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms (4 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
@@ -418,7 +418,7 @@ Chủ dự án muốn hiểu cả video bài hát. Log ngày 31/10: 35/232 video
 
 Còn mở:
 - **Nhận dạng lời hát kém hơn lời nói** khi nhạc to hoặc hát luyến: có chỗ sai chữ, câu dịch lệch nghĩa.
-- **Đánh dấu ♪ theo từng câu** dựa vào độ dài chữ (> 0,33 s/chữ), nên câu nói kéo dài, la hét có thể bị đánh dấu ♪ (ví dụ "冲刺冲 → Tăng tốc nào!"). Trong một đoạn có cả câu hát lẫn câu nói, câu hát không đủ dài có thể không có ♪. Đã đo trên 13 video thật ngày 1/11 (§6l): ♪ đúng khoảng 90% số dòng được gắn, phủ khoảng 89% dòng hát có sub; rap và hô vè không bao giờ có ♪.
+- **Đánh dấu ♪ theo từng câu** dựa vào độ dài chữ (> 0,33 s/chữ), nên câu nói kéo dài, la hét có thể bị đánh dấu ♪ (ví dụ "冲刺冲 → Tăng tốc nào!"). Trong một đoạn có cả câu hát lẫn câu nói, câu hát không đủ dài có thể không có ♪. Đã đo trên 13 video thật ngày 1/11 (§6l): ♪ đúng khoảng 90% số dòng được gắn, phủ khoảng 89% dòng hát có sub; rap và hô vè không bao giờ có ♪. Lô 2 (22 video mới, §6n), luật trước khi sửa: với Fun-ASR, ♪ đúng 93% nhưng chỉ phủ 59% dòng hát (nhiều bài hát nhanh); với model dự phòng, video đọc chậm (thơ, thiền, 三字经) bị gắn ♪ hàng loạt.
 - **Server ngắt ASR khi người xem tua đi**, trước khi lưu `.asr.` (có từ trước). Sửa được bằng cách để lệnh ASR chạy nốt rồi lưu, nhưng nên biết trước lệnh bị ngắt có tính tiền không.
 - **Bản quyền:** khi có cache dùng chung cho nhiều người, việc lưu và phát bản dịch lời bài hát cần xem lại.
 
@@ -457,7 +457,7 @@ Chủ dự án yêu cầu: hết token (hạn mức) của Fun-ASR thì chuyển
   - Lượt 2, lỗi lớn do chính bản sửa sinh ra: đọc `body.message` khi DashScope trả lỗi không phải JSON (`body` là `null`), nên trang lỗi 502, 503 rỗng báo lỗi ngay, mất các lần gọi lại. Lỗi nhỏ: có chữ mà không có câu vẫn bị lưu là "không có lời"; 429 theo phút kéo dài làm đoạn nào cũng chờ 22 s rồi lỗi; câu lỗi đổi lại sau khi hết lượt chờ; `ASR_QUOTA_RETRY_MS` âm làm mất lượt chờ; test có thể treo khi trùng cổng.
 - **Test:** `asr-fallback-test.mjs`, 20 kiểm tra, dùng DashScope giả trả đúng mã và câu lỗi theo tài liệu (`ASR_QUOTA_RETRY_MS` rút lượt chờ 30 phút xuống 1,2 s; cổng do hệ điều hành chọn). Kiểm tra mới của mỗi lượt trượt với bản trước lượt đó.
 - **Chưa kiểm:**
-  - Chưa thấy Fun-ASR hết hạn mức thật; mã lỗi lấy theo tài liệu. Nếu lúc đó DashScope trả mã khác, server báo lỗi chứ không chuyển model. Mã nằm trong log server: dòng `báo HTTP 401/403/404: {…}` (lỗi key/model), hay dòng `LỖI HTTP 4xx: {…}` của đoạn đó.
+  - Fun-ASR hết hạn mức thật đã gặp ngày 1/11 lúc 17:03, giữa lúc đo lô 2: DashScope trả mã `AllocationQuota.FreeTierOnly` (theo tài liệu là HTTP 403; log chỉ ghi mã), server chuyển sang model dự phòng đúng như trên, log ghi một dòng chuyển model, sub không gián đoạn (§6n). Mã khác (nếu có) nằm trong log server: dòng `báo HTTP 401/403/404: {…}` (lỗi key/model), hay dòng `LỖI HTTP 4xx: {…}` của đoạn đó.
   - Chất lượng nhận dạng của model dự phòng trên video Douyin thật (nhạc nền, nói nhanh) chưa so với Fun-ASR.
 - **Còn nhỏ, chưa sửa** (verifier lượt 3, không ảnh hưởng sub):
   - Cả hai model cùng bị giới hạn theo phút kéo dài thì câu lỗi vẫn ghi "hết hạn mức", popup ghi "Fun-ASR hết hạn mức", và mỗi lần thử lại sau 3 phút tốn một vòng 22 s.
@@ -511,7 +511,7 @@ Chế độ lời bài hát bật mặc định, mà phần phân loại câu h�
     Gộp cả hai: 66 dòng đúng, 3 dòng gắn oan, 5 dòng thiếu (độ chính xác 0,957, độ phủ 0,93).
   - Cổng âm thanh (theo nốt giữ) sửa được bao nhiêu thì hỏng bấy nhiêu. Làm mịn theo câu bên cạnh thì xấu hơn hiện tại.
   - Rap chỉ bắt được bằng cách đo nhịp trong âm thanh (21/39 dòng). Số này không độc lập, vì luật đo nhịp được chỉnh trên chính các video này.
-  - **Chưa đổi code.** Mẫu nhỏ (13 video trong một buổi, 15 lỗi), và các mốc 0,20 và 3 chữ được chọn sau khi đã nhìn lỗi.
+  - **Chưa đổi code.** Mẫu nhỏ (13 video trong một buổi, 15 lỗi), và các mốc 0,20 và 3 chữ được chọn sau khi đã nhìn lỗi. Đã đo lô mới ở §6n: áp (a), không áp (b).
     - Cần đo một lô mới trước khi commit: ngâm thơ, livestream nói rồi hát, hát nhanh, và lướt feed ngẫu nhiên.
     - Với (b), phải xem câu nói ngắn kéo dài (kiểu "好的吧") ở chế độ thường.
 - **Lỗi khác tìm thấy trong cùng đợt:**
@@ -612,6 +612,90 @@ Quá trình sửa:
   - Mở một kết quả tìm kiếm thì 4 kết quả kế được dịch sẵn (cùng luật với feed), tốn nhận dạng cho video người xem có thể không xem.
   - Modal tìm kiếm có thể mượn `<video>` xem trước của trang kết quả trong lúc `<video>` của modal chưa gắn vào trang: tải và gửi nhầm một đoạn rồi huỷ. Lỗi này có từ trước (verifier đo trong mô phỏng, chưa thấy trên trang thật).
   - Các ngưỡng của `dropSlow` (6 s, 1/3, 4 s, 1 s) chưa đo trên Douyin.
+
+## 6n. Đo lô 2 và chốt luật ♪ (1/11, đo trên extension 0.2.23; sửa ở extension 0.2.24, `alpha-8`)
+
+Hai luật ứng viên ở §6l được chọn sau khi nhìn lỗi của lô 1, nên phải đo trên video mới trước khi đổi code.
+
+- **Ghi trước khi đo** (file chỉ để trên máy, cộng hai phụ lục viết trước khi có nhãn chuẩn):
+  - Áp ứng viên X khi, trên lô 2: [không hỏng dòng nào và sửa ≥ 1] hoặc [sửa ≥ 3 và sửa ≥ 3 lần số hỏng]; X không làm chế độ thường mất thêm lời nói; không tầng ASR nào hỏng nhiều hơn sửa. Không chỉnh ngưỡng trên lô 2.
+  - (a) Trong đoạn cả bài, dòng có câu của nó (câu trùng thời gian nhiều nhất) ≥ 3 chữ Hán, trung vị ≤ 0,20 s/chữ, và dòng nằm trong câu hát không quá nửa thời gian, thì không gắn ♪; chế độ thường giữ dòng đó. (b) Hạ yêu cầu từ 4 xuống 3 chữ Hán.
+- **Lô 2:** 22 video mới, 485 dòng sub, hệ thống gắn ♪ cho 187 dòng.
+  - 7 video lướt feed ngẫu nhiên (6 video ra sub; video piano không có lời).
+  - 15 video tìm theo loại, để có nhiều chỗ hai luật đổi cờ: livestream và co-host hát xen nói chuyện, 3 người hát rong bắt chuyện người qua đường, lớp dạy hát, 2 cover (một song ca), rap trong lớp, bé hát 虫儿飞, ngâm thơ 艾青, thiền trước khi ngủ, bé đọc 三字经, hai cha con đọc 三字经 tiếng Quảng, ca sĩ phòng chat giọng nói.
+  - Luật dừng ghi trước chỉ dựa vào dữ liệu hệ thống, chưa có nhãn. Sau 18 video, (a) mới có 2 dòng đổi cờ, nên thêm 4 video nói xen hát, tới mức tối đa 22.
+  - Server chạy `TOD_DUMP=1` với `TOD_WORK` riêng, nên cache đo tách khỏi cache dùng hằng ngày.
+- **Fun-ASR hết hạn mức thật giữa lúc đo** (17:03, mã `AllocationQuota.FreeTierOnly`). Server tự chuyển sang `qwen-audio-3.1-asr-flash`, sub không gián đoạn (§6k).
+  - 14 video đầu chạy Fun-ASR (tầng F; 13 video ra sub), 8 video sau chạy model dự phòng (tầng Q).
+  - Từ giờ production chạy model dự phòng, tới khi nạp tiền hay tắt "chỉ dùng miễn phí" trong Model Studio.
+- **Nhãn chuẩn mù.** Workflow 8 agent:
+  - 3 giám khảo. Một người chỉ xét chữ Trung và ngữ cảnh; khác lô 1, lần này không có bản dịch. Một người xét âm thanh: chạy nguyên phương pháp của lô 1 trước, rồi mới sửa. Một người tra lời bài hát trên web.
+  - 1 agent phân xử.
+  - 2 người phản biện không biết cờ của hệ thống. Một người tự viết bộ đo âm thanh riêng. Mỗi dòng mà một ứng viên đổi cờ được cả hai người xét.
+  - 1 agent phân tích tự viết lại luật từ code, và 1 critic.
+  - Nhãn cuối: 313 nói, 150 hát, 9 rap, 13 không rõ.
+- **Quyết định.** Script của tôi, agent phân tích và critic tính độc lập ra cùng các số dưới đây.
+  - (a): sửa 4 dòng, hỏng 0 (F 2/0, Q 2/0). Chế độ thường mất 70 dòng nói thay vì 74 (195 s thay vì 203 s). **Áp.**
+  - (b): sửa 1 (ở F), hỏng 5 (đều ở Q: 4 dòng ngâm thơ và câu "来关掉。"). Chế độ thường mất thêm 6 dòng. **Không áp.** Còn 1 dòng tranh chấp ("啊，姐姐。", cả hai người phản biện đều không chắc); tính là hỏng thì hỏng 6, quyết định không đổi.
+  - (a)+(b): sửa 5, hỏng 5. Không áp.
+  - Thử ngưỡng 0,25 thay 0,20, chỉ để xem độ nhạy: hỏng 2 dòng hát thật (0,24 và 0,25 s/chữ, livestream hát 邓紫棋). Giữ 0,20.
+- **Đọc số cho đúng** (critic):
+  - 4 dòng sửa thực ra là 3 sự kiện. 2 dòng là "可以吗？可以吗？" của cùng một người hát rong, và một trong hai nằm đúng ngưỡng 0,20. Hai dòng còn lại là một câu lời bài hát được nói nhanh trước khi đàn vào, và tiêu đề video đọc lên trước khi hát.
+  - Khoảng an toàn hẹp. Dòng hát nhanh nhất trong đoạn cả bài ở lô 2 là 0,24 s/chữ. 15% câu hát ở tầng F có trung vị ≤ 0,20, nhưng đều nằm trong đoạn không phải cả bài, nên (a) không chạm tới.
+  - Tác động nhỏ: trên model dự phòng đang chạy, (a) chỉ sửa 2/70 dòng gắn ♪ nhầm.
+- **Sửa (`pipeline.mjs`, `server.mjs`, `content.js`):**
+  - `lyricCues`: trong đoạn cả bài, dòng có câu là câu nói nhanh (`talkInSong`) không có ♪. Tiếng đệm nói nhanh ("哈哈哈哈") không tính là câu nói, vẫn bị bỏ như cũ.
+  - Chế độ thường: đoạn cả bài chỉ giữ đúng các dòng mà chế độ lời bài hát hiện không có ♪, nên hai chế độ khớp nhau. Phần giữ lại dưới 4 chữ Hán thì vẫn bỏ cả đoạn: một câu nói 3 chữ đứng một mình có ở chế độ lời bài hát (không ♪) nhưng không có ở chế độ thường. Câu nói ngắn bị `segmentCues` gộp vào dòng hát thì cả hai chế độ coi là lời hát.
+  - Kết quả của đoạn cả bài mang cờ `song`. `noSinging` (server) và `modeFree` (extension) không dùng chung kết quả có cờ này giữa hai chế độ.
+  - Lý do của cờ: bản sửa đầu có lỗi lớn, cả hai verifier đều dựng lại được bằng server thật. Đoạn cả bài vì lặp lời mà không câu nào tự đủ là câu hát (điệp khúc câu 3 chữ, sung = 0) cộng một câu nói nhanh cho ra kết quả chế độ thường ok, sung 0, không dòng ♪. Server coi đó là "không có câu hát": xoá `.asr.`, rồi chế độ lời bài hát lấy lại kết quả đó và mất hết dòng ♪. Cache dùng hằng ngày có 1 đoạn đúng dạng này (file alpha-7 cũ, server hiện không đọc); lô 2 thì không có.
+  - Chạy lại code mới trên kết quả nhận dạng thật đã lưu:
+    - Lô 2 đổi đúng 4 dòng trên.
+    - Lô 1 đổi đúng 4 dòng nói ở §6l.
+    - Còn 5 dòng đổi cờ, chưa có nhãn: 4 dòng trong 3 video tự phát kế tiếp lúc đo lô 2, và 1 dòng trong cache dùng hằng ngày ("老辈子听的歌…", câu dẫn trước bài hát).
+- **Không tăng `PIPELINE_VERSION`** (vẫn `alpha-8`).
+  - Thay đổi chỉ chạm đoạn cả bài có câu nói nhanh: 8/837 dòng ở hai lô.
+  - Tăng thì mọi kết quả `.vi.` và `.vi.lyr.` bị bỏ, phải nhận dạng và dịch lại. Lý do: file `.asr.` chỉ còn ở đoạn có hát, và tên file đó cũng có phiên bản.
+  - File cũ của các đoạn đó giữ cách cũ (♪ cho câu nói; chế độ thường bỏ cả đoạn), không tệ hơn trước. Một đoạn có thể lệch giữa hai chế độ nếu chỉ một chế độ còn file cũ.
+- **Luật alpha-8 trước (a), trên lô 2** (tính hát với nói, bỏ rap và dòng không rõ; ba số là độ chính xác của ♪, độ phủ, tỉ lệ dòng nói bị ♪):
+  - Cả lô: 0,602 / 0,747 / 23,6%.
+  - Tầng F: 0,93 / 0,589 / 2,7%. Độ chính xác gần lô 1, độ phủ thấp hơn vì nhiều bài hát nhanh.
+  - Tầng Q: 0,457 / 0,983 / 42,4%.
+  - 6 video feed ra sub (đều ở F): 0,875 / 0,368 / 1,2%. Trên feed, lỗi chính là thiếu ♪ ở bài hát nhanh.
+  - Gộp hai lô: 0,684 / 0,792. Riêng phần Fun-ASR: 0,913 / 0,720.
+  - Sau (a): cả lô 0,615 / 0,747 / 22,4%; F 0,964 / 0,589 / 1,4%; Q 0,465 / 0,983 / 41,2%; gộp hai lô 0,706 / 0,792. Feed không đổi.
+- **Lỗi chính còn lại:**
+  - Đọc chậm bị coi là hát: 66/70 dòng gắn nhầm ở Q.
+    - Bé đọc 三字经 có 23/23 dòng ♪ (cả đoạn là bài hát); 三字经 tiếng Quảng 28/39; thiền 12/27; thơ 3/16.
+    - Trung vị độ dài chữ của câu nói trong 4 video này là 0,34 s, trên ngưỡng 0,33.
+    - Chế độ thường mất 74 dòng nói (203 s) trên cả lô; video bé đọc 三字经 mất toàn bộ phụ đề.
+  - Số này phụ thuộc vào luật gán nhãn "đọc theo nhịp mà không có giai điệu là lời nói".
+    - Ba video đọc (hai video 三字经 và video thơ, không gồm video thiền) chiếm 54/74 dòng gắn nhầm. Bỏ chúng thì độ chính xác 0,85 và dòng nói bị ♪ còn 8,5%.
+    - Critic thấy dấu hiệu, chưa chắc, rằng 三字经 được đọc theo lưới nhịp 0,32 s, gần với hô vè. Ở video tiếng Quảng, nhịp đó có thể đến từ nhạc nền.
+    - **Cần chủ dự án quyết:** đọc theo nhịp (三字经, đồng dao, vè) có nên hiện ♪ không, và ở chế độ thường có nên giữ phụ đề không.
+  - Hát nhanh thiếu ♪ ở tầng F: 35/37 dòng, câu ≤ 0,33 s/chữ (cover DJ 0/10, 雅俗共赏, 有何不可).
+  - Chưa tách được phần do nội dung với phần do ASR, vì mọi video đọc chậm rơi vào tầng Q. Với lời nói hội thoại, trung vị độ dài chữ của hai ASR gần bằng nhau (0,16 và 0,15 s). qwen có đuôi dài hơn (19% câu > 0,33 so với 3%), nhưng mẫu nhỏ.
+- **Hạn chế của phép đo:**
+  - Không ai nghe trực tiếp.
+  - Nhãn của khoảng 30% số dòng chủ yếu dựa vào chữ và ngữ cảnh. Giám khảo chữ và giám khảo lời bài hát gần như trùng nhau (477/485 dòng).
+  - Người phản biện thấy nhãn chuẩn khi xét, nên tỉ lệ lỗi nhãn ước tính (khoảng 1%) chỉ là cận dưới.
+  - Agent phân xử không ghi được file nhãn. Nhãn cuối lấy từ đầu ra của workflow (đầu ra của agent phân xử cộng phần sửa của người phản biện). Bản chép của agent phân tích khớp 485/485 dòng.
+- **Phát hiện phụ:**
+  - Gặp lượt tải video treo trên Douyin thật: video 7070135093603405087 báo "lỗi: tải video quá lâu" trong 17 s. Đoạn đó tải lại được, sub có từ giây 40.
+  - Profile thử nghiệm bị đăng xuất sau khoảng 20 video, Douyin hiện hộp "登录后免费畅享高清视频". Đóng hộp và xem tiếp ở chế độ khách vẫn có sub.
+  - Trang `/video/`: sub đầu tiên hiện sau 1–7 s.
+- **Test mới:**
+  - `test.mjs`: ngưỡng 0,20 (tính cả 0,20), câu hát 0,24 s/chữ, câu 2 chữ, dòng quá nửa nằm trong câu hát, câu của dòng là câu trùng nhiều nhất, tiếng đệm nói nhanh.
+  - `lyrics-test.mjs`: hai chế độ với đoạn cả bài có câu nói nhanh; đoạn cả bài sung = 0, gửi chế độ thường trước rồi tới chế độ lời bài hát; câu nói ngắn gộp vào dòng hát; đoạn cả bài chỉ có câu nói 3 chữ.
+  - `content-sim-test.mjs`: kết quả có cờ `song` được xin lại khi đổi nút.
+  - Mỗi kiểm tra mới trượt trên code trước nó (HEAD, hay bản sửa đầu với ca sung = 0).
+  - Sáu bản đột biến đều bị bắt: bỏ điều kiện tiếng đệm, bỏ điều kiện quá nửa, chọn câu theo mốc đầu, dùng `<` thay `≤`, chế độ thường lọc theo câu như bản sửa đầu, bỏ luật dưới 4 chữ Hán.
+  - Soát độc lập 2 vòng. Vòng 1 có 2 verifier (code; độ khớp với phép đo và tài liệu). Vòng 2 có 1 verifier kiểm lại các chỗ sửa. Hai ca test thêm sau vòng 2 tôi tự kiểm bằng hai bản đột biến của verifier.
+- **Lần đo sau:**
+  - Ghi trước luật mới cho lời nói chậm trên model dự phòng.
+  - Cần video đọc chậm chạy trên cả Fun-ASR lẫn qwen, nên phải có Fun-ASR trở lại.
+  - Thêm livestream bán hàng và bài hát nhanh nằm trong đoạn cả bài (rủi ro của (a)).
+  - Quy trình: agent phân xử có thư mục được ghi; người phản biện không thấy nhãn chuẩn; giám khảo chạy trong thư mục chỉ có dữ liệu mù.
+- Mẫu âm thanh, ảnh chụp và cache đo đã xoá sau khi đo. Nhãn và số liệu chỉ để trên máy.
 
 ## 7. Việc tiếp theo trên Mac
 

@@ -1,7 +1,9 @@
 // Kiểm tra chế độ lời bài hát (extension gửi lyrics: true, mặc định bật). Không cần key, không cần mạng; cần ffmpeg.
 // Server thật + dịch vụ AI giả: âm thanh 22 s là một bài hát (chữ kéo dài 0,6 s, có dòng chỉ "耶耶耶耶"), 26 s là lời nói,
 // 14 s là điệp khúc câu ngắn "我爱你。" ×4 (cả đoạn là bài hát mà không câu nào đủ 4 chữ để tự tính là câu hát), 30 s là
-// lời nói kèm một câu "yeah yeah" nói nhanh. Dòng hát "我爱你" được dịch rất dài để có lượt rút gọn.
+// lời nói kèm một câu "yeah yeah" nói nhanh, 18 s là bài hát mở đầu bằng một câu nói nhanh (người hát rong hỏi người qua
+// đường), 34 s là câu nói nhanh rồi điệp khúc câu ngắn "我爱你。" ×4, 38 s là bài hát có câu nói ngắn bị gộp vào dòng hát và
+// một câu nói dài, 42 s là bài hát chỉ có câu nói 3 chữ. Dòng hát "我爱你" được dịch rất dài để có lượt rút gọn.
 //   Chạy: node dev/lyrics-test.mjs
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
@@ -31,6 +33,17 @@ const CHORUS = chars('我爱你。我爱你。我爱你。我爱你。', 1, 0.5,
 const SPEECH = [['大家', 1000, 1400], ['好', 1400, 1600, '，'], ['今天', 1700, 2000], ['我们', 2000, 2300], ['去', 2300, 2450], ['吃', 2450, 2600], ['火锅', 2600, 3100, '。']]
   .map(([text, b, e, p]) => ({ text, begin_time: b, end_time: e, punctuation: p || '' }));
 const SPEECH_YEAH = [...SPEECH, { text: 'yeah', begin_time: 3800, end_time: 4000, punctuation: '' }, { text: 'yeah', begin_time: 4000, end_time: 4300, punctuation: '。' }];
+// Câu nói 0,18 s/chữ, rồi ba câu hát 0,4 s/chữ xen một câu 0,28 s/chữ (không tự đủ là câu hát): cả đoạn là bài hát
+// (3/5 câu là câu hát). Câu 0,28 s/chữ không phải câu nói nhanh, nên chế độ thường cũng bỏ.
+const SONG_TALK = [...chars('姐姐你愿意吗。', 0.5, 0.18), ...chars('月亮代表我的心。', 2.6, 0.4), ...chars('你问我爱你有多深。', 6, 0.28),
+  ...chars('轻轻的一个吻。', 8.8, 0.4), ...chars('深深的一段情。', 11.8, 0.4)];
+// Câu nói nhanh rồi điệp khúc câu 3 chữ: cả đoạn là bài hát vì lặp lời, mà không câu nào tự đủ là câu hát (sung = 0).
+const CHORUS_TALK = [...chars('姐姐你愿意吗。', 0.5, 0.18), ...chars('我爱你。我爱你。我爱你。我爱你。', 2.6, 0.5, 1)];
+// Câu nói 4 chữ 0,72 s sát trước câu hát: segmentCues gộp vào dòng hát (dòng đó có ♪). Rồi một câu nói nhanh 11 chữ đứng riêng.
+const MERGE_TALK = [...chars('大家好吗。', 0.5, 0.18), ...chars('月亮代表我的心。', 1.5, 0.5), ...chars('姐姐你愿意做我女朋友吗。', 6.5, 0.18),
+  ...chars('轻轻的一个吻。', 9.5, 0.5), ...chars('深深的一段情。', 13.5, 0.5)];
+// Câu nói nhanh duy nhất chỉ có 3 chữ: chế độ lời bài hát hiện nó không có ♪, chế độ thường bỏ cả đoạn (dưới 4 chữ Hán).
+const SHORT_TALK = [...chars('你好吗。', 0.5, 0.18), ...chars('月亮代表我的心。', 2.5, 0.5), ...chars('轻轻的一个吻。', 7, 0.5)];
 const sentence = (words) => ({ begin_time: words[0].begin_time, end_time: words.at(-1).end_time, text: words.map(w => w.text + w.punctuation).join(''), words });
 
 let asrCalls = 0, asrDelay = 0;
@@ -45,7 +58,7 @@ const providers = http.createServer((req, res) => {
       if (asrDelay) await new Promise(r => setTimeout(r, asrDelay));
       const b64 = JSON.parse(body).input.messages[0].content[0].input_audio.data;
       const seconds = Math.round((Buffer.from(b64.split(',')[1], 'base64').length * 8) / 48000);
-      const words = seconds < 17 ? CHORUS : seconds < 24 ? SONG : seconds < 28 ? SPEECH : SPEECH_YEAH;
+      const words = seconds < 17 ? CHORUS : seconds < 20 ? SONG_TALK : seconds < 24 ? SONG : seconds < 28 ? SPEECH : seconds < 32 ? SPEECH_YEAH : seconds < 36 ? CHORUS_TALK : seconds < 40 ? MERGE_TALK : SHORT_TALK;
       return json({ output: { sentence: sentence(words), text: sentence(words).text } });
     }
     if (req.url.endsWith('/v1/chat/completions')) {
@@ -73,8 +86,9 @@ server.stdout.on('data', d => { log += d; });
 server.stderr.on('data', d => { log += d; });
 while (!/Alpha server/.test(log)) await new Promise(r => setTimeout(r, 50));
 
-const song = aac(22), speech = aac(26), chorus = aac(14), yeah = aac(30);
-const ID = new Map([[song, '7500000000000000081'], [speech, '7500000000000000082'], [chorus, '7500000000000000083'], [yeah, '7500000000000000086']]);
+const song = aac(22), speech = aac(26), chorus = aac(14), yeah = aac(30), songTalk = aac(18), chorusTalk = aac(34), mergeTalk = aac(38), shortTalk = aac(42);
+const ID = new Map([[song, '7500000000000000081'], [speech, '7500000000000000082'], [chorus, '7500000000000000083'], [yeah, '7500000000000000086'],
+  [songTalk, '7500000000000000089'], [chorusTalk, '7500000000000000090'], [mergeTalk, '7500000000000000091'], [shortTalk, '7500000000000000092']]);
 const post = (audio, lyrics, extra = {}) => fetch(`http://127.0.0.1:${port}/v1/subtitles`, { method: 'POST', headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ id: ID.get(audio), from: 0, to: 30, audioStart: 0, urgent: true, lyrics, aac: audio, ...extra }) }).then(r => r.json());
 const files = () => fs.readdirSync(path.join(WORK, 'cache')).sort();
@@ -167,6 +181,49 @@ try {
     assert.equal(both.filter(b => b.cached).length, 1);
     assert.equal(asrCalls - asr0, 1); assert.equal(mtBodies.length - mt0, 1);
     assert.match(log, /7500000000000000088 \[0:00–0:30( ♪)?\] ok .*\(cache\)/);
+  });
+  // Đoạn cả bài có câu nói nhanh (≥ 3 chữ, ≤ 0,20 s/chữ): đo trên Douyin thật, lô 2 (HANDOFF §6n). Trước đây chế độ thường
+  // bỏ cả đoạn (mất câu nói), chế độ lời bài hát gắn ♪ cho cả câu nói.
+  const asrT = asrCalls;
+  const st1 = await post(songTalk, false);
+  t('chế độ thường, đoạn cả bài mở đầu bằng câu nói nhanh: giữ câu nói, bỏ lời hát', () => {
+    assert.equal(st1.status, 'ok', JSON.stringify(st1));
+    assert.deepEqual(st1.cues.map(c => c.zh), ['姐姐你愿意吗。']);
+    assert.equal(st1.cues[0].vi, 'Chào cả nhà, hôm nay đi ăn lẩu.');
+  });
+  const st2 = await post(songTalk, true);
+  t('… chế độ lời bài hát: câu nói không có ♪, lời hát có ♪; dùng lại ASR', () => {
+    assert.deepEqual(st2.cues.map(c => [c.zh, !!c.sung]), [['姐姐你愿意吗。', false], ['月亮代表我的心。', true], ['你问我爱你有多深。', true],
+      ['轻轻的一个吻。', true], ['深深的一段情。', true]]);
+    assert.equal(asrCalls - asrT, 1);
+  });
+  // Cùng loại đoạn nhưng sung = 0 (điệp khúc câu 3 chữ): kết quả chế độ thường là ok, sung 0, không dòng ♪, nhưng thiếu
+  // lời hát. Bản đầu của luật trên coi nó là "không có câu hát" (noSinging): xoá .asr., rồi chế độ lời bài hát dùng lại
+  // nó và mất hết dòng ♪ (verifier dựng lại, 1/11).
+  const asrC = asrCalls;
+  const ct1 = await post(chorusTalk, false);
+  const ct2 = await post(chorusTalk, true);
+  t('đoạn cả bài sung = 0 có câu nói nhanh: chế độ thường chỉ giữ câu nói; chế độ lời bài hát không lấy kết quả đó, vẫn có các dòng ♪, dùng lại ASR', () => {
+    assert.equal(ct1.status, 'ok', JSON.stringify(ct1)); assert.equal(ct1.sung, 0); assert.equal(ct1.song, true);
+    assert.deepEqual(ct1.cues.map(c => c.zh), ['姐姐你愿意吗。']);
+    assert.ok(!ct2.cached, JSON.stringify(ct2));
+    assert.deepEqual(ct2.cues.map(c => [c.zh, !!c.sung]), [['姐姐你愿意吗。', false], ['我爱你。', true], ['我爱你。', true], ['我爱你。', true], ['我爱你。', true]]);
+    assert.equal(asrCalls - asrC, 1);
+    assert.match(log, /7500000000000000090 \[0:00–0:30\] ok 1 dòng .*cả đoạn là bài hát: chỉ giữ câu nói/);
+  });
+  // Chế độ thường ở đoạn cả bài giữ đúng các dòng chế độ lời bài hát hiện không có ♪ (verifier vòng 2, 1/11): câu nói ngắn
+  // bị gộp vào dòng hát thì cả hai chế độ coi là lời hát; phần giữ lại dưới 4 chữ Hán thì chế độ thường bỏ cả đoạn.
+  const mt1 = await post(mergeTalk, true), mt2 = await post(mergeTalk, false);
+  t('đoạn cả bài có câu nói ngắn gộp vào dòng hát: hai chế độ khớp nhau, chế độ thường chỉ giữ dòng không có ♪', () => {
+    assert.deepEqual(mt1.cues.map(c => [c.zh, !!c.sung]), [['大家好吗。月亮代表我的心。', true], ['姐姐你愿意做我女朋友吗。', false], ['轻轻的一个吻。', true], ['深深的一段情。', true]]);
+    assert.equal(mt2.status, 'ok', JSON.stringify(mt2));
+    assert.deepEqual(mt2.cues.map(c => c.zh), ['姐姐你愿意做我女朋友吗。']);
+    assert.ok(mt2.cues.every(c => !('sung' in c)), JSON.stringify(mt2.cues));
+  });
+  const sh1 = await post(shortTalk, true), sh2 = await post(shortTalk, false);
+  t('đoạn cả bài chỉ có câu nói 3 chữ: chế độ lời bài hát hiện câu đó không có ♪, chế độ thường bỏ cả đoạn', () => {
+    assert.deepEqual(sh1.cues.map(c => [c.zh, !!c.sung]), [['你好吗。', false], ['月亮代表我的心。', true], ['轻轻的一个吻。', true]]);
+    assert.equal(sh2.status, 'skipped', JSON.stringify(sh2)); assert.equal(sh2.label, 'singing');
   });
 } finally {
   server.kill(); providers.close();

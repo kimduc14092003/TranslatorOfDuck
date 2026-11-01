@@ -63,9 +63,10 @@
   let settings = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0, lyrics: true };
   const lyricsOn = () => settings.lyrics !== false;
   // Kết quả như nhau ở hai chế độ lời bài hát: không có câu hát nào (cùng điều kiện noSinging ở server.mjs: số câu hát 0,
-  // không phải bài hát, không có dòng ♪), hay không có âm thanh.
+  // không phải bài hát, không phải đoạn cả bài, không có dòng ♪), hay không có âm thanh. Đoạn cả bài (song) ở chế độ thường
+  // chỉ còn câu nói nhanh, có thể không có dòng ♪ nào mà vẫn thiếu lời hát.
   const modeFree = (r) => r.status === 'no_audio' || ((r.status === 'ok' || r.status === 'skipped') && typeof r.sung === 'number'
-    && r.sung === 0 && r.label !== 'singing' && !(r.cues || []).some(x => x.sung));
+    && r.sung === 0 && r.label !== 'singing' && !r.song && !(r.cues || []).some(x => x.sung));
   const items = new Map();       // id -> metadata
   // Thứ tự video theo từng danh sách của trang (tap.main.js đặt tên: feed, related, post, search, mix…; không tính video
   // chỉ thấy ở API khác hay ở player). Danh sách nào chứa video đang xem thì video kế tiếp lấy theo danh sách đó.

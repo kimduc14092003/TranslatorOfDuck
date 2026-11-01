@@ -278,6 +278,21 @@ await t('Lời bài hát: mặc định gửi lyrics: true; tắt trong popup th
   assert.equal(e.subText(), 'Lời nói');
 });
 
+await t('Lời bài hát: đoạn cả bài (song) không dùng chung giữa hai chế độ dù sung = 0 và không có dòng ♪: đổi nút thì xin lại', async () => {
+  // HANDOFF §6n: ở đoạn cả bài, chế độ thường chỉ giữ câu nói nhanh, chế độ lời bài hát có thêm các dòng ♪; điệp khúc câu
+  // 3 chữ làm sung = 0. Không có điều kiện song thì modeFree coi kết quả đó là như nhau ở hai chế độ, đổi nút không xin lại.
+  const e = makeEnv();
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':0', { status: 'ok', label: 'speech', sung: 0, song: true, cues: [C(2, 4, 'Lời nói')] });
+  for (let i = 0; i < 3; i++) await e.tick();
+  e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+  for (let i = 0; i < 3; i++) await e.tick();
+  const s0 = e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':0').map((m) => m.payload.lyrics);
+  assert.deepEqual(s0, [true, false]);
+});
+
 await t('Đổi chế độ khi đoạn đang ở server: trả lời của chế độ cũ có câu hát thì bỏ, xin lại đúng phần âm thanh đó; không có câu hát thì giữ', async () => {
   const e = makeEnv();
   e.up('items', [e.item(A, 100000)]);

@@ -80,6 +80,33 @@ t('chế độ lời bài hát: dòng nói rất ngắn bị gộp vào dòng h�
   const cues = lyricCues(r, { label: 'speech' }, splitSung(r));
   assert.deepEqual(cues.map(c => [c.zh, c.sung]), [['好。月亮代表我的心。', true]]);
 });
+t('chế độ lời bài hát, đoạn cả bài: câu nói nhanh (≥ 3 chữ Hán, ≤ 0,20 s/chữ) không có ♪; câu hát, câu hát nhanh 0,24 s/chữ và câu 2 chữ vẫn có ♪', () => {
+  // Đo trên Douyin thật, lô 2 (HANDOFF §6n): người hát rong hỏi "可以吗？可以吗？" (0,18–0,20 s/chữ) giữa đoạn cả bài.
+  // Dòng hát nhanh nhất trong đoạn cả bài ở lô 2 là 0,24–0,25 s/chữ; câu 2 chữ ("好的。") quá ngắn để kết luận.
+  const han = (x) => Array.from(x).filter(ch => !/[，。？]/.test(ch));
+  const parts = [['可以吗？', 0, 0.18], ['你愿意吗？', 2, 0.2], ['月亮代表我的心。', 4, 0.6], ['你问我爱你有多深。', 10, 0.24], ['好的。', 14, 0.15], ['轻轻的一个吻。', 16, 0.6]];
+  const words = parts.flatMap(([x, at, per]) => han(x).map((ch, i, a) => W(ch + (i === a.length - 1 ? x.at(-1) : ''), at + i * per, at + (i + 1) * per)));
+  const segments = parts.map(([x, at, per]) => ({ start: at, end: +(at + han(x).length * per).toFixed(3), text: x }));
+  const r = { text: parts.map(p => p[0]).join(''), words, segments };
+  const cues = lyricCues(r, { label: 'singing' }, splitSung(r));
+  assert.deepEqual(cues.map(c => [c.zh, c.sung]), [['可以吗？', false], ['你愿意吗？', false], ['月亮代表我的心。', true], ['你问我爱你有多深。', true], ['好的。', true], ['轻轻的一个吻。', true]]);
+  // Đoạn không phải cả bài: như cũ, chỉ câu hát có ♪.
+  assert.deepEqual(lyricCues(r, { label: 'speech' }, splitSung(r)).map(c => c.sung), [false, false, true, false, false, true]);
+});
+t('… đoạn cả bài: dòng quá nửa nằm trong câu hát vẫn có ♪; câu của dòng là câu trùng nhiều nhất, không phải câu đầu; tiếng đệm nói nhanh vẫn bị bỏ', () => {
+  const han = (x) => Array.from(x).filter(ch => !/[，。？]/.test(ch));
+  // (1) Một dòng gộp ba câu: câu nói nhanh 8 chữ (1,44 s) rồi hai câu hát 4 chữ (mỗi câu 1,36 s). Câu trùng nhiều nhất là
+  // câu nói, nhưng 65% thời gian của dòng nằm trong câu hát. (2) Một dòng gộp "好的，" (2 chữ, không đủ để là câu nói
+  // nhanh) với câu nói nhanh 9 chữ: câu của dòng là câu 9 chữ. (3) "哈哈哈哈。" 0,15 s/chữ là tiếng đệm.
+  const parts = [['我们今天一起来唱，', 0, 0.18], ['月亮代表', 1.44, 0.34], ['我的心呀。', 2.8, 0.34],
+    ['好的，', 6.5, 0.15], ['可以吗可以吗可以吗。', 6.8, 0.18], ['哈哈哈哈。', 10, 0.15]];
+  const punct = (x) => (/[，。？]$/.test(x) ? x.at(-1) : '');
+  const words = parts.flatMap(([x, at, per]) => han(x).map((ch, i, a) => W(ch + (i === a.length - 1 ? punct(x) : ''), at + i * per, at + (i + 1) * per)));
+  const segments = parts.map(([x, at, per]) => ({ start: at, end: +(at + han(x).length * per).toFixed(3), text: x }));
+  const r = { text: parts.map(p => p[0]).join(''), words, segments };
+  const cues = lyricCues(r, { label: 'singing' }, splitSung(r));
+  assert.deepEqual(cues.map(c => [c.zh, c.sung]), [['我们今天一起来唱，月亮代表我的心呀。', true], ['好的，可以吗可以吗可以吗。', false]]);
+});
 t('đoạn video dài: đổi về thời gian video, chỉ giữ câu bắt đầu trong đoạn', () => {
   // Âm thanh của đoạn [20, 50) bắt đầu ở 18,5 s; câu đầu (0,5 s → 19,0 s) thuộc đoạn trước.
   const r = { text: '甲乙丙丁。戊己庚辛。', segments: [{ start: 0.5, end: 2, text: '甲乙丙丁。' }, { start: 3, end: 5, text: '戊己庚辛。' }],
