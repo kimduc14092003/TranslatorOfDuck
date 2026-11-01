@@ -17,14 +17,15 @@
   const child = (dv, box, type) => { for (const b of boxes(dv, box.start, box.end)) if (b.type === type) return b; return null; };
   const path = (dv, box, types) => types.reduce((b, t) => (b ? child(dv, b, t) : null), box);
 
-  // Vị trí kết thúc moov, nếu moov đứng trước dữ liệu (file faststart). Chỉ cần đọc phần đầu file.
+  // Vị trí kết thúc moov, nếu moov đứng trước dữ liệu (file faststart). Chỉ cần đọc phần đầu file. Phần đầu chưa đủ để biết
+  // (content.js gọi lại sau mỗi lần nhận thêm byte) thì trả null; cỡ 64 bit (size = 1) cần đủ 16 byte header.
   function headerEnd(buf) {
     const dv = new DataView(buf);
     let o = 0;
     while (o + 8 <= buf.byteLength) {
       let size = dv.getUint32(o);
       const t = type4(dv, o + 4);
-      if (size === 1 && o + 16 <= buf.byteLength) size = Number(dv.getBigUint64(o + 8));
+      if (size === 1) { if (o + 16 > buf.byteLength) return null; size = Number(dv.getBigUint64(o + 8)); }
       if (t === 'mdat') return null;
       if (t === 'moov') return o + size;
       if (size < 8) return null;

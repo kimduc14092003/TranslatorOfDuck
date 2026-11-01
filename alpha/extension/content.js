@@ -51,7 +51,9 @@
   const BACKOFF_429 = [5000, 15000, 45000], RETRY_AFTER_MAX = 120000;
   // Đoạn ở chỗ đang xem tải chậm tới mức không thể có sub trước khi chỗ đang xem rời đoạn đó (dropSlow): chỉ xét sau khi
   // lượt tải đã chạy bấy nhiêu ms (ước tốc độ theo chính nó), và tính thêm SERVER_MS cho nhận dạng + dịch ở server.
-  const SLOW_SLOT = 6000, SERVER_MS = 4000;
+  // Sub tới khi đoạn chỉ còn dưới SLOW_KEEP thì cũng bỏ: gần như vô ích, mà đoạn kế phải chờ sau nó (mô phỏng: lượt đầu video
+  // rồi lượt nối tiếp của đoạn 0 cùng 1040–1400 B/s, sub đầu giây 16–19,5, nay 12,5 như bản 0.2.25).
+  const SLOW_SLOT = 6000, SERVER_MS = 4000, SLOW_KEEP = 5000;
   // Câu background.js trả khi không gọi được server (fetch lỗi mạng), và khi địa chỉ server trong cài đặt không phải máy
   // này (chưa gửi gì). Không có phản hồi nào cũng tính là chưa tới server.
   const UNREACHABLE = /^không kết nối được server/, NOT_SENT = /^Bản Alpha chỉ gọi server trên máy/;
@@ -430,6 +432,7 @@
         if (q.status !== 'pending' || quickWanted(id, q)) continue;
         if (q.sent) { q.sent = false; keys.push(id + ':q' + qa); } else q.ctl.abort();
       }
+      headCheck(id, v);   // lượt tải đầu video không còn ai cần (vừa lướt đi, tua đi khi chưa có ai chờ) thì ngắt
     }
     if (keys.length && alive()) chrome.runtime.sendMessage({ type: 'cancel', keys }).catch(() => {});
   }
@@ -497,43 +500,229 @@
     if (!v.mediaLoading) v.mediaLoading = loadMedia(id, v).finally(() => { v.mediaLoading = null; });   // hai hàng tải dùng chung
     return v.mediaLoading;
   }
-  async function loadMedia(id, v) {
-    const api = 'https://www.douyin.com/aweme/v1/play/?video_id=' + encodeURIComponent(items.get(id).playUri);
-    mark(id, 'moov');
-    // Đoạn đầu file nhỏ (64 KB): quá 4 s là treo; treo hoặc lỗi mạng (đo được: máy chủ video cắt ngang,
-    // ERR_CONTENT_LENGTH_MISMATCH) thì gọi lại một lần, có thể sang máy chủ video khác.
-    const probe = await rangeFetch(api, 0, 65535, null, 4000)
-      .catch((e) => { if (e.timeout || e instanceof TypeError) return rangeFetch(api, 0, 65535, null, 8000); throw e; });
-    const head = TodMp4.headerEnd(probe.buf);
-    if (head == null) throw new Error('video không có mục lục ở đầu file (chưa hỗ trợ)');
-    const moov = head <= probe.buf.byteLength ? probe.buf : (await rangeFetch(probe.url || api, 0, head - 1)).buf;
-    v.media = TodMp4.parse(moov);
-    v.media.total = probe.total;
+  function useMedia(id, v, api, media, total, url) {
+    v.media = media;
+    v.media.total = total;
     mark(id, 'moovEnd');
-    v.api = api; v.url = probe.url || api;
+    v.api = api; v.url = url || api;
     // Chỉ giữ mục lục của 20 video gần nhất (video dài có mục lục vài MB).
     const withMedia = [...vids.entries()].filter(([, x]) => x.media);
     for (const [, x] of withMedia.slice(0, Math.max(0, withMedia.length - 20))) x.media = null;
     return v.media;
   }
+  async function loadMedia(id, v) {
+    const api = 'https://www.douyin.com/aweme/v1/play/?video_id=' + encodeURIComponent(items.get(id).playUri);
+    mark(id, 'moov');
+    // Đoạn đầu file treo (quá 4 s chưa thấy mục lục) hoặc lỗi mạng (đo được: máy chủ video cắt ngang,
+    // ERR_CONTENT_LENGTH_MISMATCH) thì gọi lại một lần, có thể sang máy chủ video khác.
+    const retry = (e) => e.timeout || e instanceof TypeError;
+    // Mở video từ đầu (đoạn 0 đang cần, chưa có kết quả, chỗ đang xem trước giây QUICK hay chưa biết): một lượt tải cho cả
+    // mục lục lẫn âm thanh đoạn 0 (loadHead). Chỗ đang xem đã xa hơn thì mẩu nhanh cần phần sau của đoạn 0: đọc từ byte 0
+    // tới đó thì mẩu nhanh tới muộn hơn lượt tải riêng, và đoạn [0,20) (phần lớn đã phát qua) cũng bị gửi đi nhận dạng (mô
+    // phỏng, mở ở giây 15, 3 MB/s, rtt 150 ms: mẩu nhanh 2650 ms thay vì 2200 ms).
+    if (headWanted(id) && (id !== currentId || headOf !== id || playhead < QUICK)) return loadHead(id, v, api, 4000).catch((e) => { if (retry(e)) return loadHead(id, v, api, 8000); throw e; });
+    // Mở giữa video (tua, đồng hồ trình phát feed ở giữa video): chỉ tải phần đầu file nhỏ (64 KB) lấy mục lục.
+    const probe = await rangeFetch(api, 0, HEAD_PROBE - 1, null, 4000)
+      .catch((e) => { if (retry(e)) return rangeFetch(api, 0, HEAD_PROBE - 1, null, 8000); throw e; });
+    const head = TodMp4.headerEnd(probe.buf);
+    if (head == null) throw new Error('video không có mục lục ở đầu file (chưa hỗ trợ)');
+    const moov = head <= probe.buf.byteLength ? probe.buf : (await rangeFetch(probe.url || api, 0, head - 1)).buf;
+    return useMedia(id, v, api, TodMp4.parse(moov), probe.total, probe.url);
+  }
+  // ---- Một lượt tải cho đầu video (mục lục + âm thanh đoạn 0)
+  // Đo trên Douyin thật 1/11 (extension 0.2.25, 14 trang /video/): tải mục lục 0,7–1,7 s (3/14 lần 4,5–8,9 s), rồi mẩu
+  // nhanh 0,4–1,2 s bằng một lượt hỏi máy chủ video nữa; đoạn 0 tải lại phần đầu file, bị mẩu nhanh ngắt rồi tải lại
+  // (mô phỏng: phí 0,9–1,8 MB mỗi lần mở). Nay: một lượt tải từ byte 0 (Range "bytes=0-", như trình phát tự tải lúc mở
+  // video), đọc mục lục ngay khi đủ byte, đọc tiếp trên chính lượt đó tới hết âm thanh đoạn 0 (mẩu nhanh đầu là phần đầu
+  // của nó, gửi ngay khi đủ byte), rồi ngắt. Không thêm lượt tải song song, không thêm lượt hỏi máy chủ video.
+  // Ngắt sớm khi không còn cần (lướt đi, tua đi, đoạn 0 bị bỏ vì tải chậm, tắt sub); mục lục thì vẫn đọc cho xong như
+  // lượt tải 64 KB cũ (lần sau khỏi tải lại).
+  const HEAD_PROBE = 65536;      // như lượt tải 64 KB cũ: quá chừng này byte mà chưa thấy moov thì coi như không có ở đầu file
+  // Đoạn 0 của video này đang cần mà chưa có kết quả, chưa gửi (đoạn 0 luôn tải [0, cuối + POST): cùng byte dù gửi dư
+  // bao nhiêu, nên lần xin lại theo luật v.redo vẫn gửi đúng phần âm thanh cũ).
+  const headWanted = (id) => { const c = vid(id).chunks.get(0); return settings.enabled && wanted.has(id + ':0') && (!c || (c.status === 'pending' && !c.sent)); };
+  function headBytes(h, a, b) {    // byte [a, b] (gồm b) trong phần đã nhận
+    const out = new Uint8Array(Math.max(0, b - a + 1));
+    let o = 0;
+    for (const p of h.parts) {
+      const s = Math.max(a, o), e = Math.min(b + 1, o + p.byteLength);
+      if (e > s) out.set(p.subarray(s - o, e - o), s - a);
+      o += p.byteLength;
+      if (o > b) break;
+    }
+    return out.buffer;
+  }
+  // Lượt tải đầu video còn phục vụ được khoảng byte [.., b] (cùng mục lục; đã có tới đó, hay đang tải tới đó).
+  const headServes = (v, media, b) => { const h = v.head; return !!h && h.media === media && b < h.end && (h.got > b || !h.closed); };
+  // Xét lại lượt tải đầu video: không còn ai cần thì ngắt; xong rồi mà đoạn 0 hết cần hay đã có kết quả thì bỏ phần đã
+  // nhận (giữ lại trong lúc đoạn 0 còn chờ: mẩu nhanh có thể tới sau, lấy từ đây khỏi tải lại).
+  function headCheck(id, v) {
+    const h = v.head;
+    if (!h) return;
+    if (!h.closed) { if (h.media && !(h.got < h.end && (h.waiters.size || headWanted(id)))) { h.stopped = true; h.ctl.abort(); } return; }
+    const c = v.chunks.get(0);
+    if (!h.waiters.size && (!wanted.has(id + ':0') || (c && c.status !== 'pending'))) v.head = null;
+  }
+  // Lượt tải đầu video chậm hẳn ngay từ đầu: q0 nay đi chung lượt đó nên cũng chậm, và dropSlow không còn lượt tải nhanh nào
+  // để so (bản 0.2.25 tải q0 bằng lượt riêng; đo 1/11: q0 về nhanh mà lượt tải đoạn 0 mất ~25 s, cả hai tới cùng link CDN,
+  // tức chậm theo từng lượt tải). Mô phỏng của verifier, lượt "bytes=0-" 1040 B/s từ byte 0: sub đầu giây 29 thay vì 12,5
+  // (nay 7,5 s).
+  // Nên: mẩu nhanh đang chờ trên lượt này mà theo tốc độ 1 s gần nhất phải chờ tổng cộng quá HEAD_SLOW mới đủ byte thì thôi
+  // lượt này; mẩu nhanh rồi đoạn 0 tải nối tiếp phần còn thiếu bằng lượt riêng, lần lượt (fetchBytes), như bản 0.2.25 nhưng
+  // không tải lại phần đã nhận. Mạng chậm đều thì lượt mới cũng chậm như vậy: chỉ mất thêm 1–2 rtt. Đang có lượt tải của
+  // video khác nhận byte (othersLoading, như dropSlow) thì chậm có thể do chia đường truyền: không thôi (mô phỏng 2500 B/s
+  // có 2 video dịch sẵn: thôi lượt này thì q0 không kịp, sub 1 s thay vì 1,75 s trong 60 s đầu).
+  const HEAD_SLOW = 6000;
+  function headLate(h, now) {
+    const q = [...h.waiters].find((w) => !w.prog);
+    if (!q || now - h.first < 1000 || othersLoading()) return false;
+    let g = 0;
+    for (const [t, x] of h.hist) { if (t > now - 1000) break; g = x; }
+    const rate = (h.got - g) / 1000;
+    return now - q.at + (rate > 0 ? (q.b + 1 - h.got) / rate : Infinity) > HEAD_SLOW;
+  }
+  // Trả mục lục khi đã đọc được; phần còn lại đọc tiếp ở nền cho các lượt chờ (headSlice). Hạn giờ như rangeFetch: im quá
+  // idleMs (4 s trước khi có mục lục như lượt tải 64 KB cũ, 6 s sau đó như lượt tải đoạn) hay quá 60 s thì cắt. Lỗi sau khi
+  // đã có mục lục (hay thôi vì chậm: headLate) thì các lượt chờ tự tải nối tiếp phần còn thiếu (fetchBytes).
+  function loadHead(id, v, api, idleMs) {
+    if (rateWait()) return Promise.reject(limited());   // đang nghỉ sau 429: không gọi
+    const h = v.head = { id, parts: [], got: 0, end: Infinity, media: null, waiters: new Set(), closed: false, stopped: false,
+      ctl: new AbortController(), at: performance.now(), first: null, hist: [], release: null, qGate: null, qOpen: null };
+    return new Promise((resolve, reject) => {
+      const started = Date.now();
+      let timedOut = false, idle = null, idleNow = idleMs, head = null;
+      const stop = () => { timedOut = true; h.ctl.abort(); };
+      const kick = () => { clearTimeout(idle); idle = setTimeout(stop, idleNow); };
+      const whole = setTimeout(stop, 60000);
+      const close = (e) => {
+        h.closed = true;
+        // Đoạn và mẩu nhanh cùng chờ: đoạn tải sau khi mẩu nhanh tải xong phần của nó (tối đa QUICK_GATE_MAX), không song
+        // song. Cổng quickGate của runQuick không dùng được: mẩu nhanh đã chờ trên lượt này quá 3 s thì nó đã tự mở.
+        if ([...h.waiters].some((w) => !w.prog)) h.qGate = new Promise((r) => { h.qOpen = r; setTimeout(r, QUICK_GATE_MAX); });
+        for (const w of [...h.waiters]) { h.waiters.delete(w); w.fail(e || new Error('tải video: thiếu dữ liệu')); }
+        headCheck(id, v);
+      };
+      (async () => {
+        try {
+          kick();
+          const res = await fetch(api, { headers: { Range: 'bytes=0-' }, credentials: 'omit', cache: 'no-store', signal: h.ctl.signal });
+          if (res.status === 429) { noteLimit(parseRetryAfter(res.headers.get('retry-after'))); throw limited(); }
+          if (res.status !== 206 && res.status !== 200) throw new Error('tải video: HTTP ' + res.status);
+          // Máy chủ bỏ qua Range (200, cả file): vẫn từ byte 0, đọc tới chỗ cần rồi ngắt như trên. Cỡ file khi đó lấy theo
+          // Content-Length, để fetchBytes vẫn nhận ra file đã đổi.
+          const total = Number(((res.headers.get('content-range') || '').match(/\/(\d+)$/) || [])[1])
+            || (res.status === 200 && Number(res.headers.get('content-length'))) || null;
+          const reader = res.body.getReader();
+          for (;;) {
+            kick();
+            const { done, value } = await reader.read();
+            const now = performance.now();
+            if (!done) { h.parts.push(value); h.got += value.byteLength; h.hist.push([now, h.got]); if (h.first == null) h.first = now; }
+            if (!h.media) {
+              if (head == null) {
+                head = TodMp4.headerEnd(headBytes(h, 0, h.got - 1));
+                if (head == null && (done || h.got >= HEAD_PROBE)) throw new Error('video không có mục lục ở đầu file (chưa hỗ trợ)');
+                if (head != null) idleNow = 6000;   // đã thấy moov: phần còn lại của nó như lượt tải [0, moov) cũ, im tới 6 s
+              }
+              if (head != null && h.got >= head) {
+                h.media = useMedia(id, v, api, TodMp4.parse(headBytes(h, 0, head - 1)), total, res.url);
+                if (started > limit.at) limit.n = 0;
+                // Đọc tiếp tới hết âm thanh đoạn 0 (cùng khoảng runChunk tính cho đoạn 0) nếu nó còn cần; không thì thôi.
+                const plan = headWanted(id) && planFor(id);
+                const w = plan && TodMp4.window(h.media, 0, plan[0][1] + POST);
+                h.end = w ? w.end : head;
+                resolve(h.media);
+              } else if (done) throw new Error('tải video: thiếu dữ liệu');
+            }
+            if (done) break;
+            for (const w of [...h.waiters]) {
+              const p = w.prog;
+              if (p) { if (now - p.last > 500) p.gaps.push([p.last, now]); p.got = Math.max(0, Math.min(h.got - w.a, w.b - w.a + 1)); p.last = now; }
+              if (h.got > w.b) { h.waiters.delete(w); w.done(); }
+            }
+            if (h.media && !(h.got < h.end && (h.waiters.size || headWanted(id)))) { h.stopped = true; h.ctl.abort(); break; }
+            if (h.media && headLate(h, now)) { h.release = Object.assign(new Error('tải video quá chậm'), { slow: true }); h.ctl.abort(); break; }
+          }
+          close(h.release);
+        } catch (e) {
+          h.ctl.abort();                        // thôi đọc (không moov ở đầu, lỗi giữa chừng): ngắt lượt tải luôn
+          if (h.stopped || h.release) return close(h.release);   // tự ngắt: không còn cần, hay chậm quá (headLate)
+          const err = timedOut ? Object.assign(new Error('tải video quá lâu'), { timeout: true }) : e;
+          if (!h.media) { h.closed = true; if (v.head === h) v.head = null; reject(err); } else close(err);
+        } finally {
+          clearTimeout(idle); clearTimeout(whole);
+        }
+      })();
+    });
+  }
+  // Phần [a, b] của một cửa sổ âm thanh lấy từ lượt tải đầu video. Tiến độ (prog: since, got, last, gaps) tính theo byte
+  // của chính cửa sổ đó như rangeFetch, để dropSlow và othersLoading vẫn đúng.
+  function headSlice(v, h, a, b, signal, prog) {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) return reject(signal.reason);
+      const at = performance.now();
+      const fin = () => {
+        // Tốc độ để dropSlow so (như fetchBytes: số byte / thời gian từ lúc gọi tới khi đủ): tính tới lúc byte b về, kể cả
+        // khi cửa sổ này lấy sau từ phần đã nhận (lượt tải có thể đã chậm hẳn sau đó). Byte đó do lượt tải nối tiếp đem về
+        // (fetchBytes) thì giữ tốc độ của lượt đó.
+        const hit = h.hist.find(([, g]) => g > b);
+        if (hit) v.speed = (b + 1) / Math.max(1, hit[0] - h.at);
+        resolve(headBytes(h, a, b));
+      };
+      if (prog) Object.assign(prog, { since: at, last: at, got: Math.max(0, Math.min(h.got - a, b - a + 1)), marks: [], gaps: [] });
+      if (h.got > b) return fin();
+      const onAbort = () => { if (h.waiters.delete(w)) { reject(signal.reason); headCheck(h.id, v); } };
+      const w = { a, b, prog, at, done: () => { signal.removeEventListener('abort', onAbort); fin(); },
+        fail: (e) => { signal.removeEventListener('abort', onAbort); reject(Object.assign(e, { head: true })); } };
+      h.waiters.add(w);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
   async function fetchBytes(v, media, a, b, signal, prog) {
     // Link CDN đã chuyển hướng hết hạn hoặc treo thì quay về /aweme/v1/play/ (lần gọi mới có thể sang máy chủ khác).
-    const urls = v.url === v.api ? [v.api, v.api] : [v.url, v.api];
-    for (const [i, url] of urls.entries()) {
-      try {
-        const r = await rangeFetch(url, a, b, signal, undefined, undefined, prog);
-        // Máy chủ trả file khác (cỡ khác) thì vị trí byte tính theo mục lục cũ sai hết: bỏ mục lục để lần thử sau tải
-        // lại. Trước đây giữ mục lục cũ, mọi đoạn sau của video đó lỗi mãi, 20 s một lần. So với cỡ file của chính mục
-        // lục đã dùng để tính vị trí (lượt tải đang chạy song song vẫn bắt được).
-        if (media.total && r.total && r.total !== media.total) {
-          if (v.media === media) { v.media = null; v.url = null; v.api = null; }
-          throw Object.assign(new Error('file video đã đổi'), { changed: true });
-        }
-        if (r.url) v.url = r.url;
-        v.speed = r.buf.byteLength / Math.max(1, performance.now() - r.at);   // tốc độ của lượt tải xong gần nhất (dropSlow)
-        return r.buf;
-      } catch (e) { if (e.changed || e.rateLimited || i === urls.length - 1 || signal.aborted) throw e; }   // 429: không gọi lại ngay
+    let urls = v.url === v.api ? [v.api, v.api] : [v.url, v.api];
+    const h = v.head;
+    if (headServes(v, media, b)) {
+      // Lượt tải đầu video treo hay lỗi giữa chừng: tính là lần gọi đầu, gọi lại một lần qua /aweme/v1/play/. Thôi vì chậm
+      // (headLate): tải như thường, qua link CDN (lượt mới tới cùng link có thể nhanh: đo 1/11 ở dropSlow).
+      try { return await headSlice(v, h, a, b, signal, prog); } catch (e) { if (signal.aborted || !e.head) throw e; if (!e.slow) urls = [v.api]; }
     }
+    // Lượt tải đầu video đã dừng (lỗi, treo, chậm) mà đã có phần đầu cửa sổ này: chỉ tải phần còn thiếu, rồi ghép. Đoạn (có
+    // prog) thì chờ mẩu nhanh cùng chờ lượt đó tải xong phần của nó trước (h.qGate), rồi nối tiếp sau phần đó.
+    const part = !!h && h.closed && h.media === media && v.head === h;
+    if (part && prog && h.qGate) { await h.qGate; if (signal.aborted) throw signal.reason; }
+    const from = part && h.got > a && h.got <= b ? h.got : a;
+    // dropSlow: ước thời gian còn lại theo phần phải tải; đoạn đã chờ trên lượt tải đầu video từ prog.since nên xét ngay khi
+    // lượt nối tiếp có đủ 2 s tốc độ, không chờ thêm SLOW_SLOT (mô phỏng: lượt đầu video rồi lượt nối tiếp của đoạn 0 cùng
+    // 560–1400 B/s, q0 nhanh: chờ thêm 6 s thì bỏ muộn, sub đầu giây 14,25 thay vì 12,5 như bản 0.2.25).
+    const since = prog && from > a ? prog.since : null;
+    if (since != null) prog.bytes = b - from + 1;
+    const openQ = part && !prog ? h.qOpen : null;
+    try {
+      for (const [i, url] of urls.entries()) {
+        try {
+          const pending = rangeFetch(url, from, b, signal, undefined, undefined, prog);
+          if (since != null) prog.since = since;
+          const r = await pending;
+          // Máy chủ trả file khác (cỡ khác) thì vị trí byte tính theo mục lục cũ sai hết: bỏ mục lục để lần thử sau tải
+          // lại. Trước đây giữ mục lục cũ, mọi đoạn sau của video đó lỗi mãi, 20 s một lần. So với cỡ file của chính mục
+          // lục đã dùng để tính vị trí (lượt tải đang chạy song song vẫn bắt được).
+          if (media.total && r.total && r.total !== media.total) {
+            if (v.media === media) { v.media = null; v.url = null; v.api = null; }
+            throw Object.assign(new Error('file video đã đổi'), { changed: true });
+          }
+          if (r.url) v.url = r.url;
+          v.speed = r.buf.byteLength / Math.max(1, performance.now() - r.at);   // tốc độ của lượt tải xong gần nhất (dropSlow)
+          if (from === a) return r.buf;
+          const all = new Uint8Array(b - a + 1);
+          all.set(new Uint8Array(headBytes(h, a, from - 1)));
+          all.set(new Uint8Array(r.buf), from - a);
+          // Nối vào phần đã nhận: lượt sau (đoạn 0 sau mẩu nhanh) chỉ tải tiếp từ đây.
+          if (v.head === h && h.got === from) { h.parts.push(new Uint8Array(r.buf)); h.got += r.buf.byteLength; }
+          return all.buffer;
+        } catch (e) { if (e.changed || e.rateLimited || i === urls.length - 1 || signal.aborted) throw e; }   // 429: không gọi lại ngay
+      }
+    } finally { if (openQ) openQ(); }
   }
   function toBase64(u8) {
     let s = '';
@@ -640,7 +829,7 @@
     if (!v.speed || speed * 3 >= v.speed) return;
     const left = (plan[k][1] - playhead) * 1000;
     const eta = speed > 0 ? (c.bytes - c.got) / speed : Infinity;
-    if (eta + SERVER_MS < left) return;
+    if (eta + SERVER_MS + SLOW_KEEP < left) return;
     // Lượt tải bị ngắt không xoá mục mới này (runChunk). Không tải lại khi chỗ đang xem còn trong đoạn (needsWork).
     v.chunks.set(k, { status: 'error', error: 'tải video quá chậm', slow: true, pre: c.pre, at: Date.now() });
     c.ctl.abort();
@@ -662,13 +851,19 @@
       const media = await ensureMedia(id);
       const w = TodMp4.window(media, Math.max(0, from - PRE_QUICK), to + 2);
       if (!w) return done({ status: 'no_audio' });
+      // Lượt tải đầu video còn đang chạy mà cửa sổ này bắt đầu trong phần nó sẽ tải (tua tới gần cuối đoạn 0 lúc đang tải):
+      // đọc tiếp lượt đó thêm cho tới hết cửa sổ, khỏi thêm một lượt tải song song.
+      const h = v.head;
+      if (h && !h.closed && h.media === media && w.start < h.end && w.end > h.end) h.end = w.end;
       let open = () => {}, gate = null;
       // Mẩu nối tiếp (rolling) không ngắt, không chặn lượt tải nào: đoạn kế đang tải cho kịp chỗ đang xem.
       if (!rolling) {
         gate = v.quickGate = new Promise((r) => { open = r; setTimeout(r, QUICK_GATE_MAX); });
         // Đoạn bắt đầu tải trước lần tua (dịch sẵn, dịch trước 30 s) thì không ngắt: có khi đã tải gần xong, nhất là trên
-        // máy chủ video chậm (mô phỏng của verifier: ngắt làm đoạn đó xong muộn từ 2,6 s thành 12,4 s).
-        for (const c of v.chunks.values()) if (c.status === 'pending' && !c.sent && c.ctl && !(c.made < settle.from)) c.ctl.abort();
+        // máy chủ video chậm (mô phỏng của verifier: ngắt làm đoạn đó xong muộn từ 2,6 s thành 12,4 s). Mẩu lấy từ lượt tải
+        // đầu video (headServes) thì không ngắt gì: nó là phần đầu của chính lượt tải đoạn 0, ngắt không làm nó tới sớm hơn.
+        // Đoạn 0 chờ cổng thì lượt đó vẫn đọc tiếp (headWanted), chờ không làm đoạn 0 tới muộn hơn.
+        if (!headServes(v, media, w.end - 1)) for (const c of v.chunks.values()) if (c.status === 'pending' && !c.sent && c.ctl && !(c.made < settle.from)) c.ctl.abort();
       }
       let bytes;
       mark(id, 'quickDl');

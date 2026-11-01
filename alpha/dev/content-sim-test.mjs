@@ -11,7 +11,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const EXT = path.join(ROOT, 'extension');
 
 // ---- content.js trong vm. Đồng hồ: env.now (Date.now), env.perf (performance.now, requestAnimationFrame).
-// fetchHang(a, b): lượt tải treo tới khi bị ngắt. total(a, b): cỡ file máy chủ báo trong Content-Range.
+// fetchHang(a, b, url): lượt tải treo tới khi bị ngắt (lượt tải đầu video "bytes=0-": trả khúc 16 KB đầu, có mục lục, rồi
+// mới treo). total(a, b): cỡ file máy chủ báo trong Content-Range.
 // status(a, b): mã HTTP trả về (vd. 429). retryAfter(a, b): header Retry-After (null: không đọc được).
 function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () => 206, retryAfter = () => null } = {}) {
   const env = { now: 1_000_000, perf: 0, sent: [], replies: new Map(), fetches: [], rafs: [], listeners: {}, videos: new Map(), activeId: null,
@@ -33,15 +34,25 @@ function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () 
   const fakeFetch = (url, init) => new Promise((resolve, reject) => {
     // Như fetch thật: signal đã bị ngắt từ trước thì từ chối ngay, không gọi mạng.
     if (init.signal.aborted) { env.preAborted = (env.preAborted || 0) + 1; return reject(init.signal.reason); }
-    const m = /bytes=(\d+)-(\d+)/.exec(init.headers.Range); const a = +m[1], b = +m[2];
-    const rec = { url, a, b, aborted: false, at: env.now, status: status(a, b, url) };
+    // "bytes=a-" (không có cuối: lượt tải đầu video đọc tới chỗ cần rồi ngắt): b = null, trả từng khúc 16 KB tới hết file.
+    const m = /bytes=(\d+)-(\d*)/.exec(init.headers.Range); const a = +m[1], b = m[2] ? +m[2] : null;
+    const rec = { url, a, b, open: b == null, got: 0, aborted: false, at: env.now, status: status(a, b, url) };
     env.fetches.push(rec);
     const size = total(a, b), ra = retryAfter(a, b);
+    const reader = () => {
+      if (!rec.open) { let d = false; return { read: async () => (d ? { done: true } : (d = true, { done: false, value: new Uint8Array(16) })) }; }
+      return { read: async () => {
+        if (rec.got && rec.hang) await new Promise((r, j) => { rec.release = r; rec.fail = j; });
+        if (rec.aborted) throw new Error('aborted');
+        const n = Math.min(16384, size - a - rec.got); if (n <= 0) return { done: true }; rec.got += n; return { done: false, value: new Uint8Array(n) };
+      } };
+    };
     const fin = () => resolve({ status: rec.status, url: 'https://cdn.example/x.mp4',
-      headers: { get: (h) => (h === 'content-range' ? `bytes ${a}-${b}/${size}` : h === 'retry-after' ? ra : null) },
-      body: { getReader: () => { let d = false; return { read: async () => (d ? { done: true } : (d = true, { done: false, value: new Uint8Array(16) })) }; } } });
-    init.signal.addEventListener('abort', () => { rec.aborted = true; reject(init.signal.reason); }, { once: true });
-    if (fetchHang(a, b, url)) rec.release = fin; else queueMicrotask(fin);
+      headers: { get: (h) => (h === 'content-range' ? `bytes ${a}-${b == null ? size - 1 : b}/${size}` : h === 'retry-after' ? ra : null) },
+      body: { getReader: reader } });
+    init.signal.addEventListener('abort', () => { rec.aborted = true; reject(init.signal.reason); if (rec.fail) rec.fail(new Error('aborted')); }, { once: true });
+    if (rec.open) { rec.hang = !!fetchHang(a, b, url); if (rec.hang) rec.release = () => {}; queueMicrotask(fin); }
+    else if (fetchHang(a, b, url)) rec.release = fin; else queueMicrotask(fin);
   });
   const chrome = {
     runtime: { id: 'x', onMessage: { addListener() {} },
@@ -187,14 +198,18 @@ await t('F6 video 12 s chưa dịch sẵn: chỉ gửi cả đoạn, không gử
 });
 
 await t('F6 lướt tới video dịch sẵn mà đoạn đầu còn đang tải: không tải lần hai bằng mẩu nhanh', async () => {
-  const e = makeEnv({ fetchHang: (a, b) => b !== 65535 && b - a > 20000 });
+  // Đoạn đầu của B (dịch sẵn) tải mãi không xong: lượt tải riêng [0,26) s, hay lượt tải đầu video của B sau khi có mục lục.
+  const e = makeEnv({ fetchHang: (a, b, url) => (b == null ? url.includes(B) : b !== 65535 && b - a > 20000) });
   e.up('items', [e.item(A, 12000), e.item(B, 60000)]);
   e.activeId = A; e.video(A, 1);
   await e.tick();
   e.activeId = B; e.videos.delete(A); e.video(B, 0.5);
   for (let i = 0; i < 6; i++) await e.tick();
   assert.deepEqual(e.subs().filter((k) => k.includes(':q')), []);
-  assert.equal(e.fetches.filter((f) => f.b !== 65535 && f.b - f.a <= 20000 && f.a < 20000 && f.url.includes('cdn')).length, 1);   // chỉ đoạn 0 của A
+  // Chỉ đoạn 0 của A (lượt tải riêng, hay lượt tải đầu video của A); B chỉ có lượt tải đoạn đầu đang treo.
+  const own = e.fetches.filter((f) => f.b != null && f.b !== 65535 && f.b - f.a <= 20000 && f.a < 20000 && f.url.includes('cdn'));
+  assert.equal(own.length + e.fetches.filter((f) => f.b == null && f.url.includes(A)).length, 1);
+  assert.ok(e.fetches.filter((f) => f.b == null && f.url.includes(B)).length <= 1);
 });
 
 await t('F7 S4: đoạn 30 s tải chậm, phát liền 0 → 30 s: chỉ một mẩu nhanh (trước đây q0, q8, q16, q24)', async () => {
@@ -467,7 +482,8 @@ await t('F9 lướt sang video đang tải / dừng ở 0: nhãn theo video mớ
 
 await t('F13 máy chủ trả file khác cỡ: bỏ mục lục cũ, lần thử sau tải lại mục lục và gửi được', async () => {
   let probes = 0;
-  const e = makeEnv({ total: (a, b) => (b === 65535 ? (++probes === 1 ? 5000000 : 6000000) : 6000000) });
+  // Lần đầu máy chủ trả file 5000 byte (lượt tải đầu video hết file trước khi đủ âm thanh, tải lại riêng phần đó thì cỡ khác).
+  const e = makeEnv({ total: (a, b) => (b === 65535 || b == null ? (++probes === 1 ? 5000 : 6000000) : 6000000) });
   e.up('items', [e.item(A, 12000)]);
   e.activeId = A; e.video(A, 3).paused = true;
   await e.tick();
@@ -482,7 +498,7 @@ await t('F13 máy chủ trả file khác cỡ: bỏ mục lục cũ, lần thử
 });
 
 await t('F15 tắt sub: huỷ đoạn đã gửi, mẩu nhanh, ngắt lượt tải dịch sẵn', async () => {
-  const e = makeEnv({ fetchHang: (a, b) => a === 0 && b === 25999 });   // đoạn đầu của B (dịch sẵn) tải lâu
+  const e = makeEnv({ fetchHang: (a, b, url) => (a === 0 && b === 25999) || (b == null && url.includes(B)) });   // đoạn đầu của B (dịch sẵn) tải lâu
   e.up('items', [e.item(A, 100000), e.item(B, 60000)]);
   e.activeId = A; e.video(A, 30).paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
@@ -772,6 +788,7 @@ await t('HTTP 429 lặp lại: nghỉ 5 s, 15 s, 45 s; tải được thì tính
   await e.reply(A + ':0', { status: 'ok', cues: [] });
   block = 1; ra = '30';
   e.up('items', [e.item(B, 12000)]);
+  await e.flush();   // trả lời 429 ngay trong lượt này (lượt tải đầu video gọi fetch ngay trong e.up)
   for (let s = 0; s < 60 && !e.replies.has(B + ':0'); s++) await e.tick(1000);
   const tb = times().slice(ta.length);
   assert.deepEqual(tb.slice(1).map((x, i) => Math.floor(x - tb[i])), [30], JSON.stringify(tb));   // không phải 45 s: đã tính lại
@@ -779,6 +796,7 @@ await t('HTTP 429 lặp lại: nghỉ 5 s, 15 s, 45 s; tải được thì tính
   await e.reply(B + ':0', { status: 'ok', cues: [] });
   block = 1; ra = '600';
   e.up('items', [e.item(C2, 12000)]);
+  await e.flush();
   for (let s = 0; s < 300 && !e.replies.has(C2 + ':0'); s++) await e.tick(1000);
   const tc = times().slice(ta.length + tb.length);
   assert.deepEqual(tc.slice(1).map((x, i) => Math.floor(x - tc[i])), [120], JSON.stringify(tc));

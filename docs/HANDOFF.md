@@ -87,12 +87,12 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 |---|---|
 | `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới, đánh dấu dòng hát, tiếng đệm trong lời hát, dòng nói ngắn gộp vào dòng hát, câu nói nhanh trong đoạn cả bài (20 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới ở cả hai chế độ lời bài hát, `rank`), Gemini hết lượt trong ngày (9 kiểm tra). `asr-fallback-test.mjs`: Fun-ASR hết hạn mức thì chuyển sang model dự phòng, giới hạn theo phút thì gọi lại (20 kiểm tra). `warm-test.mjs`: `/v1/warm` làm nóng đúng dịch vụ đang dùng, giãn 3 s, bỏ qua khi vừa có lệnh gọi thật, log thời gian kết nối (12 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON (11 kiểm tra). `lyrics-test.mjs`: chế độ lời bài hát, kể cả điệp khúc câu ngắn, ngữ cảnh ở chế độ thường, hai chế độ cùng lúc, đoạn cả bài có câu nói nhanh ở hai chế độ, kể cả khi không câu nào tự đủ là câu hát (19 kiểm tra) |
 | `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng, slide feed bị ẩn, trang kết quả tìm kiếm, đóng modal, HTTP 429, đoạn cả bài không dùng chung giữa hai chế độ (44 kiểm tra) |
-| `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước, đoạn đầu tải chậm qua máy chủ chậm (trang video và feed), tải nhanh rồi chậm hẳn, rời feed, tải chậm vừa phải, đường truyền chậm đều, khựng giữa chừng, tua về sau khi bỏ đoạn , hàng dịch sẵn nhường video vừa mở, báo làm nóng, mốc thời gian trong câu trả lời status (15 kiểm tra) |
-| `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms (4 kiểm tra) |
+| `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước, đoạn đầu tải chậm qua máy chủ chậm (trang video và feed), tải nhanh rồi chậm hẳn, rời feed, tải chậm vừa phải, đường truyền chậm đều, khựng giữa chừng, tua về sau khi bỏ đoạn , hàng dịch sẵn nhường video vừa mở, báo làm nóng, mốc thời gian trong câu trả lời status; một lượt tải từ byte 0 cho mục lục + q0 + đoạn 0 (nhiều rtt và băng thông, dịch sẵn, tua lúc đang tải, moov lớn, không có moov ở đầu, 200 cả file, lướt đi, 429, CDN treo, lượt đó chậm từ byte 0, đổi chế độ lời bài hát gửi đúng byte cũ, mở giữa video, tiến độ cho dropSlow) (27 kiểm tra) |
+| `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms; `headerEnd` trên phần đầu file đang tải dở (5 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
 | `node alpha/dev/background-test.mjs` | background.js gửi `POST /v1/warm` (kiểu JSON) tới server trên máy, bỏ qua lỗi, chặn địa chỉ ngoài máy (2 kiểm tra) |
 | `node alpha/dev/tap-test.mjs` | tap.main.js đọc response API với Response thật (fetch, XHR): thân chia khúc của search/stream, thân hỏng, giữ thứ tự danh sách tìm kiếm khi search/single đọc xong trước (3 kiểm tra) |
-| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua, đồng hồ trình phát lệch 50 s, CDN treo một lần, lời bài hát ♪, bấm ô tắt lời bài hát trong popup, video mở từ trang tìm kiếm (26 kiểm tra) |
+| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua, đồng hồ trình phát lệch 50 s, CDN treo một lần, lời bài hát ♪, bấm ô tắt lời bài hát trong popup, video mở từ trang tìm kiếm, video đầu tải một lượt từ byte 0 (27 kiểm tra) |
 
 Cần cho các test: Node 18+, `playwright`, `ffmpeg`, `openssl`.
 
@@ -585,8 +585,12 @@ Quá trình sửa:
     - chỉ thêm 1 mẩu nhanh (q9), tức 16,5 s âm thanh.
 
     Kết quả cũng như vậy trên feed, khi đoạn đầu chậm đã bắt đầu tải từ lúc dịch sẵn, và khi đoạn tải nhanh 1/4 đầu rồi mới chậm hẳn. Ở 2000–2200 B/s (đoạn vẫn kịp), khi đường truyền chậm đều (có 2 video dịch sẵn), và khi khựng 2,5 s giữa chừng, kết quả giống hệt bản trước.
+
+    Từ §6p, kịch bản test của các ca này là 560 B/s chậm từ byte 12000 (hết phần của q0), vì q0 và đoạn 0 nay đi chung một lượt tải. Ca 1040 B/s chậm từ byte 0 nằm ở §6p.
+  - Từ §6p còn bỏ cả khi sub chỉ tới lúc đoạn còn dưới 5 s (`SLOW_KEEP`): sub tới sát cuối đoạn gần như vô ích, mà đoạn kế phải chờ sau nó.
   - Giới hạn:
     - Cần một lượt tải khác của cùng video đã xong nhanh hơn hẳn (thường là q0) để so. Máy chủ video chậm với mọi lượt tải thì không bỏ gì, như bản 0.2.22.
+    - Từ §6p, q0 là phần đầu của chính lượt tải đoạn 0. Lượt đó chậm ngay từ byte 0 thì phải thôi lượt đó rồi tải nối tiếp bằng lượt riêng (`headLate`) mới có mốc để so.
     - Trên feed có nhiều video đang dịch sẵn mà đường truyền chậm, phải đợi dịch sẵn xong mới bỏ được, thường là quá muộn (verifier đo: 7 video, 9 KB/s).
 - **HTTP 429 khi tải video:**
   - Không gọi lại ngay. Mọi lượt tải (cả hai hàng, mọi video) cùng nghỉ 5 s, rồi 15 s và 45 s nếu lại bị 429. Nếu đọc được `Retry-After` mà dài hơn thì theo nó, tối đa 2 phút.
@@ -743,6 +747,31 @@ Hai luật ứng viên ở §6l được chọn sau khi nhìn lỗi của lô 1,
 - **Bẫy khi cập nhật extension:** sau khi đổi file extension, Chrome có thể vẫn chạy service worker (`background.js`) cũ dù đã khởi động lại trình duyệt, trong khi content script đã là bản mới. Lần đo đầu bị đúng lỗi này (không có lời làm nóng nào tới server). Sau khi cập nhật, bấm Reload extension ở `chrome://extensions` rồi kiểm phiên bản.
 - **Test:** content-time 15 (thêm 4, đổi kỳ vọng ca "đường truyền chậm đều": nay mẩu nhanh tải kịp, sub đầu ở giây 9,75 thay vì 37 khi 3500 B/s), background-test 2 (mới), warm-test 12 (mới); mọi bộ khác và e2e 26/26 đạt. Kiểm tra mới trượt trên code trước.
 - **Bước sau (chưa làm):** một lượt tải cho cả mục lục và mẩu nhanh (bớt một lượt hỏi máy chủ video, phần lớn nhất còn lại phía extension); làm nóng lại nếu tải mục lục quá 3 s; dịch trả dần từng dòng (0,2–0,4 s, công lớn); hiện thêm 1–2 s dòng vừa nói xong khi kết quả đầu về (chủ dự án quyết); bỏ lần gọi Fun-ASR chắc chắn hỏng sau khi khởi động server (đụng chính sách §6k, chủ dự án quyết).
+
+## 6p. Sub đầu khi mở video, bước 2: một lượt tải cho mục lục và đoạn đầu (1/11, extension 0.2.26)
+
+Bước 1 (§6o) đo được: tải mục lục 0,7–1,7 s rồi mới tải mẩu nhanh bằng một lượt nữa; đoạn 0 tải lại phần đầu file, bị mẩu nhanh ngắt rồi tải lại.
+- **Cách làm:** mở video từ đầu thì một lượt `Range: bytes=0-` qua `/aweme/v1/play/` (`loadHead` trong `content.js`). Đọc mục lục ngay khi đủ byte, đọc tiếp trên chính lượt đó tới hết âm thanh đoạn 0, rồi ngắt. q0 và đoạn 0 cắt từ phần đã nhận. Dịch sẵn trên feed cũng vậy. Mở giữa video (chỗ đang xem từ giây 10) thì giữ lượt 64 KB cũ.
+- **Giữ nguyên:** không có moov trong 64 KB đầu thì báo lỗi như cũ; máy chủ trả 200 cả file thì đọc tới chỗ cần rồi ngắt (cỡ file theo Content-Length); 429 nghỉ chung; lướt đi, `dropSlow`, tắt sub thì ngắt; luật xin lại sau khi đổi chế độ lời bài hát gửi đúng byte cũ.
+- **Treo, lỗi hay chậm giữa chừng:** trước khi có mục lục thì gọi lại sau 4 s như cũ. Sau đó q0 rồi đoạn 0 tải nối tiếp phần còn thiếu, lần lượt, không tải lại phần đã nhận. Lượt đó chậm tới mức q0 phải chờ quá 6 s (và không có video khác đang tải) thì cũng thôi lượt đó (`headLate`), để có lượt mới và mốc so cho `dropSlow`.
+- **Mô phỏng** (đồng hồ giả, video 2 Mbit/s, moov 40 KB; chưa đo thật):
+  - Trang `/video/`: q0 gửi sớm hơn 1,25–4 s, đoạn 0 sớm hơn 0,1–2,3 s. Video đang phát sẵn: q0 sớm hơn 0,3–0,5 s, đoạn 0 sớm hơn 1,1–2,6 s.
+  - Số lượt tải tới máy chủ video: 2–4 xuống 1.
+  - Byte: 9,6–12 MB xuống 6,6 MB khi bản cũ có tải q0 hay tải lại đoạn 0. Ở 6 MB/s (bản cũ không gửi q0) thì bằng hoặc nhỉnh hơn (6,57 → 6,60 MB; moov 150 KB: 6,72 → 6,90 MB), do đọc quá chỗ cần.
+  - Lượt đầu video 1040 B/s từ byte 0, lượt nối tiếp nhanh: sub đầu giây 7,5 (bản cũ 12,5), có sub 20/20 s của [10,30) (bản cũ 16,5).
+  - Lượt nối tiếp của đoạn 0 cũng chậm (cùng link CDN; 1040 B/s là tốc độ đo 1/11, đoạn 0 mất ~25 s): lượt nối tiếp chỉ còn 14000/26000 byte nên sub vừa kịp trước giây 20 và `dropSlow` không bỏ đoạn. Bản vá đầu ở 1040 / 1200 / 1400 B/s: sub đầu giây 19,5 / 17,75 / 16, có sub 7,75 / 11,25 / 14 s (bản cũ 12,5 s và 16,5 s). Nay `dropSlow` bỏ cả khi sub chỉ tới lúc đoạn còn dưới 5 s (`SLOW_KEEP`): 560–1400 B/s đều 12,5 s và 16,5 s như bản cũ. Test canh ca 560, 1040, 1400 B/s.
+  - `SLOW_KEEP` cũng đổi ca chậm từ byte 12000 (sau phần của q0): 1040 B/s sub đầu giây 17 → 12,5 (có sub 12,5 → 16,5 s), 1200 B/s 15,25 → 12,5. Từ 1400 B/s trở lên không đổi. Ca lướt feed nhanh dưới đây không đổi số nào.
+  - Chưa sửa: 1600–2000 B/s chậm từ byte 0, sub đầu giây 15,25–18,5 (bản cũ 15,5–18,75). q0 chờ trên lượt đó chưa quá 6 s nên lượt đó không bị thôi (`headLate`), `dropSlow` không có lượt nhanh nào để so (q0 gửi lúc 8 s, chỉ 3 lượt tải).
+- **Đánh đổi (mô phỏng lướt feed, 6 video; bản cũ → nay; "giây ASR" là số giây âm thanh gửi nhận dạng, phần tốn tiền):** q0 gửi sớm hơn nên hàng dịch sẵn hết nhường sớm hơn, video nào cũng kịp gửi nhiều hơn.
+  - Lướt nhanh (1–3 s mỗi video) tải nhiều byte hơn, gửi rồi huỷ nhiều hơn. Nặng nhất: 6 MB/s, 1 s/video: 23,4 → 41,4 MB (+77%), giây ASR 30 → 80, huỷ 0 → 2. 3 MB/s, 1,5 s/video: 25,5 → 36,6 MB, giây ASR 10 → 61, huỷ 0 → 3. 3 MB/s, 2 s/video: 42,8 → 47,0 MB, giây ASR 62 → 141, huỷ 3 → 7.
+  - Từ 4 s mỗi video, byte gần bằng (79,3 → 81,1 MB ở 3 MB/s 4 s; 110,5 → 110,2 MB ở 6 MB/s 6 s). Số huỷ: 3 MB/s 4 → 2 (4 s) và 1 → 3 (6 s); 6 MB/s 5 → 4 và 2 → 0; 1,5 MB/s 1 → 4 và 0 → 1. Giây ASR: 3 MB/s 170 → 227,5 (4 s) và 227,5 → 302,5 (6 s); 6 MB/s 330 → 320 và 347,5 → 347,5; 1,5 MB/s 21 → 140 và 100 → 140 (bản cũ gần như không kịp gửi gì: 2 lần gửi so với 10 ở 4 s).
+- **Test bổ sung sau lượt soát cuối:** ca lượt nối tiếp cũng chậm 1040 và 1400 B/s (trượt trên bản vá đầu: sub đầu giây 19,5), kiểm `prog.bytes` của lượt nối tiếp, và ca lượt đầu video treo trong lúc nghỉ sau 429 (bỏ kiểm `rateWait` ở đầu `loadHead` thì trượt: lần gọi lại sau 4 s rơi vào lúc nghỉ). content-time 27 kiểm tra. Hai nhánh chưa có test bắt khi bỏ đi, vì ảnh hưởng nhỏ (theo đọc code): không ngắt đoạn khi mẩu nhanh lấy từ lượt tải đầu video (bỏ đi thì đoạn 0 chờ lại trên chính lượt đó, không thêm lượt tải); `headCheck` khi một lượt chờ bị huỷ (bỏ đi thì lượt tải vẫn dừng ở lần nhận byte kế tiếp, hay sau 6 s im).
+- **Đo trên Douyin thật** (1/11, chế độ khách, 6 trang `/video/` mới, mốc thời gian của bước 1):
+  - Từ lúc có item tới lúc gửi mẩu nhanh: 0,70–2,11 s, trung vị 0,91 s. Bước 1 (8 video): 1,64–4,63 s, trung vị 1,93 s.
+  - Lượt tải đầu video có mục lục sau 0,57–1,43 s; byte của mẩu nhanh về thêm 0,02–0,67 s sau đó; đoạn 0 gửi ngay sau mẩu nhanh 0,02–0,8 s (bước 1: 1–2 s).
+  - Mẩu nhanh được gửi trước lúc video phát ở 5/6 video. Kết quả mẩu nhanh về sau khi phát trung vị khoảng 1,15 s; 2 video có kết quả trước cả lúc phát. Video chậm nhất là do server mất 4,1 s.
+  - Phần còn lại sau khi video phát gần như chỉ là thời gian của server (nhận dạng và dịch).
+- **Còn mở:** ngưỡng giây 10 và 6 s mới chọn theo mô phỏng; CDN giới hạn tốc độ theo kết nối chưa có số đo; chưa đo trên feed và modal tìm kiếm với bản này. Bộ đệm `h.parts` của lượt tải đầu video được giữ tới hết đoạn 1 (khoảng 13 MB với video 2 Mbit/s), và tiến độ `prog.bytes` không chỉnh cho đoạn 1 khi đoạn đó dùng lại phần đã nhận (verifier vòng sau ghi nhận, chưa sửa).
 
 ## 7. Việc tiếp theo trên Mac
 

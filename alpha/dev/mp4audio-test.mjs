@@ -51,6 +51,19 @@ try {
     const m = parse(file.buffer.slice(file.byteOffset, file.byteOffset + file.length));
     assert.ok(Math.abs(m.duration - 20) < 0.1, String(m.duration));
   });
+  t('headerEnd trên phần đầu file đang tải dở: chưa đủ header của moov thì null, kể cả cỡ 64 bit', () => {
+    const box = (type, size, big) => { const b = new Uint8Array(big ? 16 : 8); const dv = new DataView(b.buffer);
+      dv.setUint32(0, big ? 1 : size); b.set([...type].map((c) => c.charCodeAt(0)), 4); if (big) dv.setBigUint64(8, BigInt(size)); return b; };
+    const ftyp = new Uint8Array(24); ftyp.set(box('ftyp', 24));
+    const big = new Uint8Array([...ftyp, ...box('moov', 70000, true)]);
+    const ab = (u8, n) => u8.slice(0, n).buffer;
+    assert.equal(headerEnd(ab(big, 24 + 8)), null);    // mới tới giữa header 64 bit (trước đây: 25)
+    assert.equal(headerEnd(ab(big, 24 + 15)), null);
+    assert.equal(headerEnd(ab(big, 24 + 16)), 24 + 70000);
+    const small = new Uint8Array([...ftyp, ...box('moov', 5000)]);
+    assert.equal(headerEnd(ab(small, 24 + 4)), null);
+    assert.equal(headerEnd(ab(small, 24 + 8)), 24 + 5000);
+  });
   t('video không có âm thanh báo lỗi rõ ràng', () => {
     ff('-f', 'lavfi', '-i', 'testsrc=size=160x120:rate=30', '-t', '2', '-c:v', 'libx264', '-preset', 'ultrafast', '-movflags', '+faststart', f('mute.mp4'));
     const file = fs.readFileSync(f('mute.mp4'));

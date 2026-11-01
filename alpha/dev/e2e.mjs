@@ -124,9 +124,12 @@ const SEARCH_PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><bo
     document.getElementById('modal').innerHTML = '<video muted playsinline autoplay src="/media/${SIDS[0]}.mp4" style="width:640px;height:480px;display:block"></video>';
   });
 </script></body></html>`;
+// Byte sau cùng của moov (file faststart: ftyp, moov, … mdat).
+const moovEnd = (b) => { for (let o = 0; o + 8 <= b.length;) { const size = b.readUInt32BE(o); if (b.toString('latin1', o + 4, o + 8) === 'moov') return o + size; if (size < 8) break; o += size; } return 0; };
 const playRequested = new Set();
 const cdnSong = [];   // lần tải phần âm thanh video bài hát (lần đầu bị treo)
 const playRequestedAt = {};
+const playRanges = {};   // id -> các header Range gửi tới /aweme/v1/play/ (trước khi chuyển hướng sang CDN)
 let feedServedAt = 0;
 const douyin = https.createServer({ key: fs.readFileSync(path.join(TMP, 'k.pem')), cert: fs.readFileSync(path.join(TMP, 'c.pem')) }, (req, res) => {
   const u = new URL(req.url, 'https://' + req.headers.host);
@@ -141,6 +144,7 @@ const douyin = https.createServer({ key: fs.readFileSync(path.join(TMP, 'k.pem')
       const id = u.searchParams.get('video_id').replace('v0d00f', '');
       playRequested.add(id);
       if (!playRequestedAt[id]) playRequestedAt[id] = Date.now();
+      (playRanges[id] = playRanges[id] || []).push(req.headers.range || '');
       return send(302, { location: `https://v3-web.douyinvod.com/x/${fileFor[id]}.mp4` }, '');
     }
     if (!u.pathname.startsWith('/media/')) return send(404, {}, '');
@@ -151,10 +155,12 @@ const douyin = https.createServer({ key: fs.readFileSync(path.join(TMP, 'k.pem')
   const h = { 'access-control-allow-origin': 'https://www.douyin.com', 'access-control-expose-headers': 'content-range', 'content-type': 'video/mp4', 'accept-ranges': 'bytes' };
   if (!body) return send(404, h, '');
   const m = /bytes=(\d+)-(\d*)/.exec(req.headers.range || '');
-  // CDN treo một lần (như đo được trên Douyin): lượt tải phần âm thanh đầu tiên của video bài hát gửi header rồi im.
-  if (m && !u.pathname.startsWith('/media/') && u.pathname.endsWith('/song6.mp4') && Number(m[1]) > 0) {
+  // CDN treo một lần (như đo được trên Douyin): lượt tải phần âm thanh đầu tiên của video bài hát gửi header rồi im. Lượt
+  // tải đầu video ("bytes=0-", mục lục + âm thanh trên cùng một lượt) thì gửi hết mục lục và 16 byte rồi mới im.
+  if (m && !u.pathname.startsWith('/media/') && u.pathname.endsWith('/song6.mp4') && (Number(m[1]) > 0 || !m[2])) {
     cdnSong.push(Date.now());
-    if (cdnSong.length === 1) { res.writeHead(206, { ...h, 'content-range': `bytes ${m[1]}-${body.length - 1}/${body.length}` }); res.write(body.subarray(Number(m[1]), Number(m[1]) + 16)); return; }
+    const from = Number(m[1]), upto = m[2] ? from + 16 : moovEnd(body) + 16;
+    if (cdnSong.length === 1) { res.writeHead(206, { ...h, 'content-range': `bytes ${from}-${body.length - 1}/${body.length}` }); res.write(body.subarray(from, upto)); return; }
   }
   if (m) {
     const a = Number(m[1]), b = Math.min(m[2] ? Number(m[2]) : body.length - 1, body.length - 1);
@@ -289,6 +295,8 @@ const checks = {
     && delayed.at135.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.' && savedDelay === 0.3,
   'next videos prefetched (3 processed)': (status.counts.ok || 0) + (status.counts.skipped || 0) >= 3,
   'next video found in embedded page data (__pace_f), prefetched before the feed API answers': !!playRequestedAt[ids[1]] && (!feedServedAt || playRequestedAt[ids[1]] < feedServedAt),
+  'first video: one request from byte 0 (bytes=0-) carries index and audio, no separate 64 KB index request':
+    (playRanges[ids[0]] || [])[0] === 'bytes=0-' && !(playRanges[ids[0]] || []).includes('bytes=0-65535'),
   'liked video in the sidebar is not prefetched': !playRequested.has(FAV) && playRequested.has(ids[1]),
   'stalled CDN download dropped after ~6 s idle and retried; song video still processed': cdnSong.some(t => t - cdnSong[0] >= 5000 && t - cdnSong[0] < 15000) && /7500000000000000003 \[0:00[^\]]*\] (ok|skipped \(bài hát\))/.test(alphaLog),
   'song video (lyrics on by default): lyrics shown with ♪': /^♪ /.test(song.sub || ''),
