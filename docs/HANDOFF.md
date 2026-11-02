@@ -1146,6 +1146,50 @@ Chủ dự án chọn làm cả 4 hướng.
   - tua về đoạn 0 trong 3 s đầu thì huỷ đoạn 1 đã gửi;
   - phát 2× thì đoạn 1 bắt đầu ở giây phim thứ 6.
 
+## 6ac. Chế độ thử: bớt hụt sub ở giây 10 (2/11, extension 0.2.36)
+
+- **Vấn đề** (chủ dự án dùng thử 0.2.35): sang đoạn [10, …) vẫn thấy "đang dịch".
+  - Đo trong phiên đó (§6ab): đoạn 1 chỉ bắt đầu tải sau cửa 3 s.
+  - Hụt 6,1 s: tải 10,2 s qua máy chủ chậm.
+  - Hụt 2,6 s: server nhận dạng 7,5 s.
+  - Thời gian cần cho đoạn 1 = cửa chờ + tải + server, mà chỉ có 10 s.
+- **Sửa (`content.js`, chỉ khi bật ô thử):**
+  1. **Tải sớm, gửi sau cửa:** đoạn ngay sau đoạn ở chỗ đang xem tải ngay khi lướt tới (tải không tốn tiền), chỉ gửi server khi qua cửa (`f10Hold` trong vòng chờ gửi, cạnh `sendWait`). Chỉ tải sớm khi đoạn ở chỗ đang xem đã gửi hay đã xong, vì hàng tải của video đang xem chỉ có một chỗ (verifier, G1).
+  2. **Cửa thích ứng (`f10Gate`):** 1,5 s nếu video trước vừa được xem ≥ 8 s (đang xem hẳn), không thì 4 s.
+     - Cửa 3 s mà tải sớm thì lướt 4 s tốn gấp đôi: gửi ở giây 3, huỷ ở giây 4.
+     - 1,5 s chứ không 0: xem xong một video rồi lướt nhanh qua video kế thì khỏi gửi (verifier, G4).
+  3. **Đoạn 1 ngắn hơn:** [10,20) thay vì [10,25), để server làm nhanh hơn. Sau đó các đoạn 30 s.
+  4. **`restartSlow`:**
+     - So với tốc độ nhanh hơn trong hai mốc: lượt tải xong gần nhất của video đó, hoặc trung vị 6 lượt gần nhất của mọi video. Lý do: mọi lượt của một video có thể cùng qua máy chủ chậm.
+     - Khi thôi lượt chậm: cả video chuyển sang tải qua `/aweme/v1/play/` (`v.url = v.api`) để có thể được chuyển sang máy chủ khác. Máy chủ chậm được ghi nhớ (`v.badHost`), để lượt tải cũ từ đó xong sau không đặt lại link (verifier, G1). Đoạn được tải lại mang cờ `viaApi`.
+     - Mốc lấy các lượt trong 60 s gần đây. Verifier (G2) đề nghị 15 s, để khi cả đường truyền chậm đi không tải lại vô ích (đoạn 1 muộn ~1 s). Nhưng khi xem video dài trên máy chủ chậm, lượt nhanh gần nhất thường cũ hơn 15 s: mô phỏng xem hết chỉ phủ 88% thay vì 98%. 60 s cho cùng kết quả như không giới hạn (verifier đo lại).
+     - Trong phiên thật, các lượt nhanh không chạy cùng lúc với lượt chậm, nên đòi "có lượt nhanh chạy song song" (`spareCapacity`) cũng sẽ chặn lần tải lại ấy.
+- **Đã bỏ:** chỉ tải sớm khi mạng nhanh. Không giúp mạng 1,2 MB/s mà còn làm kiểu xem trộn kém đi.
+- **Test:**
+  - content-time 39, trong đó các ca thử cập nhật cho đoạn [10,20) và thêm 3 ca: cửa thích ứng; video mà mọi lượt tải qua máy chủ chậm; lướt tới video dịch sẵn mà đoạn 0 còn tải chậm (kịch bản của verifier, G1).
+  - Đối chứng: bỏ sửa 4 thì ca máy chủ chậm trượt (đoạn 1 không gửi trong 9 s).
+- **Kiểm:**
+  - Verifier soát: ship_with_fixes:
+    - G1 (major): đã sửa;
+    - G2: không áp, lý do ở trên;
+    - G3: chấp nhận. Mạng 1,2 MB/s lướt 2 s sau một video xem lâu: đoạn [10,20) làm đoạn [20,50) tải sớm trong lúc xem, nên video kế dịch sẵn ít hơn;
+    - G4: đã đổi cửa 0 → 1,5 s.
+  - Lần soát lại: ship. G4 trong mô phỏng không bớt tiền ở kiểu xem trộn: video sau một video xem lâu thường ở lại 2–3 s, lâu hơn 1,5 s. Cửa 3 s thì bớt (481 → 440 giây nhận dạng) nhưng hụt nhiều hơn khi xem (hụt@10 0,6 → 1,4 s). Giữ 1,5 s vì chủ dự án đang khó chịu đúng chỗ hụt.
+- **Mô phỏng** (`cmp2.mjs`, 5 hạt giống, server rút thăm theo việc, video đầu đã xem 15 s):
+  - kiểu mạng mới "1/4 máy chủ chậm 250 KB/s": máy chủ rút thăm mỗi lần chuyển hướng `/aweme/v1/play/`, giữ cho link CDN của nó;
+  - số "hụt@10 s" = tổng giây không có sub trong [9,5; 16) s của các video xem ≥ 14 s.
+
+  | Mạng | Xem 15 s: phủ 0.2.35 → 0.2.36 (0.2.34) | Hụt@10 s 0.2.35 → 0.2.36 | Xem hết: phủ | Trộn: phủ | Lướt 2 s: video có sẵn sub |
+  |---|---|---|---|---|---|
+  | 10 MB/s | 98 → 100% (100%) | 4,0 → 0,3 s | 99 → 100% | 99 → 99% | 11 → 11 |
+  | 3 MB/s | 95 → 100% (100%) | 7,5 → 0,6 s | 98 → 99% | 98 → 99% | 11 → 11 (0.2.34: 6,8) |
+  | 3 MB/s, 1/4 lượt chậm | 95 → 100% (100%) | 8,7 → 0,8 s | 94 → 99% | 96 → 99% | 9 → 9 |
+  | 3 MB/s, 1/4 máy chủ chậm | 87 → 96% (100%) | 20,9 → 6,3 s | 83 → 98% | 89 → 99% | 9 → 9 |
+  | 1,2 MB/s | 87 → 95% (97%) | 22,1 → 8,3 s | 94 → 95% | 93 → 94% | 6,0 → 2,2 (0.2.34: 0,2) |
+
+  - Tiền nhận dạng (3 MB/s): lướt 4 s 190 → 200 s (0.2.34: 465); xem hết 778 → 798 (0.2.34: 762); trộn 441 → 481 (0.2.34: 516). Khi xem hay xem trộn, bản thử tốn ngang hoặc hơn 0.2.34 4–6%; chỉ rẻ hơn hẳn khi lướt.
+  - Kém đi: mạng 1,2 MB/s lướt 2 s, video có sẵn sub 6,0 → 2,2/11.
+
 ## 7. Việc tiếp theo trên Mac
 
 1. **Kiểm tra môi trường:** `node -v` (cần 18+), `git status`, đang ở nhánh `claude/busy-newton-1y8nzr`. Có `alpha/server/.env` chưa (chỉ kiểm có file, không đọc nội dung).

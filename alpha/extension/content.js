@@ -25,17 +25,23 @@
   // Video ngắn hơn thế thì dịch một lần. Dài hơn thì đoạn đầu chỉ 20 s: đo khi lướt, /aweme/v1/play có lúc chuyển
   // sang máy chủ video chỉ tải được ~0,3 MB/s, tải trọn video 60 s mất cả chục giây mới có sub đầu.
   const SINGLE_MAX = 30;
-  // Chế độ thử "dịch sẵn 10 s" (cài đặt first10, ô trong popup, mặc định tắt; HANDOFF §6aa–§6ab): đoạn [0,10) rồi [10,25), rồi
-  // 30 s; video ≤ F10_SINGLE giây dịch một lần. Video dịch sẵn chỉ làm 10 s đầu; video đang xem chỉ làm đoạn sau đoạn ở chỗ
-  // đang xem khi đã xem F10_GATE ms (lướt qua thì khỏi tải, khỏi trả tiền). Đoạn 0 gửi dư F10_POST giây như mẩu nhanh.
-  // Mô phỏng 2/11 (thời gian server dao động, bắt đầu ấm; HANDOFF §6ab): lướt nhanh có sẵn sub nhiều hơn (1,2 MB/s lướt 4 s:
-  // phủ 99% thay vì 21%; 3 MB/s lướt 2 s: 11/11 video thay vì 6,8/11) và bớt 25–60% giây nhận dạng; xem tiếp thì có thể hụt
-  // sub quanh giây 10 ở mọi tốc độ mạng (xem 15 s: 3 MB/s phủ 95% thay vì 100%, 1,2 MB/s 86% thay vì 97%), thêm lượt gửi,
-  // ít rút gọn câu hơn; mạng 450 KB/s xem hết video thì kém hẳn (27% thay vì 59%).
+  // Chế độ thử "dịch sẵn 10 s" (cài đặt first10, ô trong popup, mặc định tắt; HANDOFF §6aa–§6ac): đoạn [0,10) rồi [10,20), rồi
+  // 30 s; video ≤ F10_SINGLE giây dịch một lần. Video dịch sẵn chỉ làm 10 s đầu; video đang xem chỉ gửi đoạn sau đoạn ở chỗ
+  // đang xem khi qua cửa chờ (f10Gate; lướt qua thì khỏi trả tiền). Đoạn 0 gửi dư F10_POST giây như mẩu nhanh.
+  // Mô phỏng 2/11 (thời gian server dao động, bắt đầu ấm; HANDOFF §6ab–§6ac): lướt nhanh có sẵn sub nhiều hơn (1,2 MB/s lướt
+  // 4 s: phủ 99% thay vì 21%; 3 MB/s lướt 2 s: 11/11 video thay vì 6,8/11) và bớt 45–63% giây nhận dạng; xem tiếp thì gần như
+  // cách cũ (xem 15 s: 3 MB/s phủ 100%, 1,2 MB/s 95% thay vì 97%) nhưng tốn hơn 4–6% giây nhận dạng, ít rút gọn câu hơn; mạng
+  // 450 KB/s xem hết video thì kém hẳn (27% thay vì 59%, bản 0.2.35).
   // Áp cho video chưa chia đoạn: video kế đang dịch sẵn và video đã gặp giữ cách cũ.
   // Đoạn 1 gửi dư F10_PRE1 giây phía trước (≥ 4 s: server giữ câu vắt qua giây 10, ghép sub thay dòng bị cắt của đoạn 0;
   // verifier 2/11: ≥ 13,6% đoạn đầu có lời có câu như vậy). Phần dư cuối ngắn hơn F10_TAIL giây: xem planFor.
-  const F10_SINGLE = 12, F10_FIRST = 10, F10_SECOND = 15, F10_GATE = 3000, F10_POST = 2, F10_PRE1 = 4.5, F10_TAIL = 8;
+  // Đoạn [10,20) (đoạn 1) tải ngay khi lướt tới (tải không tốn tiền; khi đoạn ở chỗ đang xem đã gửi hay xong) nhưng chỉ gửi
+  // server khi đã xem F10_GATE ms, hay F10_GATE_W ms nếu video trước vừa được xem ≥ F10_WATCHED ms (đang xem hẳn, không lướt).
+  // Chủ dự án dùng thử 2/11: đoạn [10,25) tải sau cửa 3 s, hụt sub ở giây 10 (tải 10 s qua máy chủ chậm; server 9 s). Mô phỏng
+  // 2/11 (5 hạt giống, 11 video xem 15 s, 3 MB/s): tổng hụt trong [9,5; 16) s 7,5 s → 0,6 s; máy chủ chậm theo video 20,9 s →
+  // 6,3 s; lướt 4 s tốn như cửa 3 s cũ (cửa 3 s mà tải sớm thì gấp đôi: gửi ở giây 3 rồi huỷ ở giây 4).
+  const F10_SINGLE = 12, F10_FIRST = 10, F10_SECOND = 10, F10_GATE = 4000, F10_GATE_W = 1500, F10_WATCHED = 8000, F10_POST = 2,
+    F10_PRE1 = 4.5, F10_TAIL = 8;
   const PRE = 1.5, POST = 6;     // âm thanh gửi dư hai đầu để câu vắt qua ranh giới không bị cắt
   // Đoạn trước chưa dịch (vừa tua tới): gửi dư 8 s phía trước. Server lấy lời nói phần đó làm mạch câu cho bước dịch
   // và giữ câu vắt qua đầu đoạn (đo trên vlog thật: 30% đoạn sau tua dịch không có ngữ cảnh, sai xưng hô, mất nửa câu).
@@ -156,6 +162,14 @@
   // metadata hay không phải video); hold: hàng dịch sẵn đang nhường; since: lúc xét; warm: đã báo làm nóng.
   // played: số ms video đó đã phát kể từ lúc thành video đang xem (WATCH_MS; last: lần đọc trước).
   let opened = { id: null, need: null, hold: false, since: 0, warm: false, played: 0, last: 0 };
+  // Chế độ thử first10: thời gian đã phát của các video vừa xem (gần nhất cuối), cho cửa chờ của đoạn 1 (f10Gate).
+  let dwell = [];
+  const f10Gate = () => (dwell.length && dwell[dwell.length - 1] >= F10_WATCHED ? F10_GATE_W : F10_GATE);
+  // Đoạn k của video đang xem đã tải xong mà chưa được gửi: sau đoạn ở chỗ đang xem và chưa qua cửa chờ.
+  const f10Hold = (id, k) => {
+    const v = vids.get(id), plan = v && v.plan;
+    return !!plan && !!v.short0 && id === currentId && k > Math.max(0, chunkAt(plan, playhead)) && !(opened.id === currentId && opened.played >= f10Gate());
+  };
   const watching = () => opened.id === currentId && opened.played >= WATCH_MS;   // chế độ video dài
   // Dịch trước bao xa (chế độ video dài và đoạn tải chậm: LOOKAHEAD_LONG). v.bps: byte mỗi giây video (runChunk), v.speed:
   // byte/ms của lượt tải xong gần nhất.
@@ -455,11 +469,14 @@
     const want = [];
     const plan = planFor(currentId);
     const ahead = aheadFor(vids.get(currentId));
-    // Chế độ thử first10: chưa xem đủ F10_GATE thì chỉ làm tới đoạn ở chỗ đang xem (mở giữa video, tua sớm: đoạn đó vẫn làm
-    // ngay; verifier 2/11).
+    // Chế độ thử first10: chưa qua cửa chờ (f10Gate) thì chỉ làm tới đoạn ngay sau đoạn ở chỗ đang xem; đoạn đó tải nhưng chưa
+    // gửi (f10Hold), và chỉ khi đoạn ở chỗ đang xem đã gửi hay xong: hàng tải của video đang xem chỉ một chỗ, đoạn chờ cửa giữ
+    // chỗ đó, lần tải lại đoạn ở chỗ đang xem (restartSlow) phải xếp sau (verifier 2/11, G1). Mở giữa video, tua sớm: đoạn ở
+    // chỗ đang xem vẫn làm ngay (verifier 2/11).
     const cv = vids.get(currentId), ph0 = plan ? Math.max(0, chunkAt(plan, playhead)) : 0;
-    const gated = !!cv && !!cv.short0 && !(opened.id === currentId && opened.played >= F10_GATE);
-    if (plan) plan.forEach(([a, b], k) => { if (gated && k > ph0) return; if (b > playhead && a < playhead + ahead) want.push([currentId, k]); });
+    const gated = !!cv && !!cv.short0 && !(opened.id === currentId && opened.played >= f10Gate());
+    const c0 = cv && cv.chunks.get(ph0), early = !!c0 && (c0.sent || ['ok', 'skipped', 'no_audio'].includes(c0.status));
+    if (plan) plan.forEach(([a, b], k) => { if (gated && k > ph0 + (early ? 1 : 0)) return; if (b > playhead && a < playhead + ahead) want.push([currentId, k]); });
     else want.push([currentId, 0]);
     for (const id of upcoming()) want.push([id, 0]);
     wanted = new Set(want.map(([id, k]) => id + ':' + k));
@@ -807,7 +824,7 @@
   }
   async function fetchBytes(v, media, a, b, signal, prog) {
     // Link CDN đã chuyển hướng hết hạn hoặc treo thì quay về /aweme/v1/play/ (lần gọi mới có thể sang máy chủ khác).
-    let urls = v.url === v.api ? [v.api, v.api] : [v.url, v.api];
+    let urls = v.url === v.api || (prog && prog.viaApi) ? [v.api, v.api] : [v.url, v.api];
     const h = v.head;
     if (headServes(v, media, b)) {
       // Lượt tải đầu video treo hay lỗi giữa chừng: tính là lần gọi đầu, gọi lại một lần qua /aweme/v1/play/. Thôi vì chậm
@@ -838,7 +855,7 @@
             if (v.media === media) { v.media = null; v.url = null; v.api = null; }
             throw Object.assign(new Error('file video đã đổi'), { changed: true });
           }
-          if (r.url) v.url = r.url;
+          if (r.url && hostOf(r.url) !== v.badHost) v.url = r.url;
           noteSpeed(v, r.buf.byteLength / Math.max(1, performance.now() - r.at), r.at);   // tốc độ của lượt tải xong gần nhất (dropSlow)
           if (from === a) return r.buf;
           const all = new Uint8Array(b - a + 1);
@@ -956,9 +973,12 @@
   // lục và 17 s cho đoạn 0, trong khi 2 video dịch sẵn chạy cùng lúc tải xong trong ~3 s (video dịch sẵn thứ 3 không tới
   // server). Không tính tốc độ thì headLate không thôi lượt đó (có video khác đang tải), mẩu q0 chờ theo: "đang dịch" 23 s.
   const FAST_RECENT = 10000, CONCURRENT_SLACK = 1000;
+  const hostOf = (u) => { try { return new URL(u).host; } catch (_) { return ''; } };
+  const recentSpeeds = [];   // { speed (byte/ms), at } 6 lượt tải xong gần nhất, mọi video (restartSlow)
   const fastDone = [];   // { speed (byte/ms), start, at } các lượt tải xong trong FAST_RECENT gần nhất
   function noteSpeed(v, speed, start) {
     v.speed = speed;
+    recentSpeeds.push({ speed, at: performance.now() }); if (recentSpeeds.length > 6) recentSpeeds.shift();
     const now = performance.now();
     fastDone.push({ speed, start, at: now });
     while (fastDone.length && now - fastDone[0].at > FAST_RECENT) fastDone.shift();
@@ -1026,11 +1046,24 @@
       const idle = (c.gaps || []).reduce((x, [ga, gb]) => x + Math.max(0, Math.min(gb, now) - Math.max(ga, t0)), 0);
       const speed = (c.got - g0) / Math.max(1, now - t0 - idle);
       if (othersLoading(speed, c.since)) { c.rmarks = [[now, c.got]]; continue; }
-      if (!v.speed || speed * 3 >= v.speed) continue;
+      // So với lượt tải xong gần nhất của video này hay trung vị các lượt gần đây của mọi video, lấy cái nhanh hơn: mọi lượt của
+      // một video có thể cùng đi qua máy chủ chậm (dùng thử 2/11: lượt dịch sẵn 368 KB/s, đoạn 1 230 KB/s, video khác 4–11 MB/s).
+      // Lượt trong 60 s gần đây. Verifier 2/11 (G2) đề nghị 15 s (cả đường truyền vừa chậm đi thì tốc độ cũ làm tải lại vô ích,
+      // đoạn 1 tới muộn ~1 s), nhưng xem video dài trên máy chủ chậm thì lượt nhanh gần nhất thường cũ hơn 15 s, không còn gì để
+      // so: mô phỏng 2/11 (1/4 máy chủ chậm, xem hết) phủ 88% thay vì 98%; 60 s cho cùng kết quả như không giới hạn.
+      const rs = recentSpeeds.filter((x) => now - x.at < 60000).map((x) => x.speed).sort((x, y) => x - y);
+      const base = Math.max(v.speed || 0, rs.length ? rs[rs.length >> 1] : 0);
+      if (!base || speed * 3 >= base) continue;
       const total = c.bytes || c.win || 0;
-      if (!(speed > 0) || (total - c.got) / speed <= total / (v.speed / 3)) continue;
+      if (!(speed > 0) || (total - c.got) / speed <= total / (base / 3)) continue;
+
       v.restarted.add(k);
-      v.chunks.set(k, { status: 'error', error: 'tải video quá chậm', dl: true, transient: true, dlFails: 1, pre: c.pre, at: Date.now() - DL_RETRY_CUR - 1 });
+      // Lần tải lại và các lượt sau của video này đi qua /aweme/v1/play/ (có thể được chuyển sang máy chủ khác): v.url = v.api,
+      // nhớ máy chủ chậm (v.badHost) để lượt tải cũ từ máy chủ đó xong sau không đặt lại v.url về nó (fetchBytes), và cờ viaApi
+      // trên chính đoạn này (verifier 2/11, G1).
+      v.badHost = hostOf(v.url);
+      if (v.api) v.url = v.api;
+      v.chunks.set(k, { status: 'error', error: 'tải video quá chậm', dl: true, transient: true, dlFails: 1, viaApi: true, pre: c.pre, at: Date.now() - DL_RETRY_CUR - 1 });
       c.ctl.abort();
     }
   }
@@ -1096,7 +1129,8 @@
     const d = items.get(id);
     const before = v.chunks.get(k);
     const fails = before && before.status === 'error' ? (before.fails || 0) : 0;
-    const entry = { status: 'pending', ctl: new AbortController(), made: performance.now() };
+    const entry = { status: 'pending', ctl: new AbortController(), made: performance.now(),
+      ...(before && before.status === 'error' && before.viaApi ? { viaApi: true } : {}) };   // restartSlow: tải lại qua /aweme/v1/play/
     // sent: kết quả của yêu cầu đã gửi qua background.js. Lỗi server trả về thì đếm (fails) để giãn lần thử lại; không
     // gọi được server và lỗi tải video thì giữ số đếm cũ nhưng chờ 20 s (RETRY_MS).
     const done = (r, sent, pg) => {
@@ -1146,7 +1180,7 @@
       // Không thấy video đang xem: chờ nó quay lại (actBack); vẫn không thấy (vừa đóng modal) thì khỏi gửi, kẻo gửi rồi lại
       // huỷ giữa lúc nhận dạng.
       if (id === currentId && !act) await actBack(id);
-      while (sendWait(id, k)) {
+      while (sendWait(id, k) || f10Hold(id, k)) {
         entry.waiting = true;   // đã tải xong, chờ lượt gửi (currentBehind: không phải lượt tải đứng im)
         await nextTurn();
         if (entry.ctl.signal.aborted || v.chunks.get(k) !== entry) { if (v.chunks.get(k) === entry) v.chunks.delete(k); return; }
@@ -1395,6 +1429,7 @@
       if (act && act.id !== currentId) {
         currentId = act.id; watched.add(currentId);
         markCurrent(currentId);
+        if (opened.id) dwell = [...dwell, opened.played].slice(-3);
         opened = { id: currentId, need: null, hold: false, since: 0, warm: false, played: 0, last: 0 };
         // Đoạn lỗi tải lúc dịch sẵn: thử lại ngay, đủ DL_FAST_MAX lần nhanh (fastRetry) tính từ lúc lướt tới.
         const nv = vids.get(currentId);
