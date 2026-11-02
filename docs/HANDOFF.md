@@ -85,7 +85,7 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 
 | Lệnh | Kiểm tra gì |
 |---|---|
-| `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới, đánh dấu dòng hát, tiếng đệm trong lời hát, dòng nói ngắn gộp vào dòng hát, câu nói nhanh trong đoạn cả bài (20 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới ở cả hai chế độ lời bài hát, `rank`), Gemini hết lượt trong ngày (9 kiểm tra). `asr-fallback-test.mjs`: Fun-ASR hết hạn mức thì chuyển sang model dự phòng, giới hạn theo phút thì gọi lại (20 kiểm tra). `warm-test.mjs`: `/v1/warm` làm nóng đúng dịch vụ đang dùng, giãn 3 s, bỏ qua khi vừa có lệnh gọi thật, log thời gian kết nối (12 kiểm tra). `pronoun-test.mjs`: luật xưng hô trong câu lệnh, bảng xưng hô nhận vào và trả về, đọc bảng của đoạn trước từ cache, giới tính người đăng (21 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON (11 kiểm tra). `lyrics-test.mjs`: chế độ lời bài hát, kể cả điệp khúc câu ngắn, ngữ cảnh ở chế độ thường, hai chế độ cùng lúc, đoạn cả bài có câu nói nhanh ở hai chế độ, kể cả khi không câu nào tự đủ là câu hát (19 kiểm tra) |
+| `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới, đánh dấu dòng hát, tiếng đệm trong lời hát, dòng nói ngắn gộp vào dòng hát, câu nói nhanh trong đoạn cả bài (20 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới ở cả hai chế độ lời bài hát, `rank`), Gemini hết lượt trong ngày (9 kiểm tra). `asr-fallback-test.mjs`: Fun-ASR hết hạn mức thì chuyển sang model dự phòng, giới hạn theo phút thì gọi lại (20 kiểm tra). `warm-test.mjs`: `/v1/warm` làm nóng đúng dịch vụ đang dùng, giãn 3 s, bỏ qua khi vừa có lệnh gọi thật, log thời gian kết nối (12 kiểm tra). `pronoun-test.mjs`: luật xưng hô trong câu lệnh, bảng xưng hô nhận vào và trả về, đọc bảng của đoạn trước từ cache, giới tính người đăng (21 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON, dịch chậm hơn hạn lần đầu thì lần gọi lại được hạn dài hơn, dịch vụ treo hẳn thì thôi sau 3 lần quá hạn, lượt rút gọn treo thì giữ dòng đầy đủ (14 kiểm tra). `lyrics-test.mjs`: chế độ lời bài hát, kể cả điệp khúc câu ngắn, ngữ cảnh ở chế độ thường, hai chế độ cùng lúc, đoạn cả bài có câu nói nhanh ở hai chế độ, kể cả khi không câu nào tự đủ là câu hát (19 kiểm tra) |
 | `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng, slide feed bị ẩn, trang kết quả tìm kiếm, đóng modal, HTTP 429, đoạn cả bài không dùng chung giữa hai chế độ , bảng xưng hô theo từng video (51 kiểm tra) |
 | `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước, đoạn đầu tải chậm qua máy chủ chậm (trang video và feed), tải nhanh rồi chậm hẳn, rời feed, tải chậm vừa phải, đường truyền chậm đều, khựng giữa chừng, tua về sau khi bỏ đoạn , hàng dịch sẵn nhường video vừa mở, báo làm nóng, mốc thời gian trong câu trả lời status; một lượt tải từ byte 0 cho mục lục + q0 + đoạn 0 (nhiều rtt và băng thông, dịch sẵn, tua lúc đang tải, moov lớn, không có moov ở đầu, 200 cả file, lướt đi, 429, CDN treo, lượt đó chậm từ byte 0, đổi chế độ lời bài hát gửi đúng byte cũ, mở giữa video, tiến độ cho dropSlow) (27 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms; `headerEnd` trên phần đầu file đang tải dở (5 kiểm tra) |
@@ -786,6 +786,46 @@ Chủ dự án báo đại từ nhân xưng chưa đúng.
 - **Thử trên Douyin thật** (1 video người hát rong 7518362235144998203): xưng hô nhất quán em/chị; 4 dòng soát ra là sai ở video này đều đúng ("Chị có bạn trai chưa?" thay cho "Em có bạn trai chưa?", "Em yêu chị" thay cho "Em yêu anh"). Dòng đầu ghép lời hai người nói vẫn gán một vai.
 - **Test:** pronoun-test 21 (mới), content-sim 51, e2e 29; mọi bộ khác đạt.
 - **Còn mở:** đo lại tỉ lệ lỗi trên một lô mới; độ trễ thêm của sub đầu do câu lệnh dài hơn; dòng có hai người nói (do ASR gộp câu).
+
+## 6r. Thử sửa xưng hô đợt 2: không giữ (2/11)
+
+Một agent test như người dùng thật (10 video, chế độ khách), rồi 3 verifier kiểm lại 20 điểm. Lỗi lớn nhất: bảng xưng hô không bao giờ lớn thêm. Ở 44/44 đoạn có bảng gửi vào, model không thêm cũng không sửa cặp nào, vì câu lệnh bảo "không có gì mới thì pairs rỗng". Show hẹn hò 7681136832927185521: nữ khách mời số 2 xưng "chị" rồi "em" với cùng một người.
+- **Đã thử.** Mỗi bản dịch lại cùng các dòng chữ Hán đã cache của 9 video, theo đúng cách truyền bảng và ngữ cảnh của server. Mỗi video 2 giám khảo mù đếm lỗi xưng hô trên 3 bản, nhãn X/Y/Z xáo. Các bản:
+  - ghi mọi cặp ở mỗi đoạn, thêm luật (lời kể ngôi ba, chuyện kể bằng 你, thầy cô với học sinh, khách mời nói với trường quay, 他/她), bảng 10 cặp;
+  - thêm chỉ số cặp cho từng dòng; tách người nói và người nghe thành hai ô trong schema;
+  - luật cũ, chỉ thêm phần ghi mọi cặp và hai ô người nói, người nghe;
+  - câu lệnh cũ trên model dịch mạnh hơn;
+  - một lượt soát xưng hô sau lượt dịch (bằng model hiện tại, hoặc model mạnh hơn);
+  - nhiệt độ 0; 12 dòng ngữ cảnh thay vì 3.
+- **Kết quả** (tổng lỗi của 2 giám khảo, so với câu lệnh cũ trong cùng lần đo): câu lệnh cũ thắng 9/11 lần so.
+  - Ghi mọi cặp + luật mới: 80 so với 81, rồi 77 so với 56.
+  - Thêm hai ô người nói, người nghe: 67 so với 56. Luật cũ + phần cấu trúc: 112 so với 105, rồi 95 so với 61.
+  - Model mạnh hơn: 79 so với 105, rồi 72 so với 61. Tốt hơn ở video độc thoại, kém hơn ở show hẹn hò cả hai lần.
+  - Lượt soát: 79 và 128 so với 48. Nhiệt độ 0 và 12 dòng ngữ cảnh: cùng 79 so với 50.
+  - Không phải giám khảo thiên vị: ở mẩu nhanh và đoạn 0, câu lệnh cũ và bản 12 dòng ngữ cảnh gửi đúng một câu lệnh, lỗi ngang nhau (13 so với 16); khác biệt chỉ ở các đoạn sau.
+- **Bài học:**
+  - Cùng một câu lệnh, hai lần dịch lệch tới 81 và 56 lỗi. Chỉ tin so cặp trong cùng lần đo, và cần ít nhất 2 lần lặp.
+  - Luật thêm vào hay làm lời kể dùng luôn từ xưng hô của nhân vật ("em gái số 2", "em ấy") và gắn sai giới.
+  - Bảng lớn thêm không làm bản dịch tốt hơn.
+  - Đo bằng chấm mù trước khi nói "đã sửa", không chỉ đo cấu trúc (bảng có lớn thêm không).
+- **Quyết định:** giữ câu lệnh của 0.2.27.
+
+## 6s. Hạn thời gian của lượt gọi dịch (2/11, server)
+
+- **Lỗi:** mỗi lượt gọi model dịch có hạn 10 s, quá hạn thì gọi lại ngay, tối đa 3 lần. Đo 2/11 lúc dịch vụ chậm (khoảng 35 token/giây): đoạn 30 s cần 9–12 s, cả 4 lần đều quá hạn, 19/54 lượt dịch hỏng sau khoảng 40 s. Lúc dịch vụ nhanh, đoạn 20–50 s của show hẹn hò vẫn mất 9,5 s, sát hạn.
+- **Sửa:**
+  - Lượt gọi model dịch có hạn tăng dần 10 s, 20 s rồi 30 s. Lần đầu vẫn cắt ở 10 s để bỏ kết nối treo.
+  - Quá hạn lần thứ 3 thì thôi: tổng chờ tối đa 60 s, không gọi lần thứ tư như trước.
+  - Lượt rút gọn là tuỳ chọn, nên chỉ chờ tối đa 20 s; quá thì giữ dòng đầy đủ.
+  - Nhận dạng giọng nói (DashScope, Gemini) giữ hạn cố định như cũ.
+  - `MT_TIMEOUT_MS` chỉ để test đặt hạn ngắn: sai dạng thì về 10 s, và server không còn báo nhầm là biến không dùng.
+- **Kiểm:** một verifier soát diff (ship_with_fixes, 0 lỗi chặn). Đã áp: chặn ở 3 lần quá hạn, hạn riêng cho lượt rút gọn, kiểm giá trị `MT_TIMEOUT_MS`, gom chính sách hạn vào một chỗ (`mtJson`). Chưa làm: tăng hạn lần đầu lên 15 s để đoạn cần 10–12 s khỏi phải gọi lại; đánh đổi là kết nối treo bị cắt muộn hơn 5 s.
+- **Test:** errors-test 14. Ba kiểm tra mới:
+  - dịch giả trả lời sau 600 ms, hạn lần đầu 400 ms: vẫn có sub; với hạn cố định cũ thì đoạn báo lỗi;
+  - dịch vụ treo hẳn: đúng 3 lượt gọi, log lần cuối "thôi, báo lỗi";
+  - lượt rút gọn treo: giữ dòng đầy đủ sau 2 lượt gọi.
+  - Chạy thử trên bản sao code bỏ từng phần sửa thì đúng kiểm tra tương ứng hỏng. Mọi bộ khác đạt.
+- **Bẫy khi đo:** máy Mac chạy pin về đêm thì vào "Maintenance Sleep". Lô đo kéo từ 10 phút lên 2,4 giờ, warm-test hỏng ECONNRESET dù code đúng. Xem `pmset -g log` trước khi tin một lần chạy chậm hay chập chờn.
 
 ## 7. Việc tiếp theo trên Mac
 
