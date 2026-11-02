@@ -621,15 +621,16 @@
   // Nên: mẩu nhanh đang chờ trên lượt này mà theo tốc độ 1 s gần nhất phải chờ tổng cộng quá HEAD_SLOW mới đủ byte thì thôi
   // lượt này; mẩu nhanh rồi đoạn 0 tải nối tiếp phần còn thiếu bằng lượt riêng, lần lượt (fetchBytes), như bản 0.2.25 nhưng
   // không tải lại phần đã nhận. Mạng chậm đều thì lượt mới cũng chậm như vậy: chỉ mất thêm 1–2 rtt. Đang có lượt tải của
-  // video khác nhận byte (othersLoading, như dropSlow) thì chậm có thể do chia đường truyền: không thôi (mô phỏng 2500 B/s
-  // có 2 video dịch sẵn: thôi lượt này thì q0 không kịp, sub 1 s thay vì 1,75 s trong 60 s đầu).
+  // video khác nhận byte không nhanh hơn hẳn (othersLoading, như dropSlow) thì chậm có thể do chia đường truyền: không thôi
+  // (mô phỏng 2500 B/s có 2 video dịch sẵn: thôi lượt này thì q0 không kịp, sub 1 s thay vì 1,75 s trong 60 s đầu).
   const HEAD_SLOW = 6000;
   function headLate(h, now) {
     const q = [...h.waiters].find((w) => !w.prog);
-    if (!q || now - h.first < 1000 || othersLoading()) return false;
+    if (!q || now - h.first < 1000) return false;
     let g = 0;
     for (const [t, x] of h.hist) { if (t > now - 1000) break; g = x; }
     const rate = (h.got - g) / 1000;
+    if (othersLoading(rate, h.at)) return false;
     return now - q.at + (rate > 0 ? (q.b + 1 - h.got) / rate : Infinity) > HEAD_SLOW;
   }
   // Trả mục lục khi đã đọc được; phần còn lại đọc tiếp ở nền cho các lượt chờ (headSlice). Hạn giờ như rangeFetch: im quá
@@ -717,7 +718,7 @@
         // khi cửa sổ này lấy sau từ phần đã nhận (lượt tải có thể đã chậm hẳn sau đó). Byte đó do lượt tải nối tiếp đem về
         // (fetchBytes) thì giữ tốc độ của lượt đó.
         const hit = h.hist.find(([, g]) => g > b);
-        if (hit) v.speed = (b + 1) / Math.max(1, hit[0] - h.at);
+        if (hit) noteSpeed(v, (b + 1) / Math.max(1, hit[0] - h.at), h.at);
         resolve(headBytes(h, a, b));
       };
       if (prog) Object.assign(prog, { since: at, last: at, got: Math.max(0, Math.min(h.got - a, b - a + 1)), marks: [], gaps: [] });
@@ -763,7 +764,7 @@
             throw Object.assign(new Error('file video đã đổi'), { changed: true });
           }
           if (r.url) v.url = r.url;
-          v.speed = r.buf.byteLength / Math.max(1, performance.now() - r.at);   // tốc độ của lượt tải xong gần nhất (dropSlow)
+          noteSpeed(v, r.buf.byteLength / Math.max(1, performance.now() - r.at), r.at);   // tốc độ của lượt tải xong gần nhất (dropSlow)
           if (from === a) return r.buf;
           const all = new Uint8Array(b - a + 1);
           all.set(new Uint8Array(headBytes(h, a, from - 1)));
@@ -850,7 +851,7 @@
   // 87 s, đoạn [0,20) tải ~25 s, đoạn kế chờ sau nó tới giây 20 (hàng video đang xem tải từng việc một), mẩu q0 bị bỏ qua
   // ("quá ít lời"), 30 s đầu không có sub. Chỉ khi riêng lượt tải này chậm: tốc độ 3 s gần nhất của nó (không tính lúc
   // khựng) dưới 1/3 tốc độ của lượt tải xong gần nhất của video này (máy chủ video chậm, vd. hl-mly ~0,3 MB/s ở §6d), và
-  // không có lượt tải của video khác đang nhận byte (othersLoading).
+  // không có lượt tải của video khác đang nhận byte mà không nhanh hơn hẳn (othersLoading).
   // Đường truyền chậm đều hay chia cho nhiều lượt thì lượt nào cũng chậm như nhau, bỏ đoạn rồi gửi mẩu nhanh chỉ chia nhỏ
   // thêm (mô phỏng của verifier 1/11: lượt tải đoạn đầu bị ngắt khi đã tải 97%). Lượt tải đứng hẳn (không byte nào) thì để
   // rangeFetch tự cắt sau 6 s rồi gọi lại. Không tải song song đoạn kế: tải song song tới cùng máy chủ video để lách giới
@@ -858,12 +859,31 @@
   // Có lượt tải đoạn của video khác đang nhận byte (dịch sẵn): đường truyền đang chia. Đoạn của chính video đang xem mà
   // đang tải ở hàng dịch sẵn (bắt đầu trước khi lướt tới) thì không tính (verifier 1/11: trên feed dropSlow không bao giờ
   // chạy), lượt tải đang đứng im cũng không.
-  const othersLoading = () => {
+  // rate (byte/ms, nếu có), since: tốc độ và lúc bắt đầu của lượt đang xét. Đường truyền còn dư thì chậm là do riêng lượt này
+  // (máy chủ video chậm theo từng lượt, §6d), vẫn xét bỏ: có lượt tải (video nào cũng được) chạy cùng lúc với nó (bắt đầu
+  // sau nó, cho dư CONCURRENT_SLACK) mà đã xong nhanh gấp 3 trở lên (fastDone), hay lượt của video khác đang nhận byte nhanh
+  // gấp 3 trở lên (lượt đó không tính). Lượt nhanh xong từ trước khi lượt này bắt đầu không tính: đường truyền có thể đã chậm
+  // đi (trình phát, livestream, tab khác); verifier 2/11 mô phỏng đường truyền giảm 9000 → 3000 B/s sau một lượt nhanh: tính
+  // cả lượt đó thì headLate, dropSlow chia nhỏ lượt tải, có sub 13 s thay vì 35,75 s trong 60 s đầu. Đo 2/11 trên Douyin thật:
+  // video ngay sau một slide livestream, thông tin của nó tới 1 s trước khi lướt tới; lượt tải đầu của nó mất 4,3 s cho mục
+  // lục và 17 s cho đoạn 0, trong khi 2 video dịch sẵn chạy cùng lúc tải xong trong ~3 s (video dịch sẵn thứ 3 không tới
+  // server). Không tính tốc độ thì headLate không thôi lượt đó (có video khác đang tải), mẩu q0 chờ theo: "đang dịch" 23 s.
+  const FAST_RECENT = 10000, CONCURRENT_SLACK = 1000;
+  const fastDone = [];   // { speed (byte/ms), start, at } các lượt tải xong trong FAST_RECENT gần nhất
+  function noteSpeed(v, speed, start) {
+    v.speed = speed;
     const now = performance.now();
-    return [...vids].some(([id, v]) => id !== currentId && [...v.chunks.values()].some((c) => c.status === 'pending' && !c.sent && c.since != null && now - c.last < 1000));
+    fastDone.push({ speed, start, at: now });
+    while (fastDone.length && now - fastDone[0].at > FAST_RECENT) fastDone.shift();
+  }
+  const othersLoading = (rate = null, since = -Infinity) => {
+    const now = performance.now();
+    if (rate != null && rate > 0 && fastDone.some((x) => now - x.at < FAST_RECENT && x.start >= since - CONCURRENT_SLACK && x.speed >= 3 * rate)) return false;
+    return [...vids].some(([id, v]) => id !== currentId && [...v.chunks.values()].some((c) => c.status === 'pending' && !c.sent && c.since != null && now - c.last < 1000
+      && !(rate != null && c.got / Math.max(1, now - c.since) >= 3 * rate)));
   };
   function dropSlow(plan) {
-    if (!plan || plan.length < 2 || !playing || othersLoading() || rateWait()) return;
+    if (!plan || plan.length < 2 || !playing || rateWait()) return;
     const v = vid(currentId), k = chunkAt(plan, playhead), c = v.chunks.get(k);
     const now = performance.now();
     if (k < 0 || !c || c.status !== 'pending' || c.sent || c.since == null || !c.got || now - c.last > 1000) return;
@@ -877,6 +897,8 @@
     while (c.gaps.length && c.gaps[0][1] < t0) c.gaps.shift();
     const idle = c.gaps.reduce((x, [ga, gb]) => x + Math.max(0, Math.min(gb, now) - Math.max(ga, t0)), 0);
     const speed = (c.got - g0) / Math.max(1, now - t0 - idle);
+    // Đường truyền đang chia: như trước, không xét, và đo lại từ đầu (sau khi hết chia cần đủ 2 s tốc độ mới).
+    if (othersLoading(speed, c.since)) { c.marks = [[now, c.got]]; return; }
     if (!v.speed || speed * 3 >= v.speed) return;
     const left = (plan[k][1] - playhead) * 1000;
     const eta = speed > 0 ? (c.bytes - c.got) / speed : Infinity;
@@ -1376,7 +1398,13 @@
       // marks: mốc thời gian lần mở video (định dạng: mục "mốc thời gian lần mở video" ở đầu file); page: trang hiện tại.
       const list = [...marks].filter(([, r]) => r.at0 != null).map(([id, r]) => ({ id, page: r.page, src: r.src, wall: r.wall,
         t: Object.fromEntries(Object.entries(r.ev).sort((a, b) => a[1] - b[1]).map(([k, x]) => [k, Math.round(x - r.at0)])) }));
-      reply({ seen: items.size, counts, chunks, page: pageKind(), marks: list });
+      // cur: video đang xem theo extension (chỉ để đo, như marks): đã có metadata chưa, loại, thuộc danh sách nào, video kế
+      // tiếp sẽ dịch sẵn, trạng thái từng đoạn.
+      const d = currentId ? items.get(currentId) : null, cv = currentId ? vids.get(currentId) : null;
+      const cur = currentId ? { id: currentId, act: act ? act.id : null, known: !!d, kind: d ? d.kind : null, src: d ? d.source : null,
+        eligible: !!eligible(d), lists: [...orders].filter(([, o]) => o.includes(currentId)).map(([n]) => n), next: upcoming(),
+        chunks: cv ? [...cv.chunks].map(([k, c]) => [k, c.status, !!c.sent]) : [] } : { id: null, act: act ? act.id : null };
+      reply({ seen: items.size, counts, chunks, page: pageKind(), marks: list, cur });
     }
   });
 })();

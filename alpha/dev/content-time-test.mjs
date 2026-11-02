@@ -69,7 +69,7 @@ function makeEnv(dir, { bw = 9000, stall = () => 0, total = () => 99999999, auto
   const step = (dt) => {
     const live = active.filter((r) => env.perf >= r.stallUntil && !pause(r, env));
     if (live.length) {
-      const share = bw * dt / 1000 / live.length;
+      const share = (typeof bw === 'function' ? bw(env.perf) : bw) * dt / 1000 / live.length;   // bw(perf): đường truyền đổi theo thời gian
       const capped = live.filter((r) => r.cap && r.cap * dt / 1000 < share);
       const rest = live.length - capped.length;
       const more = rest ? capped.reduce((x, r) => x + share - r.cap * dt / 1000, 0) / rest : 0;
@@ -388,6 +388,53 @@ await t('Trên feed: đoạn đầu của video kế tải chậm ở hàng dị
   assert.ok(sent1 != null && sent1 < 20, 'đoạn [20,50) của B gửi ở giây ' + sent1);
   assert.equal(e.subs().find((m) => m.key === B + ':1').payload.audioStart, 12);
   assert.ok(first != null && first < 16, 'sub đầu của B ở giây ' + first);
+});
+
+// Kịch bản §6v: A đang xem (video ngắn, dịch xong từ trước), thông tin Y (25 s) và P1–P3 tới lúc 1,5 s (API feed tới muộn),
+// lướt sang slide livestream lúc 2 s, sang Y lúc `at` ms. aMs: độ dài A. Trả về số ms từ lúc lướt tới Y tới khi chỗ đang
+// xem có sub (null: không có trong tới 17 s) và các lượt tải của Y.
+const LY = '7500000000000000061', LP = ['7500000000000000062', '7500000000000000063', '7500000000000000064'];
+async function afterLive(opts, at = 3000, aMs = 12000) {
+  const e = makeEnv(EXT, { autoReplyMs: 1500, ...opts });
+  e.up('items', [e.item(A, aMs)]);
+  e.activeId = A; e.video(A, 0);
+  let swipe = null, first = null;
+  for (let ms = 0; ms < 20000; ms += 250) {
+    if (ms === 1500) e.up('items', [e.item(LY, 25000), ...LP.map((id) => e.item(id, 60000))]);
+    if (ms === 2000) { e.videos.get(A).paused = true; e.activeId = null; }   // slide livestream: không có video để dò
+    if (ms === at) { e.activeId = LY; e.video(LY, 0); swipe = e.perf; }
+    await e.tick(250);
+    if (swipe == null) continue;
+    const cv = e.vid(LY), ph = e.dbg.playhead;
+    if (!cv || !cv.plan) continue;
+    let ok = (cv.chunks.get(0) || {}).status === 'ok';
+    for (const q of cv.quick.values()) if (ph >= q.from && ph < q.to && q.status === 'ok') ok = true;
+    if (ok && first == null) first = e.perf - swipe;
+  }
+  return { first, y: e.fetches.filter((f) => f.vid === LY) };
+}
+
+await t('Video ngay sau slide livestream, lượt tải đầu của nó chậm riêng (máy chủ video chậm theo từng lượt): vẫn thôi lượt đó, có sub sớm; đường truyền chậm đều thì như cũ', async () => {
+  // Đo 2/11 trên Douyin thật: thông tin video sau slide livestream tới 1 s trước khi lướt tới; lượt tải đầu của nó mất 4,3 s
+  // cho mục lục, 17 s cho đoạn 0, trong khi 2 video dịch sẵn chạy cùng lúc tải xong trong ~3 s (video dịch sẵn thứ 3 không
+  // tới server). headLate không thôi lượt đó vì "có video khác đang tải" (othersLoading): "đang dịch" 23 s.
+  // (a) Như bản đo: P1 chạy cùng lượt đầu của Y, xong nhanh; P2 chậm theo lượt, còn đang tải lúc xét (ở slide livestream 4 s).
+  // Bản 0.2.29: không có sub trong 14 s.
+  const q0Again = (r) => r.y.filter((f) => !f.open && f.a > 0 && f.b === 11999).length;
+  const a = await afterLive({ cap: (x, b, vid) => ((vid === LY && b == null) || vid === LP[1] ? 300 : 0) }, 6000);
+  assert.ok(a.first != null && a.first <= 6000, '(a) có sub sau ' + a.first + ' ms');
+  // (b) P1 còn đang tải, nhanh gấp 10 lượt của Y (chưa lượt nhanh nào xong): lượt của P1 không tính là "đường truyền đang
+  // chia". Bản 0.2.29: sub sau 16 s.
+  const b = await afterLive({ cap: (x, b2, vid) => (vid === LY && b2 == null ? 300 : vid === LP[0] ? 3000 : 0) });
+  assert.ok(b.first != null && b.first <= 6000, '(b) có sub sau ' + b.first + ' ms');
+  // (c) Đối chứng (verifier 2/11): A dài 60 s, không máy chủ nào chậm riêng, cả đường truyền giảm lúc 1,5 s, sau khi q0 của A
+  // tải nhanh. Không được coi là chậm riêng: không thôi lượt đầu của Y (không có lượt q0 nối tiếp), sub như bản 0.2.29 (8,75 s
+  // và 9,75 s). Bản tính cả lượt nhanh xong từ trước khi lượt của Y bắt đầu: có lượt q0 nối tiếp, không có sub trong 17 s.
+  for (const [bw, want] of [[(perf) => (perf < 1500 ? 9000 : 3000), 8750], [(perf) => (perf < 1500 ? 20000 : 2500), 9750]]) {
+    const c = await afterLive({ bw }, 3000, 60000);
+    assert.equal(q0Again(c), 0, '(c) lượt q0 nối tiếp: ' + c.y.map((f) => (f.open ? 'đầu ' : '') + f.a + '-' + f.b).join(' '));
+    assert.ok(c.first != null && c.first <= want, '(c) có sub sau ' + c.first + ' ms (0.2.29: ' + want + ' ms)');
+  }
 });
 
 await t('Tua về đầu ngay sau khi bỏ đoạn đầu: không tải lại đoạn đó khi còn trong nó, không gửi mẩu thường chồng lên đoạn đã có sub', async () => {
