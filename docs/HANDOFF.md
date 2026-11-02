@@ -262,7 +262,7 @@ Lỗi nằm ở nội dung dịch:
 Nguyên nhân và cách sửa:
 - **Server chỉ chạy 2 việc cùng lúc**, chia cho video đang xem, đoạn kế và các video dịch sẵn. Sửa: `MAX_PARALLEL` mặc định 4, đặt được qua `.env`. `queue-test` đặt 2 để giữ kịch bản cũ.
 - **Chỉ dịch sẵn 2 video**, mỗi video mất 4–12 s. Sửa: `PREFETCH = 4`. Hàng tải dịch sẵn chạy 2 video cùng lúc, để một lượt gặp CDN chậm không chặn các video sau.
-- **Đoạn dịch sẵn bỏ lượt rút gọn dòng dài**: extension gửi `prefetch: true`, mỗi video bớt một lần gọi model. Video đang xem vẫn rút gọn. Có test trong `openai-test`.
+- **Đoạn dịch sẵn bỏ lượt rút gọn dòng dài**: extension gửi `prefetch: true`, mỗi video bớt một lần gọi model. Video đang xem vẫn rút gọn, trừ đoạn gấp (từ 2/11, §6w). Có test trong `openai-test`.
 - **Lượt tải 64 KB đầu file qua `/aweme/v1/play/` có lúc treo 10–37 s**, không có hạn giờ, nên video đó không bao giờ được dịch sẵn. Sửa:
   - `rangeFetch` có hạn giờ: mặc định 20 s, phần đầu file 4 s.
   - Phần đầu file bị treo hoặc lỗi mạng (đo được `ERR_CONTENT_LENGTH_MISMATCH`) thì gọi lại một lần.
@@ -952,6 +952,9 @@ Chủ dự án hỏi thời gian dịch tổng. Số đo hôm đó:
 Chủ dự án chọn làm cả 4 hướng.
 
 1. **Bỏ lượt rút gọn khi đoạn gấp** (server, `urgent`): xong. Mẩu nhanh và đoạn dịch sẵn đã bỏ từ trước. Test server: đoạn gấp 1 lần gọi dịch; các test đụng lượt rút gọn gửi `urgent: false`.
+   - Đánh đổi (verifier): kết quả không rút gọn được lưu cache, nên lần xem sau (không gấp) cũng nhận dòng dài.
+   - Quyết định gấp hay không chỉ theo request tạo việc; request gấp nhập vào việc đang chạy, hay bump, không đổi lượt rút gọn.
+   - Đoạn 0 dịch sẵn vốn đã không rút gọn từ trước.
 2. **Đọc trước danh sách video lúc vào trang:** không làm được. Trang chỉ nhúng 2 video đầu vào `__pace_f`, và `tap.main.js` đã đọc chúng từ trước (ghi chú cũ "chỉ đếm, chưa đọc" là sai). Video thứ 3 trở đi chỉ có khi Douyin gọi `/aweme/v1/web/tab/feed/`, lúc lướt tới video thứ 2. Extension tự gọi API đó thì phải giả chữ ký: không làm.
 3. **Lượt tải treo, mục lục nhỏ giọt** (extension 0.2.31):
    - Đo: video `…277715` lúc dịch sẵn treo hai lần (`tải video quá lâu`). Lướt tới thì chờ đủ 20 s mới thử lại (`RETRY_MS[0]`, vốn cho lúc server chưa chạy), nhãn "lỗi" suốt lúc đó: sub sau 16,9 s.
@@ -984,7 +987,20 @@ Chủ dự án chọn làm cả 4 hướng.
   - đoạn 0 (~10 dòng): dòng tạm đầu sớm hơn 1,08–1,19 s.
 
   Lợi lớn hơn khi dịch vụ chậm (thời gian viết tỉ lệ với số dòng).
-- **Test:** `stream-test.mjs` (server, 6 kiểm tra), background-test (3), content-sim-test (53). e2e dùng Gemini giả nên không đi đường stream.
+- **Kiểm:** verifier soát 3 commit (bỏ rút gọn khi gấp, thử lại nhanh, stream): ok_with_fixes, 1 major, có chạy mô phỏng. Đã áp (0.2.33):
+  - **(major)** tua vào giữa đoạn: dòng tạm của đoạn nằm sau mẩu nhanh làm mất dòng mẩu nhanh đã xong (`TodCues.merge` chỉ so dòng cuối). Nay mỗi dòng tạm là một mục riêng xếp theo đầu dòng.
+  - Huỷ (tua đi), bỏ kết quả của chế độ lời bài hát cũ: tính lại `v.cues`, không còn dòng tạm cũ. Dòng tạm có câu hát của chế độ kia không hiện.
+  - Nhãn "VI" chỉ khi có dòng tạm kết thúc từ chỗ đang xem trở đi.
+  - Server: hạn chung 60 s cho cả chuỗi gọi lại của lượt stream, tính từ chữ đầu tiên (trước có thể ~180 s). Log ghi hạn nào cắt (chưa có chữ đầu / im giữa chừng / quá cả lượt). Hạn im và hạn chung theo `MT_TIMEOUT_MS` (0,6× và 6×) để test được.
+  - `readSse` đóng thân trả lời khi lỗi và đọc sự kiện cuối không có xuống dòng. Dịch vụ cùng kiểu API trả 400 cho `stream: true` thì gọi lại không stream.
+  - Lỗi tải tạm thời: HTTP 5xx, 403, 408; 404, 410 thì không. TypeError chỉ khi là lỗi mạng của fetch.
+- **Chưa làm:** `completedCues` neo vào chuỗi `"cues"` đầu tiên (một giá trị trong bảng xưng hô đúng bằng "cues" thì không có dòng tạm, không ra dòng sai).
+- **Test:**
+  - `stream-test.mjs` (server, 9 kiểm tra): thêm im giữa chừng, trả mãi không xong (hạn chung), lỗi sau khi đã gửi header;
+  - background-test (3);
+  - content-sim-test (55): thêm tua vào giữa đoạn, huỷ, đổi chế độ, nhãn, HTTP 403 với 404.
+
+  Bản 0.2.32 trượt các ca mới. e2e dùng Gemini giả nên không đi đường stream.
 
 ## 7. Việc tiếp theo trên Mac
 

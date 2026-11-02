@@ -199,35 +199,42 @@ onChannel('undici:client:sendHeaders', ({ request, socket }) => {
 // Lần gần nhất có lệnh gọi thật tới mỗi origin (lúc bắt đầu và lúc xong): warmProviders bỏ qua origin vừa dùng.
 const lastReal = new Map();
 // Lượt gọi dạng stream (init.onText, chỉ lượt dịch đầu của OpenAI): hạn của lần gọi tính tới chữ đầu tiên; chữ đã về thì
-// chỉ cắt khi im quá STREAM_IDLE_MS, cả lượt tối đa STREAM_MAX_MS (đang trả lời chậm mà đều thì không cắt giữa chừng).
-const STREAM_IDLE_MS = 6000, STREAM_MAX_MS = 60000;
+// chỉ cắt khi im quá STREAM_IDLE_MS (đang trả lời chậm mà đều thì không cắt giữa chừng). Cả chuỗi gọi lại tối đa
+// STREAM_MAX_MS tính từ lần gọi đầu, như tổng 10 + 20 + 30 s của lượt không stream (verifier 2/11: tính riêng từng lần
+// thì 3 lần quá hạn thành ~180 s). Theo MT_TIMEOUT_MS (10 s: 6 s và 60 s) để test đặt hạn ngắn.
+const STREAM_IDLE_MS = Math.round(0.6 * MT_TIMEOUT_MS), STREAM_MAX_MS = 6 * MT_TIMEOUT_MS;
 // Đọc trả lời dạng SSE của Chat Completions (stream: true): gọi onText(nội dung đã nhận) mỗi lần có chữ mới, kick() để gia
 // hạn. Trả về như trả lời thường ({ choices: [{ message: { content } }] }) để phần còn lại của httpJson, openaiJson không đổi.
 async function readSse(res, onText, kick) {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '', content = '', refusal = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    for (let nl; (nl = buf.indexOf('\n')) >= 0; ) {
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (!line.startsWith('data:')) continue;
-      const data = line.slice(5).trim();
-      if (data === '[DONE]') continue;
-      let ev;
-      try { ev = JSON.parse(data); } catch (_) { continue; }
-      if (ev.error) throw new Error('OpenAI stream: ' + JSON.stringify(ev.error).slice(0, 200));
-      const d = ev.choices && ev.choices[0] && ev.choices[0].delta;
-      if (d && typeof d.refusal === 'string') refusal += d.refusal;
-      if (d && typeof d.content === 'string' && d.content) {
-        content += d.content;
-        kick();
-        try { onText(content); } catch (_) { /* lỗi ở phía nhận không làm hỏng lượt gọi */ }
-      }
+  const line = (raw) => {
+    const l = raw.trim();
+    if (!l.startsWith('data:')) return;
+    const data = l.slice(5).trim();
+    if (data === '[DONE]') return;
+    let ev;
+    try { ev = JSON.parse(data); } catch (_) { return; }
+    if (ev.error) throw new Error('OpenAI stream: ' + JSON.stringify(ev.error).slice(0, 200));
+    const d = ev.choices && ev.choices[0] && ev.choices[0].delta;
+    if (d && typeof d.refusal === 'string') refusal += d.refusal;
+    if (d && typeof d.content === 'string' && d.content) {
+      content += d.content;
+      kick();
+      try { onText(content); } catch (_) { /* lỗi ở phía nhận không làm hỏng lượt gọi */ }
     }
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      buf += done ? dec.decode() : dec.decode(value, { stream: true });
+      for (let nl; (nl = buf.indexOf('\n')) >= 0; buf = buf.slice(nl + 1)) line(buf.slice(0, nl));
+      if (done) { line(buf); break; }   // sự kiện cuối không có xuống dòng
+    }
+  } catch (e) {
+    reader.cancel().catch(() => {});   // bỏ dở: đóng thân trả lời, không giữ kết nối
+    throw e;
   }
   return JSON.stringify({ choices: [{ message: { content, ...(refusal ? { refusal } : {}) } }] });
 }
@@ -237,6 +244,7 @@ async function httpJson(url, init, timeoutMs = 20000) {
   const service = serviceOf(url);
   const paused = pausedError(service);
   if (paused) throw paused;
+  const chainEnd = init.onText ? Date.now() + STREAM_MAX_MS : Infinity;   // lượt stream: hạn chung cả chuỗi gọi lại
   for (let i = 0; ; i++) {
     let res, text;
     const calls = netCtx.getStore()?.calls;
@@ -245,10 +253,15 @@ async function httpJson(url, init, timeoutMs = 20000) {
     const limitMs = typeof timeoutMs === 'function' ? timeoutMs(i) : timeoutMs;
     const { onText, ...fetchInit } = init;
     const ctl = new AbortController();
-    const timeout = () => ctl.abort(new DOMException('quá hạn', 'TimeoutError'));
-    let timer = setTimeout(timeout, limitMs);
-    const whole = onText ? setTimeout(timeout, STREAM_MAX_MS) : null;
-    const kick = () => { clearTimeout(timer); timer = setTimeout(timeout, STREAM_IDLE_MS); };
+    let cut = 'first';   // hạn nào cắt: chưa có chữ đầu (first), im giữa chừng (idle), hết hạn chung (max)
+    const timeout = (why) => () => { cut = why; ctl.abort(new DOMException('quá hạn', 'TimeoutError')); };
+    let timer = setTimeout(timeout('first'), limitMs);
+    // Hạn chung chỉ chạy từ chữ đầu tiên: trước đó hạn của lần gọi (10/20/30 s, tối đa 3 lần) đã giới hạn tổng như cũ.
+    let whole = null;
+    const kick = () => {
+      clearTimeout(timer); timer = setTimeout(timeout('idle'), STREAM_IDLE_MS);
+      if (!whole) whole = setTimeout(timeout('max'), Math.max(0, chainEnd - Date.now()));
+    };
     try {
       const limit = ctl.signal;
       const t0 = Date.now();
@@ -261,9 +274,10 @@ async function httpJson(url, init, timeoutMs = 20000) {
     } catch (e) {
       if (init.signal?.aborted) throw e;
       const timedOut = e.name === 'TimeoutError';
-      // Hạn tăng dần (lượt dịch): quá hạn lần thứ 3 thì thôi (xem mtLimit).
-      const retry = i < RETRY_WAITS.length && !(timedOut && typeof timeoutMs === 'function' && i >= 2);
-      if (timedOut) console.log(`    · ${new URL(url).host} quá ${limitMs / 1000} s chưa trả lời: ${retry ? 'gọi lại' : 'thôi, báo lỗi'}`);
+      // Hạn tăng dần (lượt dịch): quá hạn lần thứ 3 thì thôi (xem mtLimit). Lượt stream: hết hạn chung thì thôi.
+      const retry = i < RETRY_WAITS.length && !(timedOut && typeof timeoutMs === 'function' && i >= 2) && Date.now() < chainEnd - 100;
+      const what = cut === 'idle' ? `im quá ${STREAM_IDLE_MS / 1000} s giữa chừng` : cut === 'max' ? `quá ${STREAM_MAX_MS / 1000} s cả lượt` : `quá ${limitMs / 1000} s chưa trả lời`;
+      if (timedOut) console.log(`    · ${new URL(url).host} ${what}: ${retry ? 'gọi lại' : 'thôi, báo lỗi'}`);
       if (retry) { if (!timedOut) await sleep(RETRY_WAITS[i], init.signal); continue; }
       throw e;
     }
@@ -406,6 +420,14 @@ const toJsonSchema = (x) => {
 };
 // onText (nếu có): gọi dạng stream, onText(nội dung JSON đã nhận tới lúc đó) mỗi lần có chữ mới.
 async function openaiJson(text, schema, temperature, signal, timeoutMs = 10000, onText = null) {
+  if (!onText) return openaiCall(text, schema, temperature, signal, timeoutMs, null);
+  // Dịch vụ cùng kiểu API (OPENAI_BASE) không nhận stream: true (HTTP 400): gọi lại không stream.
+  try { return await openaiCall(text, schema, temperature, signal, timeoutMs, onText); } catch (e) {
+    if (e.status === 400) return openaiCall(text, schema, temperature, signal, timeoutMs, null);
+    throw e;
+  }
+}
+async function openaiCall(text, schema, temperature, signal, timeoutMs, onText) {
   const reasoning = OPENAI_REASONING_EFFORT || /^(o\d|gpt-([5-9]|\d\d))/.test(OPENAI_MODEL);   // model suy luận không nhận temperature
   const b = await httpJson(`${OPENAI_BASE}/chat/completions`, {
     method: 'POST', ...(onText ? { onText } : {}),

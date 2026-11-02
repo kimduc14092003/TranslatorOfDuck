@@ -512,6 +512,78 @@ await t('Dòng dịch xong trước (server gửi dần, tin partial): hiện t�
   assert.equal(e.subText(), 'Cuối 1');
 });
 
+await t('Dòng tạm (verifier 2/11): tua vào giữa đoạn, dòng tạm của đoạn nằm sau mẩu nhanh không che dòng mẩu nhanh đã xong; huỷ hay đổi chế độ lời bài hát thì dòng tạm biến mất; nhãn "VI" chỉ khi dòng tạm đã tới chỗ đang xem', async () => {
+  const vis = (e) => (e.vid(A).cues || []).map((c) => c.vi);
+  // S1: tua tới 25 s, q25 xong (Q1–Q3), đoạn [20,50) gửi dần P0, P1–P3 (trùng Q), P4 (sau khoảng q25).
+  {
+    const e = makeEnv();
+    e.up('items', [e.item(A, 100000)]);
+    e.activeId = A; const v = e.video(A, 25); v.paused = true;
+    for (let i = 0; i < 3; i++) await e.tick();
+    await e.reply(A + ':q25', { status: 'ok', cues: [C(25.5, 27.6, 'Q1'), C(28.2, 31.0, 'Q2'), C(31.5, 34, 'Q3')] });
+    v.currentTime = 26;
+    e.onMsg({ type: 'partial', key: A + ':1', cues: [C(20.5, 22, 'P0'), C(25.4, 27.7, 'P1'), C(28.3, 31, 'P2'), C(31.6, 34.1, 'P3'), C(36, 38, 'P4')] }, {}, () => {});
+    await e.tick();
+    assert.equal(e.subText(), 'Q1', 'S1: ' + vis(e));
+    assert.equal(vis(e).join(','), 'P0,Q1,Q2,Q3,P4');
+  }
+  // S2: dòng tạm của đoạn 0, tua đi (huỷ), tua về: không còn dòng tạm cũ.
+  {
+    const e = makeEnv();
+    e.up('items', [e.item(A, 100000)]);
+    e.activeId = A; const v = e.video(A, 2); v.paused = true;
+    for (let i = 0; i < 3; i++) await e.tick();
+    e.onMsg({ type: 'partial', key: A + ':0', cues: [C(2.5, 4, 'Tạm 1'), C(5, 7, 'Tạm 2')] }, {}, () => {});
+    await e.tick();
+    v.currentTime = 70; await e.tick(); await e.tick();
+    if (e.replies.has(A + ':0')) await e.reply(A + ':0', { status: 'cancelled' });
+    await e.tick();
+    assert.ok(!vis(e).some((x) => /^Tạm/.test(x)), 'S2: ' + vis(e));
+  }
+  // S3: dòng tạm có câu hát, tắt lời bài hát: dòng ♪ tạm không hiện nữa.
+  {
+    const e = makeEnv();
+    e.up('items', [e.item(A, 100000)]);
+    e.activeId = A; const v = e.video(A, 2); v.paused = true;
+    for (let i = 0; i < 3; i++) await e.tick();
+    e.onMsg({ type: 'partial', key: A + ':0', cues: [{ ...C(2.5, 4, 'Hát 1'), sung: true }, { ...C(5, 7, 'Hát 2'), sung: true }] }, {}, () => {});
+    await e.tick();
+    v.currentTime = 2.6; await e.tick();
+    assert.equal(e.subText(), '♪ Hát 1');
+    e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+    await e.tick();
+    assert.ok(!(e.subText() || '').includes('Hát'), 'S3: ' + e.subText());
+  }
+  // Nhãn: ở giây 12 mà dòng tạm mới tới 2,8 s thì vẫn "đang dịch".
+  {
+    const e = makeEnv();
+    e.up('items', [e.item(A, 100000)]);
+    e.activeId = A; const v = e.video(A, 12); v.paused = true;
+    for (let i = 0; i < 3; i++) await e.tick();
+    e.onMsg({ type: 'partial', key: A + ':0', cues: [C(0.5, 2.8, 'Đầu')] }, {}, () => {});
+    await e.tick();
+    assert.match(e.badge(), /đang dịch/);
+    e.onMsg({ type: 'partial', key: A + ':0', cues: [C(0.5, 2.8, 'Đầu'), C(13, 15, 'Sau')] }, {}, () => {});
+    await e.tick();
+    assert.equal(e.badge(), 'VI');
+  }
+});
+
+await t('Lỗi tải của video đang xem: HTTP 403 (link CDN hết hạn) thử lại nhanh, HTTP 404 thì không (chờ 20 s như cũ)', async () => {
+  for (const [code, fast] of [[403, true], [404, false]]) {
+    let bad = true;
+    const e = makeEnv({ status: (a, b) => (bad && b !== 65535 ? code : 206) });
+    e.up('items', [e.item(A, 12000)]);
+    e.activeId = A; e.video(A, 3).paused = true;
+    await e.tick(); await e.tick();
+    const n0 = e.fetches.length;
+    bad = false;
+    for (let i = 0; i < 12; i++) await e.tick();   // 3 s
+    const again = e.fetches.length > n0;
+    assert.equal(again, fast, code + ': ' + (again ? 'đã tải lại trong 3 s' : 'chưa tải lại trong 3 s'));
+  }
+});
+
 await t('Dòng hát (sung) hiện kèm "♪ "', async () => {
   const e = makeEnv();
   e.up('items', [e.item(A, 12000)]);

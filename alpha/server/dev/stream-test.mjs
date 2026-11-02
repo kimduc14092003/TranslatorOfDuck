@@ -15,8 +15,10 @@ const aacFile = path.join(TMP, 'a.aac');
 execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=22', '-c:a', 'aac', aacFile]);
 const AAC = fs.readFileSync(aacFile).toString('base64');
 
-// mode: 'stream' (SSE, mỗi mẩu cách 150 ms), 'slow' (chữ đầu sau 100 ms, rồi mỗi 200 ms một mẩu, cả lượt ~1,5 s, lâu hơn
-// hạn 0,3 s), 'stall' (lần gọi đầu im 1,5 s không chữ nào, lần sau như 'stream').
+// MT_TIMEOUT_MS = 300: hạn chữ đầu 0,3 s, im giữa chừng 0,18 s, cả chuỗi gọi lại 1,8 s.
+// mode: 'stream' (SSE, mỗi mẩu cách 100 ms), 'slow' (chữ đầu sau 100 ms, rồi mỗi 100 ms một mẩu, cả lượt ~0,9 s, lâu hơn
+// hạn 0,3 s), 'stall' (lần gọi đầu im 1,5 s không chữ nào, lần sau như 'stream'), 'midstall' (lần gọi đầu gửi 2 mẩu rồi im
+// 1 s, lần sau như 'stream'), 'forever' (mỗi 100 ms một mẩu, không bao giờ xong), 'nokey' (401).
 let mode = 'stream';
 const calls = [];
 const providers = http.createServer((req, res) => {
@@ -32,6 +34,7 @@ const providers = http.createServer((req, res) => {
     if (req.url.endsWith('/v1/chat/completions')) {
       const b = JSON.parse(body);
       const n = calls.push({ at: Date.now(), stream: b.stream === true });
+      if (mode === 'nokey') return json({ error: { message: 'bad key' } }, 401);
       const lines = JSON.parse(b.messages[0].content.match(/Các dòng: (.*)$/m)[1]);
       const content = JSON.stringify({ pronouns: { pairs: [] }, cues: lines.map(l => ({ id: l.id, vi: 'Dòng ' + l.id + ' đã dịch.' })) });
       if (!b.stream) return json({ choices: [{ message: { role: 'assistant', content } }] });
@@ -40,7 +43,15 @@ const providers = http.createServer((req, res) => {
       for (let i = 0; i < content.length; i += Math.ceil(content.length / 8)) pieces.push(content.slice(i, i + Math.ceil(content.length / 8)));
       const ev = (d) => `data: ${JSON.stringify({ choices: [{ delta: d }] })}\n\n`;
       if (mode === 'stall' && n === 1) { setTimeout(() => res.end(), 1500); return; }
-      const first = mode === 'slow' ? 100 : 50, gap = mode === 'slow' ? 200 : 150;
+      if (mode === 'midstall' && n === 1) {
+        res.write(ev({ content: pieces[0] })); setTimeout(() => res.write(ev({ content: pieces[1] })), 50);
+        setTimeout(() => res.end(), 1000); return;
+      }
+      if (mode === 'forever') {
+        const iv = setInterval(() => { if (res.writableEnded || res.destroyed) return clearInterval(iv); res.write(ev({ content: ' ' })); }, 100);
+        res.on('close', () => clearInterval(iv)); return;
+      }
+      const first = mode === 'slow' ? 100 : 50, gap = 100;
       pieces.forEach((p, i) => setTimeout(() => { if (!res.writableEnded) res.write(ev({ content: p })); }, first + i * gap));
       setTimeout(() => { if (!res.writableEnded) res.end('data: [DONE]\n\n'); }, first + pieces.length * gap);
       return;
@@ -106,7 +117,7 @@ try {
   mode = 'slow';
   const k = calls.length;
   const s = await post('7500000000000000202', { stream: true });
-  t('trả chậm mà đều (cả lượt ~1,5 s, hạn chữ đầu 0,3 s): không cắt giữa chừng, một lần gọi', () => {
+  t('trả chậm mà đều (cả lượt ~0,9 s, hạn chữ đầu 0,3 s): không cắt giữa chừng, một lần gọi', () => {
     assert.equal(s.out.at(-1).obj.status, 'ok', JSON.stringify(s.out.at(-1).obj));
     assert.equal(calls.length - k, 1, 'số lần gọi dịch: ' + (calls.length - k));
   });
@@ -125,6 +136,32 @@ try {
   t('không xin stream: trả JSON một lần như trước', () => {
     assert.match(plain.type, /application\/json/);
     assert.equal(plain.out.length, 1); assert.equal(plain.out[0].obj.status, 'ok');
+  });
+
+  mode = 'midstall';
+  calls.length = 0;
+  const mid = await post('7500000000000000205', { stream: true });
+  t('im giữa chừng quá hạn im (0,18 s): cắt, gọi lại, log ghi đúng loại hạn, vẫn có kết quả', () => {
+    assert.equal(mid.out.at(-1).obj.status, 'ok', JSON.stringify(mid.out.at(-1).obj));
+    assert.equal(calls.length, 2);
+    assert.match(log, /im quá 0\.18 s giữa chừng: gọi lại/);
+  });
+
+  mode = 'forever';
+  calls.length = 0;
+  const t0 = Date.now();
+  const fv = await post('7500000000000000206', { stream: true });
+  t('trả mãi không xong: hết hạn chung của cả chuỗi (1,8 s) thì thôi, báo lỗi ở dòng cuối (verifier 2/11: trước là ~3 × 60 s)', () => {
+    assert.equal(fv.out.at(-1).obj.status, 'error', JSON.stringify(fv.out.at(-1).obj));
+    assert.ok(Date.now() - t0 < 3500, 'mất ' + (Date.now() - t0) + ' ms');
+    assert.match(log, /quá 1\.8 s cả lượt: thôi, báo lỗi/);
+  });
+
+  mode = 'nokey';
+  const nk = await post('7500000000000000207', { stream: true });
+  t('lỗi sau khi đã gửi header (401): dòng cuối là { status: "error" }', () => {
+    assert.match(nk.type, /x-ndjson/);
+    assert.equal(nk.out.at(-1).obj.status, 'error', JSON.stringify(nk.out.at(-1).obj));
   });
   console.log(`\n${n} kiểm tra đều đạt.`);
 } catch (e) {

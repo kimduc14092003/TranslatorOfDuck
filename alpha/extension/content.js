@@ -479,16 +479,18 @@
       // Phần gửi dư nhớ lúc đổi chế độ lời bài hát chỉ dùng cho lần xin lại ngay sau đó. Đoạn không còn cần (tua, lướt đi)
       // thì bỏ: lần sau tính lại theo đoạn trước, tua tới thì vẫn gửi dư 8 s cho đúng ngữ cảnh (§6e), dù phải nhận dạng lại.
       for (const k of v.redo.keys()) if (!wanted.has(id + ':' + k)) v.redo.delete(k);
+      let dropped = false;   // bỏ dòng tạm (partial) của yêu cầu vừa huỷ: tính lại v.cues
       for (const [k, c] of v.chunks) {
         // Đoạn bị bỏ vì tải chậm: chỗ đang xem ra khỏi nó (hết cần, hay tua lùi về đoạn trước) thì xoá, quay lại thì tải lại.
         if (c.slow && (!wanted.has(id + ':' + k) || (id === currentId && v.plan && chunkAt(v.plan, playhead) !== k))) { v.chunks.delete(k); continue; }
         if (c.status !== 'pending' || wanted.has(id + ':' + k)) continue;
-        if (c.sent) { c.sent = false; keys.push(id + ':' + k); } else if (c.ctl) c.ctl.abort();
+        if (c.sent) { c.sent = false; keys.push(id + ':' + k); if (c.partial) { c.partial = null; dropped = true; } } else if (c.ctl) c.ctl.abort();
       }
       for (const [qa, q] of v.quick) {
         if (q.status !== 'pending' || quickWanted(id, q)) continue;
-        if (q.sent) { q.sent = false; keys.push(id + ':q' + qa); } else q.ctl.abort();
+        if (q.sent) { q.sent = false; keys.push(id + ':q' + qa); if (q.partial) { q.partial = null; dropped = true; } } else q.ctl.abort();
       }
+      if (dropped) mergeCues(v);
       headCheck(id, v);   // lượt tải đầu video không còn ai cần (vừa lướt đi, tua đi khi chưa có ai chờ) thì ngắt
     }
     if (keys.length && alive()) chrome.runtime.sendMessage({ type: 'cancel', keys }).catch(() => {});
@@ -817,13 +819,18 @@
       || (ch.cues || []).some(x => cue.start < se(x) - 0.1 && x.start < se(cue) - 0.1));
     // Dòng dịch xong trước (partial, server gửi dần: 0.2.32) của đoạn, mẩu nhanh còn ở server: hiện tạm, nhường dòng của đoạn
     // đã xong và của mẩu nhanh đã xong; kết quả cuối thay (done() của runChunk, runQuick).
-    const live = (x) => x.status === 'pending' && x.sent && Array.isArray(x.partial) && x.partial.length > 0;
+    // Dòng tạm có câu hát của yêu cầu gửi theo chế độ lời bài hát kia (vừa đổi nút): không hiện.
+    const live = (x) => x.status === 'pending' && x.sent && Array.isArray(x.partial) && x.partial.length > 0
+      && (x.lyrics === lyricsOn() || !x.partial.some(c => c.sung));
     const quick = [...v.quick.values()].filter(q => q.status === 'ok' || live(q))
       .map(q => ({ ...q, cues: (q.status === 'ok' ? q.cues || [] : q.partial).filter(x => !covered(x)) })).filter(q => q.cues.length);
     const quickOk = quick.filter(q => q.status === 'ok');
     const byQuick = (cue) => quickOk.some(q => q.cues.some(x => cue.start < se(x) - 0.1 && x.start < se(cue) - 0.1));
+    // Mỗi dòng tạm của đoạn là một mục riêng, xếp theo đầu dòng: cả đoạn là một mục (from = đầu đoạn) thì đứng trước mẩu
+    // nhanh ở giữa đoạn (tua tới), TodCues.merge chỉ so với dòng cuối đã nhận nên bỏ mọi dòng mẩu nhanh đã xong khi đoạn có
+    // dòng tạm nằm sau khoảng mẩu nhanh (verifier 2/11: không có sub ở chỗ tua tới tới lúc đoạn có kết quả cuối).
     const part = [...v.chunks.values()].filter(live)
-      .map(c => ({ from: c.from, to: c.to, cues: c.partial.filter(x => !covered(x) && !byQuick(x)) })).filter(c => c.cues.length);
+      .flatMap(c => c.partial.filter(x => !covered(x) && !byQuick(x)).map(x => ({ from: x.start, to: x.end, cues: [x] })));
     v.cues = TodCues.merge([...done, ...quick, ...part].sort((a, b) => a.from - b.from));
   }
   const superseded = (v, q) => !!v.plan && v.plan.every(([a, b], k) => b <= q.from || a >= q.to || (v.chunks.get(k) || {}).status === 'ok');
@@ -954,9 +961,9 @@
     // pg: bản xưng hô gửi kèm (takePron), chỉ xét khi giữ kết quả.
     const done = (r, pg) => {
       if (v.quick.get(from) !== q) return;
-      if (r.status === 'cancelled') { v.quick.delete(from); return; }
+      if (r.status === 'cancelled') { v.quick.delete(from); if (q.partial) mergeCues(v); return; }
       // Gửi khi chế độ lời bài hát còn khác (đổi nút lúc mẩu này đang ở server) mà có câu hát: bỏ, xin mẩu mới.
-      if (q.sent && q.lyrics !== lyricsOn() && !modeFree(r)) { v.quick.delete(from); quickTried = -1; return; }
+      if (q.sent && q.lyrics !== lyricsOn() && !modeFree(r)) { v.quick.delete(from); quickTried = -1; if (q.partial) mergeCues(v); return; }
       if (pg != null) takePron(v, pg, r, true);
       Object.assign(q, r, { from, to, at: Date.now() });
       mergeCues(v);
@@ -1014,10 +1021,10 @@
       if (sent && entry.head) mark(id, 'chunkReply');
       const down = sent && noteReply(r);
       if (v.chunks.get(k) !== entry) return;
-      if (r.status === 'cancelled') { v.chunks.delete(k); return; }   // tua lại tới đây thì gửi lại
+      if (r.status === 'cancelled') { v.chunks.delete(k); if (entry.partial) mergeCues(v); return; }   // tua lại tới đây thì gửi lại
       // Gửi khi chế độ lời bài hát còn khác (đổi nút lúc đoạn này đang ở server): kết quả có câu hát (hay lỗi) thì bỏ,
       // schedule() xin lại theo chế độ mới với đúng phần âm thanh này (server đã giữ ASR). Không có câu hát thì như nhau.
-      if (sent && entry.lyrics !== lyricsOn() && !modeFree(r)) { v.chunks.delete(k); v.redo.set(k, entry.pre); return; }
+      if (sent && entry.lyrics !== lyricsOn() && !modeFree(r)) { v.chunks.delete(k); v.redo.set(k, entry.pre); if (entry.partial) mergeCues(v); return; }
       if (r.status !== 'error') v.redo.delete(k);
       if (pg != null) takePron(v, pg, r, false);
       const paid = sent && !down;
@@ -1080,9 +1087,13 @@
       if (id === currentId) pump(lanes.prefetch);   // hàng dịch sẵn hết nhường (prefetchHeld)
     } catch (e) {
       if (entry.ctl.signal.aborted) { if (v.chunks.get(k) === entry) v.chunks.delete(k); return; }
-      // transient: lỗi mạng tạm thời (treo, đứt, HTTP lỗi, thiếu dữ liệu, file vừa đổi, quá chậm), thử lại có thể được
-      // (fastRetry). Lỗi đọc file (không có mục lục ở đầu, không phải AAC…) thì thử lại cũng vậy.
-      const transient = !!(e.timeout || e.slowMoov || e.changed || e instanceof TypeError || /^tải (video|mục lục)/.test(e.message));
+      // transient: lỗi mạng tạm thời (treo, đứt, HTTP 5xx/403/408, thiếu dữ liệu, file vừa đổi, quá chậm), thử lại có thể
+      // được (fastRetry). Lỗi đọc file (không có mục lục ở đầu, không phải AAC…) thì thử lại cũng vậy.
+      // HTTP: 5xx, 403 (link CDN hết hạn), 408 là tạm thời; 404, 410… thì không (verifier 2/11). TypeError chỉ khi là lỗi mạng
+      // của fetch ("Failed to fetch"), không phải lỗi trong code.
+      const http = Number((/^tải video: HTTP (\d{3})/.exec(e.message) || [])[1]);
+      const transient = !!(e.timeout || e.slowMoov || e.changed || (e instanceof TypeError && /fetch|network/i.test(e.message))
+        || (http ? http >= 500 || http === 403 || http === 408 : /^tải (video|mục lục)/.test(e.message)));
       done({ status: 'error', error: e.message, ...(e.rateLimited ? { rateLimited: true } : {}), ...(transient ? { transient } : {}) });   // 429: tải lại khi hết nghỉ
     }
   }
@@ -1350,8 +1361,9 @@
     // mẩu nhanh nối tiếp và đoạn kế đang làm, không phải lỗi.
     if (cv && (!res || res.status === 'pending' || res.slow)) {
       for (const q of cv.quick.values()) if (t >= q.from && t < q.to && q.status === 'ok') res = q;
-      // Đoạn (hay mẩu nhanh) ở server đã gửi dần dòng dịch tới chỗ đang xem: "VI" (dòng đang hiện), không "đang dịch".
-      const ahead = (x) => x && x.status === 'pending' && Array.isArray(x.partial) && x.partial.some(c => c.start <= t + 1);
+      // Đoạn (hay mẩu nhanh) ở server đã gửi dần dòng dịch tới chỗ đang xem: "VI", không "đang dịch".
+      // Dòng tới theo thứ tự thời gian: có dòng kết thúc từ chỗ đang xem trở đi là bản dịch đã tới chỗ này.
+      const ahead = (x) => x && x.status === 'pending' && Array.isArray(x.partial) && x.partial.some(c => (c.se || c.end) >= t - 0.5);
       if (res && ahead(res)) res = { status: 'ok' };
       else for (const q of cv.quick.values()) if (t >= q.from && t < q.to && ahead(q)) res = { status: 'ok' };
     }
