@@ -1085,6 +1085,60 @@ Chủ dự án chọn làm cả 4 hướng.
 - **Thấy thêm ở bản hiện tại:** lướt 2 s từ lúc mở trang (bắt đầu lạnh) thì hàng dịch sẵn không bao giờ chạy. Nó nhường video vừa mở tối đa `PF_HOLD_MAX` 2,5 s, dài hơn khoảng cách giữa hai lần lướt, và tính lại mỗi lần mở.
 - **Chưa mô phỏng:** thời gian server ngẫu nhiên, dòng tạm, lượt rút gọn, chất lượng dịch khi đoạn ngắn (ít ngữ cảnh), tiền của việc bị huỷ giữa chừng.
 
+## 6ab. Chế độ thử "dịch sẵn 10 s đầu" (2/11, extension 0.2.35, mặc định tắt)
+
+- **Bật:** ô "Thử: dịch sẵn 10 s đầu" trong popup (cài đặt `first10`).
+  - Áp cho video chưa chia đoạn: video kế đang dịch sẵn và video đã gặp giữ cách cũ.
+  - Bảng thông tin ghi "· thử 10 s đầu" cho video theo chế độ này.
+- **Cách làm (`content.js`):**
+  - **Chia đoạn (`planFor`):**
+    - video ≤ 12 s: dịch một lần;
+    - còn lại: [0,10), [10,25), rồi các đoạn 30 s;
+    - phần dư cuối < 8 s gộp vào đoạn trước nó (13 s: [0,14) một lần; 27 s: [0,10), [10,28); 61 s: …, [25,62)).
+    - Có lúc tôi đổi thành "không gộp vào [10,25)" vì một số mô phỏng (video 30 s chỉ phủ 65%). Verifier chỉ ra đó là nhiễu: thời gian server khi ấy rút thăm theo thứ tự việc. Rút thăm theo từng việc thì hai luật cho độ phủ như nhau, gộp thì bớt vài giây nhận dạng, nên giữ luật gộp.
+  - **Dịch sẵn:** video kế chỉ làm đoạn 0. Đoạn 0 gửi dư 2 s phía sau, cả trong lượt tải đầu video.
+  - **Video đang xem:** chưa xem đủ 3 s thì chỉ làm tới đoạn ở chỗ đang xem. Mở giữa video hay tua sớm thì đoạn đó vẫn làm ngay.
+  - **Câu vắt qua giây 10:** đoạn [10,25) gửi dư 4,5 s phía trước. Từ 4 s trở lên thì server giữ câu vắt qua giây 10 (`windowAsr`), và lúc ghép sub dòng bị cắt của đoạn 0 được thay.
+  - **`headLate`:** xét cả đoạn 0 ngắn của video đang xem, vì ở chế độ này không có mẩu nhanh.
+  - **`restartSlow` (đoạn 0 và 1 của video đang xem):** thôi lượt tải và tải lại ngay một lần, trước các đoạn sau, khi đủ cả ba điều kiện:
+    - tốc độ 2 s gần nhất dưới 1/3 của lượt tải xong gần nhất;
+    - không phải do chia đường truyền;
+    - phần còn lại ở tốc độ đó lâu hơn tải lại cả cửa sổ ở 1/3 tốc độ (lần tải lại bỏ phần đã tải).
+  - **Tắt ô** thì không nhánh nào chạy: mô phỏng ra từng số như 0.2.34, test cũ không đổi.
+- **Kiểm:**
+  - Verifier soát bản đầu: ship_trial_with_fixes, 2 major đã sửa:
+    - **cắt câu ở giây 10:** đếm trên 250 đoạn đầu có lời trong cache server, ≥ 13,6% có câu bắt đầu trước giây 10 mà nói quá giây 12;
+    - **đoạn ngắn không có cơ chế thôi lượt tải chậm.**
+  - Lần soát thứ hai: ship_trial, kèm vài việc nhỏ đã làm: tải lại chỉ khi đáng, xoá mốc đo khi lượt tải bắt đầu lại, video 12–17 s.
+  - Lần soát thứ ba (sau các sửa nhỏ): ship_trial. Bảng dưới đo với luật "không gộp vào [10,25)"; theo verifier (`M-tail`, 5 hạt giống), luật gộp cho cùng độ phủ, ít hơn 2–13 giây nhận dạng.
+  - Test: content-time 36 (thêm 5). Mỗi ca mới trượt trên code trước khi sửa (đã chạy bản đối chứng bỏ từng chỗ sửa).
+  - e2e 31/31 (Gemini) và 32/32 (OpenAI stream) khi tắt ô.
+- **Mô phỏng** (`cmp2.mjs` ở scratch):
+  - server dao động log-chuẩn (trung vị như đo, p80 = 1,5 lần), rút thăm theo từng việc;
+  - 5 hạt giống, video đầu đã xem 15 s, 11 video;
+  - "lượt chậm": mỗi lượt tải, kể cả lần thử lại, 1/4 khả năng chỉ 300 KB/s.
+
+  | Mạng | Lướt 2 s: video có sẵn sub | Lướt 4 s: phủ | Xem 15 s: phủ | Xem hết: phủ | Trộn: phủ | Giây nhận dạng lướt 4 s / xem 15 s |
+  |---|---|---|---|---|---|---|
+  | 10 MB/s | 10,0 → 11,0 | 100 → 100% | 100 → 98% | 100 → 99% | 100 → 99% | 540 → 404 / 540 → 584 |
+  | 3 MB/s | 6,8 → 11,0 | 100 → 100% | 100 → 95% | 100 → 98% | 100 → 98% | 465 → 191 / 540 → 584 |
+  | 3 MB/s, lượt chậm | 4,6 → 9,0 | 83 → 100% | 100 → 95% | 100 → 94% | 100 → 96% | 398 → 191 / 540 → 522 |
+  | 1,2 MB/s | 0,2 → 4,8 | 21 → 99% | 97 → 86% | 98 → 94% | 96 → 93% | 397 → 178 / 522 → 432 |
+  | 450 KB/s | 0 → 0 | 0 → 0% | 38 → 58% | 59 → 27% | 6 → 32% | 0 → 0 / 285 → 138 |
+
+  - Xem tiếp thì hụt sub quanh giây 10 ở mọi tốc độ mạng (3 MB/s, xem 15 s: 3,4 lần hụt / 11 video).
+  - Khi xem: thêm lượt gửi, ít rút gọn câu hơn (đoạn [10,25) luôn gấp nên server bỏ lượt rút gọn), giây nhận dạng tăng ~8% ở mạng nhanh.
+  - Nếu lần tải lại cùng khoảng byte cũng chậm (mô hình của verifier), `restartSlow` trung bình không giúp mà cũng không hại.
+- **Đo trên Douyin thật** (Chromium riêng, server riêng, 2 lượt × 7 video, ô thử bật):
+  - đoạn 0 gửi 12,1 s âm thanh; xem quá 3 s thì gửi đoạn 1 (25,6 s âm thanh, gửi dư 4,5 s); video 27 s chia [0,10), [10,29);
+  - không lỗi; worker đúng bản;
+  - lướt đi ở giây 4 thì đoạn 1 đã gửi bị huỷ giữa chừng (2 lần mỗi lượt): tốn một phần tiền nhận dạng, cái giá của cửa 3 s.
+- **Chưa làm, có từ trước:** đoạn 0 không có lời (bỏ qua: nhạc) thì đoạn 1 gửi dư 8 s (`PRE_SEEK`). Ở chế độ thử điều này hay gặp hơn: 29 s âm thanh cho [10,25) thay vì 25,5 s.
+- **Lưu ý khác** (verifier, chấp nhận cho bản thử):
+  - cửa 3 s tính theo thời gian phát, tính lại khi quay lại video;
+  - tua về đoạn 0 trong 3 s đầu thì huỷ đoạn 1 đã gửi;
+  - phát 2× thì đoạn 1 bắt đầu ở giây phim thứ 6.
+
 ## 7. Việc tiếp theo trên Mac
 
 1. **Kiểm tra môi trường:** `node -v` (cần 18+), `git status`, đang ở nhánh `claude/busy-newton-1y8nzr`. Có `alpha/server/.env` chưa (chỉ kiểm có file, không đọc nội dung).

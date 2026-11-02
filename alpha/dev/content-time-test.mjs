@@ -15,8 +15,9 @@ const VERSION = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf
 // hướng 302 rồi mới tới máy chủ video). realProbe: lượt tải 64 KB đầu file cũng chia băng thông như mọi lượt khác (mặc định:
 // xong ngay). Mục lục giả: moov dài head byte, giây t của video ở byte base + t * bps. status(a, b, url): mã HTTP.
 // Mỗi byte gửi về có giá trị theo vị trí trong file, aacSum của tin gửi đi là tổng kiểm của đúng các byte âm thanh đã tải.
+// settings: cài đặt đã lưu (chrome.storage), vd. { first10: true } cho chế độ thử dịch sẵn 10 s.
 function makeEnv(dir, { bw = 9000, stall = () => 0, total = () => 99999999, autoReplyMs = null, cap = () => 0, pause = () => false,
-  rtt = 0, realProbe = false, head = 10, base = 0, bps = 1000, status = () => 206 } = {}) {
+  rtt = 0, realProbe = false, head = 10, base = 0, bps = 1000, status = () => 206, settings = {} } = {}) {
   const env = { now: 1_000_000, perf: 0, sent: [], replies: new Map(), fetches: [], rafs: [], listeners: {}, videos: new Map(), activeId: null,
     href: 'https://www.douyin.com/', onChanged: null, timers: [], tid: 0, log: [] };
   const setTimeout_ = (fn, ms = 0) => { const id = ++env.tid; env.timers.push({ id, at: env.perf + ms, fn }); return id; };
@@ -91,7 +92,7 @@ function makeEnv(dir, { bw = 9000, stall = () => 0, total = () => 99999999, auto
         return new Promise((r) => { env.replies.set(msg.key, r); if (autoReplyMs != null) setTimeout_(() => { if (env.replies.get(msg.key) === r) { env.replies.delete(msg.key); env.log.push([env.perf, 'reply', msg.key]); r({ status: 'ok', cues: [] }); } }, autoReplyMs); });
       },
       getManifest: () => ({ version: VERSION }) },
-    storage: { local: { get: (_k, cb) => cb({ settings: {} }), set() {} }, onChanged: { addListener: (f) => { env.onChanged = f; } } },
+    storage: { local: { get: (_k, cb) => cb({ settings }), set() {} }, onChanged: { addListener: (f) => { env.onChanged = f; } } },
   };
   const TodMp4 = { headerEnd: () => head, parse: () => ({ duration: 0 }),
     window: (_m, a, b) => ({ start: base + Math.round(a * bps), end: base + Math.round(b * bps), startTime: a, seconds: b - a, build: (buf) => new Uint8Array(buf) }) };
@@ -932,6 +933,84 @@ await t('Tiến độ và tốc độ khi lấy từ lượt tải đầu video:
   } });
   assert.ok(speed != null && speed >= 2000, 'tốc độ ' + speed + ' byte/ms');
   assert.ok(prog && prog.got > 0 && prog.got <= prog.recv - H && prog.bytes === W0 - H, 'tiến độ đoạn 0: ' + JSON.stringify(prog));
+});
+
+// ---- Chế độ thử "dịch sẵn 10 s" (cài đặt first10, ô trong popup; HANDOFF §6aa, §6ab): đoạn [0,10) rồi [10,25), rồi 30 s;
+// đoạn sau đoạn ở chỗ đang xem chỉ làm khi đã xem 3 s.
+const F10 = { settings: { first10: true } };
+await t('Thử dịch sẵn 10 s: video 45 s chia [0,10) [10,25) [25,46); đoạn 0 gửi 12 s âm thanh; đoạn 1 chỉ gửi khi đã xem 3 s; video kế dịch sẵn chỉ đoạn 0; tắt thì như cũ', async () => {
+  const B = '7500000000000000005';
+  const r = await openVideo({ feed: true, ids: [A, B], ms: 9000, env: F10 });
+  assert.equal(JSON.stringify(r.e.vid(A).plan), JSON.stringify([[0, 10], [10, 25], [25, 46]]));
+  const at = (key) => r.e.subs().find((m) => m.key === key);
+  for (const id of [A, B]) {
+    const s0 = at(id + ':0');
+    assert.ok(s0, id.slice(-1) + ': đoạn 0 chưa gửi: ' + r.e.subs().map((m) => m.key.slice(17)));
+    assert.equal(s0.payload.aacLen, 12 * BPS, id.slice(-1) + ': âm thanh đoạn 0 (byte)');
+  }
+  const s1 = at(A + ':1');
+  assert.ok(s1 && s1.perf >= 3000, 'đoạn [10,25) gửi lúc ' + (s1 && s1.perf) + ' (phải sau khi đã xem 3 s)');
+  // Gửi dư 4,5 s phía trước (server giữ câu vắt qua giây 10; đoạn 0 chỉ gửi dư 2 s phía sau; verifier 2/11, F1).
+  assert.equal(s1.payload.audioStart, 5.5, 'đoạn [10,25) bắt đầu âm thanh ở');
+  assert.equal(s1.payload.aacLen, (31 - 5.5) * BPS, 'âm thanh đoạn [10,25) (byte)');
+  assert.ok(!at(B + ':1') && !r.e.subs().some((m) => m.key.endsWith(':q0')), 'gửi thêm: ' + r.e.subs().map((m) => m.key.slice(17)));
+  const off = await openVideo({ feed: true, ids: [A, B], ms: 3000 });
+  assert.equal(JSON.stringify(off.e.vid(A).plan), JSON.stringify([[0, 20], [20, 46]]));
+});
+
+await t('Thử dịch sẵn 10 s: mở giữa video (trình phát ở giây 30) thì đoạn ở chỗ đang xem không phải chờ 3 s (verifier 2/11, F7)', async () => {
+  const e = makeEnv(EXT, { bw: 1.2e7, rtt: 150, realProbe: true, head: H, base: H, bps: BPS, autoReplyMs: 2600, ...F10 });
+  e.activeId = A; e.video(A, 30);
+  e.up('items', [e.item(A, 90000, true)]);
+  for (let t = 0; t < 6000; t += 50) await e.tick(50);
+  const k = e.vid(A).plan.findIndex(([a, b]) => 30 >= a && 30 < b);
+  const s = e.subs().find((m) => m.key === A + ':' + k);
+  assert.ok(s && s.perf < 2500, 'đoạn ở chỗ đang xem (' + k + ') gửi lúc ' + (s && s.perf) + ': ' + e.subs().map((m) => m.key.slice(17) + '@' + m.perf).join(' '));
+});
+
+await t('Thử dịch sẵn 10 s: lượt tải đầu video nhỏ giọt (150 KB/s) mà đoạn 0 chỉ 10 s (không có mẩu nhanh): vẫn thôi lượt đó, tải nối tiếp, đoạn 0 gửi sớm (verifier 2/11, F2: trước đây không có sub trong 15 s)', async () => {
+  const slowHead = { pause: (rec) => { if (rec.open && rec.vid === A) rec.cap = 150000; return false; } };
+  const r = await openVideo({ feed: true, ms: 9000, env: { ...F10, ...slowHead } });
+  const s0 = r.e.subs().find((m) => m.key === A + ':0');
+  assert.ok(s0 && s0.perf <= 5000, 'đoạn 0 gửi lúc ' + (s0 && s0.perf) + ': ' + r.e.fetches.filter((f) => f.vid === A).map(r.e.fmt).join(' | '));
+  assert.equal(s0.payload.aacLen, 12 * BPS, 'âm thanh đoạn 0 ghép đủ');
+  const cont = r.e.fetches.filter((f) => f.vid === A && !f.open);
+  assert.ok(cont.some((f) => f.done && f.b === H + 12 * BPS - 1), 'lượt nối tiếp: ' + r.e.fetches.filter((f) => f.vid === A).map(r.e.fmt).join(' | '));
+});
+
+await t('Thử dịch sẵn 10 s: phần dư cuối ngắn hơn 8 s gộp vào đoạn trước (video 27 s, 31 s, 61 s; video 13 s thành một lần), video ≤ 12 s một lần (verifier 2/11, F4)', async () => {
+  // Video đang xem và 4 video kế (dịch sẵn) được chia đoạn; hai lượt vì mỗi lượt chỉ 5 video có plan.
+  const plansOf = async (durs) => {
+    const ids = durs.map((_, i) => '75000000000000000' + String(10 + i));
+    const e = makeEnv(EXT, { bw: 3e6, rtt: 150, realProbe: true, head: H, base: H, bps: BPS, autoReplyMs: 2600, ...F10 });
+    e.activeId = ids[0]; e.video(ids[0], 0);
+    e.up('items', ids.map((id, i) => e.item(id, durs[i] * 1000, true)));
+    for (let t = 0; t < 9000; t += 50) await e.tick(50);
+    return ids.map((id) => JSON.stringify(e.vid(id) && e.vid(id).plan));
+  };
+  assert.deepEqual(await plansOf([45, 27, 31, 62, 12]), [[[0, 10], [10, 25], [25, 46]], [[0, 10], [10, 28]], [[0, 10], [10, 32]], [[0, 10], [10, 25], [25, 55], [55, 63]], [[0, 13]]].map((x) => JSON.stringify(x)));
+  assert.deepEqual(await plansOf([45, 13, 17, 61]), [[[0, 10], [10, 25], [25, 46]], [[0, 14]], [[0, 10], [10, 18]], [[0, 10], [10, 25], [25, 62]]].map((x) => JSON.stringify(x)));
+});
+
+await t('Thử dịch sẵn 10 s: lượt tải đoạn [10,25) chậm hẳn (máy chủ chậm theo lượt) trong khi lượt khác nhanh: thôi, tải lại một lần qua kết nối mới, gửi kịp (verifier 2/11, F2: đoạn ngắn không có dropSlow, mẩu nhanh)', async () => {
+  let slowOnce = false;
+  // Lượt tải của đoạn [10,25): cửa sổ âm thanh [5,5; 31) s, nối tiếp phần lượt tải đầu video đã có (tới giây 12), nên nhận theo byte cuối.
+  const END1 = H + 31 * BPS - 1;
+  const slow1 = { pause: (rec) => { if (!rec.open && rec.vid === A && rec.b === END1 && !slowOnce && !rec.slowMarked) { slowOnce = true; rec.slowMarked = true; rec.cap = 300000; } return false; } };
+  const r = await openVideo({ feed: true, ms: 14000, env: { ...F10, ...slow1 } });
+  const s1 = r.e.subs().find((m) => m.key === A + ':1');
+  const own = r.e.fetches.filter((f) => f.vid === A && !f.open && f.b === END1);
+  assert.ok(s1 && s1.perf <= 10000, 'đoạn [10,25) gửi lúc ' + (s1 && s1.perf) + ': ' + r.e.fetches.filter((f) => f.vid === A).map(r.e.fmt).join(' | ') + ' · gửi: ' + r.e.subs().map((m) => m.key.slice(17) + '@' + m.perf).join(' '));
+  assert.equal(own.length, 2, 'số lượt tải đoạn [10,25): ' + own.map(r.e.fmt).join(' | '));
+  assert.equal(s1.payload.aacLen, (31 - 5.5) * BPS, 'âm thanh đoạn [10,25) đủ');
+  // Lượt đó chỉ chậm hẳn khi đã tải được 85%: phần còn lại ở tốc độ đó nhanh hơn tải lại cả cửa sổ, nên không thôi (verifier
+  // 2/11: lần tải lại bỏ phần đã tải, tải lại cả cửa sổ).
+  const late = { pause: (rec) => { if (!rec.open && rec.vid === A && rec.b === END1 && rec.got > 0.85 * rec.size) rec.cap = 300000; return false; } };
+  const lr = await openVideo({ feed: true, ms: 14000, env: { ...F10, ...late } });
+  assert.equal(lr.e.fetches.filter((f) => f.vid === A && !f.open && f.b === END1).length, 1, 'gần xong mà vẫn tải lại: ' + lr.e.fetches.filter((f) => f.vid === A).map(lr.e.fmt).join(' | '));
+  // Đường truyền chậm đều (mọi lượt cùng chậm): không thôi, không tải lại (lượt mới cũng chậm như vậy).
+  const even = await openVideo({ feed: true, bw: 6e5, ms: 14000, env: F10 });
+  assert.ok(even.e.fetches.filter((f) => f.vid === A && !f.open && f.b === END1).length <= 1, 'đường truyền chậm đều mà vẫn tải lại: ' + even.e.fetches.filter((f) => f.vid === A).map(even.e.fmt).join(' | '));
 });
 
 console.log(failed ? `\n${failed} kiểm tra trượt, ${n} đạt.` : `\n${n} kiểm tra đều đạt.`);

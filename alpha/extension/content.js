@@ -25,6 +25,17 @@
   // Video ngắn hơn thế thì dịch một lần. Dài hơn thì đoạn đầu chỉ 20 s: đo khi lướt, /aweme/v1/play có lúc chuyển
   // sang máy chủ video chỉ tải được ~0,3 MB/s, tải trọn video 60 s mất cả chục giây mới có sub đầu.
   const SINGLE_MAX = 30;
+  // Chế độ thử "dịch sẵn 10 s" (cài đặt first10, ô trong popup, mặc định tắt; HANDOFF §6aa–§6ab): đoạn [0,10) rồi [10,25), rồi
+  // 30 s; video ≤ F10_SINGLE giây dịch một lần. Video dịch sẵn chỉ làm 10 s đầu; video đang xem chỉ làm đoạn sau đoạn ở chỗ
+  // đang xem khi đã xem F10_GATE ms (lướt qua thì khỏi tải, khỏi trả tiền). Đoạn 0 gửi dư F10_POST giây như mẩu nhanh.
+  // Mô phỏng 2/11 (thời gian server dao động, bắt đầu ấm; HANDOFF §6ab): lướt nhanh có sẵn sub nhiều hơn (1,2 MB/s lướt 4 s:
+  // phủ 99% thay vì 21%; 3 MB/s lướt 2 s: 11/11 video thay vì 6,8/11) và bớt 25–60% giây nhận dạng; xem tiếp thì có thể hụt
+  // sub quanh giây 10 ở mọi tốc độ mạng (xem 15 s: 3 MB/s phủ 95% thay vì 100%, 1,2 MB/s 86% thay vì 97%), thêm lượt gửi,
+  // ít rút gọn câu hơn; mạng 450 KB/s xem hết video thì kém hẳn (27% thay vì 59%).
+  // Áp cho video chưa chia đoạn: video kế đang dịch sẵn và video đã gặp giữ cách cũ.
+  // Đoạn 1 gửi dư F10_PRE1 giây phía trước (≥ 4 s: server giữ câu vắt qua giây 10, ghép sub thay dòng bị cắt của đoạn 0;
+  // verifier 2/11: ≥ 13,6% đoạn đầu có lời có câu như vậy). Phần dư cuối ngắn hơn F10_TAIL giây: xem planFor.
+  const F10_SINGLE = 12, F10_FIRST = 10, F10_SECOND = 15, F10_GATE = 3000, F10_POST = 2, F10_PRE1 = 4.5, F10_TAIL = 8;
   const PRE = 1.5, POST = 6;     // âm thanh gửi dư hai đầu để câu vắt qua ranh giới không bị cắt
   // Đoạn trước chưa dịch (vừa tua tới): gửi dư 8 s phía trước. Server lấy lời nói phần đó làm mạch câu cho bước dịch
   // và giữ câu vắt qua đầu đoạn (đo trên vlog thật: 30% đoạn sau tua dịch không có ngữ cảnh, sai xưng hô, mất nửa câu).
@@ -85,7 +96,7 @@
   const WARM_GAP = 3000;
 
   // lyrics: dịch cả lời bài hát (dòng hát hiện "♪"); tắt thì bỏ qua bài hát như trước (PLAN §15). Mặc định bật (31/10).
-  let settings = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0, lyrics: true };
+  let settings = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0, lyrics: true, first10: false };
   const lyricsOn = () => settings.lyrics !== false;
   // Kết quả như nhau ở hai chế độ lời bài hát: không có câu hát nào (cùng điều kiện noSinging ở server.mjs: số câu hát 0,
   // không phải bài hát, không phải đoạn cả bài, không có dòng ♪), hay không có âm thanh. Đoạn cả bài (song) ở chế độ thường
@@ -340,8 +351,17 @@
     const d = items.get(id);
     const D = (d && d.durationMs ? d.durationMs / 1000 : 0) || (v.media && v.media.duration) || 0;
     if (!D) return null;
-    if (D <= SINGLE_MAX) v.plan = [[0, Math.ceil(D) + 1]];
-    else { v.plan = [[0, FIRST]]; for (let a = FIRST; a < D; a += STEP) v.plan.push([a, Math.min(a + STEP, Math.ceil(D) + 1)]); }
+    const f10 = settings.first10 === true;
+    if (D <= (f10 ? F10_SINGLE : SINGLE_MAX)) v.plan = [[0, Math.ceil(D) + 1]];
+    else if (f10) {
+      v.short0 = true;
+      v.plan = [[0, F10_FIRST]];
+      for (let a = F10_FIRST; a < D;) { const b = a + (a === F10_FIRST ? F10_SECOND : STEP); v.plan.push([a, Math.min(b, Math.ceil(D) + 1)]); a = b; }
+      // Phần dư cuối ngắn gộp vào đoạn trước nó (video 13 s: [0,14) một lần; 27 s: [0,10), [10,28)): bớt một lần gửi. Mô
+      // phỏng 2/11 (5 hạt giống): độ phủ như để riêng, bớt vài giây nhận dạng.
+      const [x, y] = v.plan.slice(-2);
+      if (y[1] - y[0] < F10_TAIL) v.plan.splice(-2, 2, [x[0], y[1]]);
+    } else { v.plan = [[0, FIRST]]; for (let a = FIRST; a < D; a += STEP) v.plan.push([a, Math.min(a + STEP, Math.ceil(D) + 1)]); }
     return v.plan;
   }
   const chunkAt = (plan, t) => plan.findIndex(([a, b]) => t >= a && t < b);
@@ -435,11 +455,16 @@
     const want = [];
     const plan = planFor(currentId);
     const ahead = aheadFor(vids.get(currentId));
-    if (plan) plan.forEach(([a, b], k) => { if (b > playhead && a < playhead + ahead) want.push([currentId, k]); });
+    // Chế độ thử first10: chưa xem đủ F10_GATE thì chỉ làm tới đoạn ở chỗ đang xem (mở giữa video, tua sớm: đoạn đó vẫn làm
+    // ngay; verifier 2/11).
+    const cv = vids.get(currentId), ph0 = plan ? Math.max(0, chunkAt(plan, playhead)) : 0;
+    const gated = !!cv && !!cv.short0 && !(opened.id === currentId && opened.played >= F10_GATE);
+    if (plan) plan.forEach(([a, b], k) => { if (gated && k > ph0) return; if (b > playhead && a < playhead + ahead) want.push([currentId, k]); });
     else want.push([currentId, 0]);
     for (const id of upcoming()) want.push([id, 0]);
     wanted = new Set(want.map(([id, k]) => id + ':' + k));
     bumpCurrent(plan);
+    restartSlow(plan);   // trước khi xếp hàng: đoạn vừa thôi được tải lại trước các đoạn sau nó
     const todo = want.filter(([id, k]) => eligible(items.get(id)) && needsWork(id, k));
     lanes.current.queue = todo.filter(([id]) => id === currentId);
     lanes.prefetch.queue = todo.filter(([id]) => id !== currentId);
@@ -658,7 +683,10 @@
   // thật, 21 video: mục lục thường 0,5–1,7 s, 5 lần 3,6–4,9 s.
   const MOOV_SLOW = 2500, MOOV_LEFT = 1500;
   function headLate(h, now) {
-    const q = [...h.waiters].find((w) => !w.prog);
+    // Chế độ thử first10: đoạn 0 chỉ 10 s nên không có mẩu nhanh; đoạn 0 của video đang xem chờ trên lượt này thì xét chính
+    // nó (verifier 2/11: lượt "bytes=0-" 150 KB/s, không có sub trong 15 s).
+    const sv = vids.get(h.id);
+    const q = [...h.waiters].find((w) => !w.prog) || (sv && sv.short0 && h.id === currentId ? [...h.waiters].find((w) => w.prog) : null);
     if (!q || now - h.first < 1000) return false;
     let g = 0;
     for (const [t, x] of h.hist) { if (t > now - 1000) break; g = x; }
@@ -728,7 +756,7 @@
                 if (started > limit.at) limit.n = 0;
                 // Đọc tiếp tới hết âm thanh đoạn 0 (cùng khoảng runChunk tính cho đoạn 0) nếu nó còn cần; không thì thôi.
                 const plan = headWanted(id) && planFor(id);
-                const w = plan && TodMp4.window(h.media, 0, plan[0][1] + POST);
+                const w = plan && TodMp4.window(h.media, 0, plan[0][1] + (v.short0 ? F10_POST : POST));
                 h.end = w ? w.end : head;
                 resolve(h.media);
               } else if (done) throw new Error('tải video: thiếu dữ liệu');
@@ -974,6 +1002,38 @@
     v.chunks.set(k, { status: 'error', error: 'tải video quá chậm', slow: true, pre: c.pre, at: Date.now() });
     c.ctl.abort();
   }
+  // Chế độ thử first10: đoạn [0,10) và [10,25) ngắn hơn QUICK_MIN_CHUNK nên dropSlow và mẩu nhanh không xét chúng. Lượt tải
+  // của đoạn ở chỗ đang xem hay đoạn kế nó (chỉ đoạn 0, 1) chậm hẳn: 2 s gần nhất dưới 1/3 tốc độ lượt tải xong gần nhất
+  // (v.speed), không do chia đường truyền (othersLoading), và phần còn lại ở tốc độ đó lâu hơn tải lại cả cửa sổ ở 1/3 v.speed
+  // (lần tải lại bỏ phần đã tải; verifier 2/11). Khi đó thôi lượt đó và tải lại ngay một lần qua lượt mới (như lỗi tải tạm
+  // thời: fastRetry, không chờ DL_RETRY_CUR), trước các đoạn sau nó. Máy chủ video chậm theo từng lượt, lượt mới thường
+  // nhanh (§6z). Mô phỏng của verifier 2/11: 1/4 lượt tải 300 KB/s thì xem 15 s chỉ phủ 86% thay vì 100%.
+  function restartSlow(plan) {
+    const v = vids.get(currentId);
+    if (!plan || !v || !v.short0 || !playing || rateWait()) return;
+    const now = performance.now(), k0 = Math.max(0, chunkAt(plan, playhead));
+    v.restarted = v.restarted || new Set();
+    for (const k of [k0, k0 + 1]) {
+      const c = v.chunks.get(k);
+      if (!c || k > 1 || c.status !== 'pending' || c.sent || c.waiting || c.since == null || !c.got || v.restarted.has(k) || !plan[k]
+        || now - c.last > 1000) continue;
+      c.rmarks = c.rmarks || [];
+      if (c.rmarks.length && c.got < c.rmarks[c.rmarks.length - 1][1]) c.rmarks = [];   // lượt tải bắt đầu lại (got về 0)
+      c.rmarks.push([now, c.got]);
+      while (c.rmarks.length > 1 && now - c.rmarks[0][0] > 2000) c.rmarks.shift();
+      const [t0, g0] = c.rmarks[0];
+      if (now - c.since < 2000 || now - t0 < 1500) continue;
+      const idle = (c.gaps || []).reduce((x, [ga, gb]) => x + Math.max(0, Math.min(gb, now) - Math.max(ga, t0)), 0);
+      const speed = (c.got - g0) / Math.max(1, now - t0 - idle);
+      if (othersLoading(speed, c.since)) { c.rmarks = [[now, c.got]]; continue; }
+      if (!v.speed || speed * 3 >= v.speed) continue;
+      const total = c.bytes || c.win || 0;
+      if (!(speed > 0) || (total - c.got) / speed <= total / (v.speed / 3)) continue;
+      v.restarted.add(k);
+      v.chunks.set(k, { status: 'error', error: 'tải video quá chậm', dl: true, transient: true, dlFails: 1, pre: c.pre, at: Date.now() - DL_RETRY_CUR - 1 });
+      c.ctl.abort();
+    }
+  }
   async function runQuick(id, from, to, rolling) {
     const v = vid(id);
     const d = items.get(id);
@@ -1070,8 +1130,9 @@
       // lại kết quả nhận dạng (giữ theo mã băm âm thanh). Đoạn trước lúc đó cũng thường bị bỏ nên prevDone khác lần đầu: mô
       // phỏng của verifier, đang phát liền mạch mà đổi chế độ thì đoạn thứ hai gửi dư 8 s thay vì 1,5 s, trả tiền ASR lần
       // nữa. v.redo chỉ xoá khi có kết quả cuối (done), để lần tải hỏng hay lỗi server vẫn gửi đúng phần âm thanh đó.
-      entry.pre = v.redo.has(k) ? v.redo.get(k) : before && before.status === 'error' && before.pre != null ? before.pre : prevDone ? PRE : PRE_SEEK;
-      const w = TodMp4.window(media, Math.max(0, from - entry.pre), to + POST);
+      entry.pre = v.redo.has(k) ? v.redo.get(k) : before && before.status === 'error' && before.pre != null ? before.pre
+        : prevDone ? (k === 1 && v.short0 ? F10_PRE1 : PRE) : PRE_SEEK;
+      const w = TodMp4.window(media, Math.max(0, from - entry.pre), to + (k === 0 && v.short0 ? F10_POST : POST));
       if (!w) return done({ status: 'no_audio', from, to });
       if (w.seconds > 0) v.bps = (w.end - w.start) / w.seconds;   // aheadFor
       if (v.quickGate) await v.quickGate;   // mẩu nhanh của video này đang tải: nhường đường truyền
@@ -1299,7 +1360,7 @@
     for (const q of qs) out.push(`Mẩu nhanh ${mmss(q.from)}–${mmss(end(q.to))}  ${pieceState(q)}`);
     const pairs = v.pron && Array.isArray(v.pron.pairs) ? v.pron.pairs.filter((x) => x && x.who) : [];
     if (pairs.length) out.push('Xưng hô: ' + pairs.slice(0, 3).map((x) => `${x.who}: ${x.self}/${x.other}`).join('; ') + (pairs.length > 3 ? ` (+${pairs.length - 3})` : ''));
-    out.push(`Dịch trước ${aheadFor(v)} s${watching() ? (v.slow ? ' (đang xem, tải chậm)' : ' (đang xem)') : ''} · lời bài hát: ${lyricsOn() ? 'dịch' : 'bỏ qua'}`);
+    out.push(`Dịch trước ${aheadFor(v)} s${watching() ? (v.slow ? ' (đang xem, tải chậm)' : ' (đang xem)') : ''} · lời bài hát: ${lyricsOn() ? 'dịch' : 'bỏ qua'}${v.short0 ? ' · thử 10 s đầu' : ''}`);
     return out.join('\n');
   }
   let lastFind = 0;
