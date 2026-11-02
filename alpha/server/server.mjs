@@ -304,7 +304,7 @@ server.listen(PORT, HOST, () => {
   // Báo tên biến (không bao giờ in giá trị) để tìm lỗi gõ sai tên trong .env.
   const KNOWN = ['OPENAI_API_KEY', 'OPENAI_MODEL', 'OPENAI_BASE', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_BASE', 'DASHSCOPE_API_KEY',
     'DASHSCOPE_BASE', 'FUNASR_MODEL', 'ASR_FALLBACK_MODEL', 'ASR_QUOTA_RETRY_MS', 'OPENAI_REASONING_EFFORT', 'MAX_PARALLEL', 'FFMPEG',
-    'HOST', 'PORT', 'MAX_SECONDS', 'TOD_DUMP', 'TOD_WORK'];
+    'HOST', 'PORT', 'MAX_SECONDS', 'TOD_DUMP', 'TOD_WORK', 'MT_TIMEOUT_MS'];
   const odd = dotEnvInfo.names.filter(n => !KNOWN.includes(n));
   if (odd.length) console.log(`  → .env có biến server không dùng: ${odd.join(', ')}. Tên key đúng: OPENAI_API_KEY, GEMINI_API_KEY, DASHSCOPE_API_KEY.`);
   if (misplacedOpenAIKey) console.log(`  → ${misplacedOpenAIKey} có dạng key OpenAI: đang dùng nó để dịch bằng OpenAI. Nên đổi tên dòng đó thành OPENAI_API_KEY.`);

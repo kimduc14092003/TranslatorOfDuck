@@ -18,7 +18,8 @@ const AAC = fs.readFileSync(aacFile).toString('base64');
 
 let asrCalls = 0;
 const mtPrompts = [];
-let mtMode = 'ok';                 // 'ok' | 'han' (trả lại chữ Hán: không dòng nào dùng được) | '400' | '401'
+let mtMode = 'ok';                 // 'ok' | 'han' (trả lại chữ Hán: không dòng nào dùng được) | '400' | '401' | 'slow' | 'hang' | 'long-hang'
+const LONG = 'Chào cả nhà, hôm nay chúng ta cùng nhau đi ăn lẩu thật ngon ở quán quen gần nhà nhé';   // quá max_chars: có lượt rút gọn
 const providers = http.createServer((req, res) => {
   let body = '';
   req.on('data', c => { body += c; });
@@ -36,8 +37,13 @@ const providers = http.createServer((req, res) => {
       if (mtMode === '401') return json({ error: { message: 'Incorrect API key provided', code: 'invalid_api_key' } }, 401);
       if (mtMode === '400') return json({ error: { message: 'Invalid schema' } }, 400);
       const lines = JSON.parse(content.match(/Các dòng: (.*)$/m)[1]);
-      const vi = mtMode === 'han' ? '大家好' : 'Chào cả nhà, hôm nay đi ăn lẩu.';
-      return json({ choices: [{ message: { role: 'assistant', content: JSON.stringify({ cues: lines.map(l => ({ id: l.id, vi })) }) } }] });
+      // 'hang': dịch vụ treo, không bao giờ trả lời. 'long-hang': lượt dịch trả một dòng quá dài, lượt rút gọn treo.
+      if (mtMode === 'hang' || (mtMode === 'long-hang' && /^Rút gọn/.test(content))) return;
+      const vi = mtMode === 'han' ? '大家好' : mtMode === 'long-hang' ? LONG : 'Chào cả nhà, hôm nay đi ăn lẩu.';
+      const reply = () => json({ choices: [{ message: { role: 'assistant', content: JSON.stringify({ cues: lines.map(l => ({ id: l.id, vi })) }) } }] });
+      // 'slow': trả lời sau 600 ms (lần gọi đầu có hạn 400 ms trong test dưới đây thì quá hạn, lần gọi lại 800 ms thì kịp).
+      if (mtMode === 'slow') return setTimeout(() => { if (!res.destroyed) reply(); }, 600);
+      return reply();
     }
     res.writeHead(404); res.end();
   });
@@ -179,6 +185,47 @@ try {
     assert.equal(noff.status, 'error', JSON.stringify(noff)); assert.match(noff.error, /ffmpeg/);
     assert.deepEqual(fs.readdirSync(nf.cache), []);
     assert.equal(asrCalls, a3);
+  });
+
+  // Dịch chậm hơn hạn của lần gọi đầu (OpenAI lúc cao điểm, đo 2/11: đoạn 30 s cần 9–12 s, hạn 10 s): lần gọi lại được hạn
+  // gấp đôi nên xong. Hạn cố định như trước thì cả 4 lần gọi đều quá hạn và đoạn báo lỗi.
+  const sl = await start(path.join(TMP, 'w3'), { MT_TIMEOUT_MS: '400' });
+  servers.push(sl);
+  const m5 = mtPrompts.length;
+  mtMode = 'slow';
+  const slow = await post(sl, '7500000000000000088', 0);
+  mtMode = 'ok';
+  t('dịch chậm hơn hạn lần đầu: lần gọi lại được hạn dài hơn, đoạn vẫn có sub', () => {
+    assert.equal(slow.status, 'ok', JSON.stringify(slow));
+    assert.equal(mtPrompts.length - m5, 2);
+    assert.equal((sl.log.match(/quá 0\.4 s chưa trả lời: gọi lại/g) || []).length, 1, sl.log);
+  });
+
+  // Dịch vụ dịch treo hẳn: hạn 0,1 / 0,2 / 0,3 s, quá hạn lần thứ 3 thì thôi (không gọi lần thứ tư), đoạn báo lỗi.
+  const hg = await start(path.join(TMP, 'w4'), { MT_TIMEOUT_MS: '100' });
+  servers.push(hg);
+  const m6 = mtPrompts.length;
+  mtMode = 'hang';
+  const hung = await post(hg, '7500000000000000099', 0);
+  mtMode = 'ok';
+  t('dịch vụ dịch treo hẳn: quá hạn 3 lần (hạn tăng dần) thì thôi, đoạn báo lỗi, log lần cuối ghi "thôi, báo lỗi"', () => {
+    assert.equal(hung.status, 'error', JSON.stringify(hung));
+    assert.equal(mtPrompts.length - m6, 3);
+    assert.match(hg.log, /quá 0\.1 s chưa trả lời: gọi lại/); assert.match(hg.log, /quá 0\.2 s chưa trả lời: gọi lại/);
+    assert.match(hg.log, /quá 0\.3 s chưa trả lời: thôi, báo lỗi/);
+  });
+
+  // Lượt rút gọn (tuỳ chọn) treo: chỉ chờ 2 lần hạn đầu (0,6 s) rồi giữ dòng đầy đủ, không chờ cả chuỗi 0,3 / 0,6 / 0,9 s.
+  const lg = await start(path.join(TMP, 'w5'), { MT_TIMEOUT_MS: '300' });
+  servers.push(lg);
+  const m7 = mtPrompts.length;
+  mtMode = 'long-hang';
+  const longHang = await post(lg, '7500000000000000100', 0);
+  mtMode = 'ok';
+  t('lượt rút gọn treo: chờ tối đa 2 lần hạn đầu rồi giữ dòng đầy đủ, đoạn vẫn có sub', () => {
+    assert.equal(longHang.status, 'ok', JSON.stringify(longHang));
+    assert.equal(longHang.cues[0].vi, LONG);
+    assert.equal(mtPrompts.slice(m7).filter(p => /^Rút gọn/.test(p)).length, 2);
   });
 } finally {
   for (const s of servers) s.proc.kill();

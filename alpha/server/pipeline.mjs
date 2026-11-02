@@ -128,6 +128,14 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
   signal?.addEventListener('abort', () => { clearTimeout(t); reject(signal.reason); }, { once: true });
 });
 // timeoutMs: mỗi lần gọi có hạn; quá hạn thì gọi lại ngay. Đo trên dữ liệu thật: lần dịch thường 1,5–2 s nhưng có lần 24 s.
+// timeoutMs là hàm (lần gọi thứ i, từ 0) thì mỗi lần một hạn. Lượt gọi model dịch dùng hạn tăng dần (mtLimit): đo 2/11 lúc
+// OpenAI chậm (~35 token/giây), đoạn 30 s cần 9–12 s; hạn cố định 10 s làm cả 4 lần gọi đều quá hạn (19/54 lượt hỏng sau
+// 40 s). Lần đầu vẫn cắt ở 10 s cho kết nối treo, lần gọi lại được 20 s rồi 30 s; quá hạn 3 lần (60 s) thì thôi, lần thứ
+// tư hiếm khi cứu được đoạn mà giữ chỗ chạy thêm 30 s. MT_TIMEOUT_MS chỉ để test đặt hạn ngắn (sai dạng thì 10 s).
+const mtBase = Math.round(Number(ENV.MT_TIMEOUT_MS));
+const MT_TIMEOUT_MS = mtBase > 0 ? mtBase : 10000;
+const mtLimit = (ms) => (i) => ms * Math.min(i + 1, 3);
+const MT_LIMIT = mtLimit(MT_TIMEOUT_MS);
 // Hết hạn mức không tự hồi trong vài giây (Gemini gói miễn phí: quotaId ...PerDay...; OpenAI: insufficient_quota,
 // hết tiền trong tài khoản): gọi lại vô ích, chỉ làm video kẹt "đang dịch" mỗi lần 20–60 s. Nhớ lại
 // DAY_QUOTA_PAUSE_MS, trong lúc đó báo lỗi ngay, không gọi dịch vụ.
@@ -201,8 +209,9 @@ async function httpJson(url, init, timeoutMs = 20000) {
     const calls = netCtx.getStore()?.calls;
     const rec = { headMs: null, fresh: null };
     calls?.push(rec);
+    const limitMs = typeof timeoutMs === 'function' ? timeoutMs(i) : timeoutMs;
     try {
-      const limit = AbortSignal.timeout(timeoutMs);
+      const limit = AbortSignal.timeout(limitMs);
       const t0 = Date.now();
       lastReal.set(origin, t0);
       try {
@@ -213,8 +222,10 @@ async function httpJson(url, init, timeoutMs = 20000) {
     } catch (e) {
       if (init.signal?.aborted) throw e;
       const timedOut = e.name === 'TimeoutError';
-      if (timedOut) console.log(`    · ${new URL(url).host} quá ${timeoutMs / 1000} s chưa trả lời: gọi lại`);
-      if (i < RETRY_WAITS.length) { if (!timedOut) await sleep(RETRY_WAITS[i], init.signal); continue; }
+      // Hạn tăng dần (lượt dịch): quá hạn lần thứ 3 thì thôi (xem mtLimit).
+      const retry = i < RETRY_WAITS.length && !(timedOut && typeof timeoutMs === 'function' && i >= 2);
+      if (timedOut) console.log(`    · ${new URL(url).host} quá ${limitMs / 1000} s chưa trả lời: ${retry ? 'gọi lại' : 'thôi, báo lỗi'}`);
+      if (retry) { if (!timedOut) await sleep(RETRY_WAITS[i], init.signal); continue; }
       throw e;
     }
     let body = null;
@@ -367,8 +378,9 @@ async function openaiJson(text, schema, temperature, signal, timeoutMs = 10000) 
   if (m && m.refusal) throw new Error('OpenAI từ chối: ' + String(m.refusal).slice(0, 100));
   return JSON.parse((m && m.content) || '{}');
 }
+// Lượt gọi model dịch: hạn tăng dần (MT_LIMIT). httpJson nhận hạn là số (cố định) hay hàm (theo lần gọi).
 const mtJson = (text, schema, temperature, signal) =>
-  (mtProvider() === 'openai' ? openaiJson(text, schema, temperature, signal) : geminiJson([{ text }], schema, temperature, signal));
+  (mtProvider() === 'openai' ? openaiJson(text, schema, temperature, signal, MT_LIMIT) : geminiJson([{ text }], schema, temperature, signal, MT_LIMIT));
 const mtService = () => (mtProvider() === 'openai' ? 'OpenAI' : 'Gemini');
 async function geminiAsr(mp3, signal) {
   const schema = { type: 'OBJECT', properties: { segments: { type: 'ARRAY', items: { type: 'OBJECT', properties: {
@@ -746,12 +758,15 @@ export async function translate(meta, cues, context = [], signal, { far = false,
   const long = out.filter(c => c.flags.includes('too_long'));
   if (long.length && condense) {
     try {
+      // Lượt rút gọn là tuỳ chọn (lỗi thì giữ bản đầy đủ): chờ tối đa 2 lần hạn đầu, không chờ cả chuỗi gọi lại 10-20-30 s
+      // trong khi đoạn đã dịch xong.
+      const cs = AbortSignal.any([signal, AbortSignal.timeout(2 * MT_TIMEOUT_MS)].filter(Boolean));
       const r = await mtJson([
         'Rút gọn các dòng phụ đề tiếng Việt sau cho vừa max_chars (đếm cả dấu cách). Giữ ý chính, giữ xưng hô và tên riêng, bỏ từ đệm và chi tiết phụ. Không thêm ý mới.',
         ...(pronouns ? ['Bảng xưng hô của video (giữ đúng, không đổi đại từ khi rút gọn): ' + JSON.stringify(pronouns.pairs)] : []),
         ...(long.some(c => c.sung) ? ['Dòng có "sung": true là lời bài hát: rút gọn mà vẫn là lời hát tự nhiên, giữ hình ảnh và cảm xúc chính.'] : []),
         'Các dòng: ' + JSON.stringify(long.map(c => ({ id: c.id, max_chars: budget(c), zh: c.zh, vi: c.vi, ...(c.sung ? { sung: true } : {}) }))),
-      ].join('\n'), CUE_SCHEMA, 0.2, signal);
+      ].join('\n'), CUE_SCHEMA, 0.2, cs);
       const short = new Map((r.cues || []).map(c => [c.id, fixViText(c.vi)]));
       for (const c of long) {
         const v = short.get(c.id);
