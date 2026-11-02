@@ -630,8 +630,9 @@ await t('F2 lỗi tải video sau 2 lỗi server: chờ 20 s (lỗi tải không
     }
   }
   const gaps = times.slice(1).map((x, i) => x - times[i]);
-  // 20 s (lỗi 1) → chờ 60 s thì gặp lỗi tải → 20 s → gửi được, lỗi server lần 3 → 180 s.
-  assert.deepEqual(gaps.map((g) => Math.round(g / 10) * 10), [20, 80, 180], JSON.stringify(times));
+  // 20 s (lỗi 1) → chờ 60 s thì gặp lỗi tải → thử lại sau 1 s (lỗi tải của video đang xem: fastRetry, 2/11; trước đây
+  // 20 s) → gửi được, lỗi server lần 3 → 180 s.
+  assert.deepEqual(gaps.map((g) => Math.round(g / 10) * 10), [20, 60, 180], JSON.stringify(times));
   assert.equal(e.vid(A).chunks.get(0).fails, 4);
 });
 

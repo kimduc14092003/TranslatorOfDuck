@@ -437,6 +437,65 @@ await t('Video ngay sau slide livestream, lượt tải đầu của nó chậm 
   }
 });
 
+// Mục lục, lượt tải đầu của video đang xem (2/11, hướng 2). Y: video dài 25 s.
+const Y = '7500000000000000071';
+// (a) Y được dịch sẵn nhưng hai lượt tải đầu của nó treo (CDN treo, §6f), lượt sau tải bình thường. Lướt tới Y lúc `at`.
+async function hungPrefetch(dir, at = 16000) {
+  let n = 0;
+  const e = makeEnv(dir, { autoReplyMs: 1500, stall: (a, b, env) => 0, pause: (rec) => rec.vid === Y && rec.open && rec.hung });
+  // Đánh dấu hai lượt "bytes=0-" đầu của Y là treo (không nhận byte nào).
+  const orig = e.fetches.push.bind(e.fetches);
+  e.fetches.push = (rec) => { if (rec.vid === Y && rec.open && n++ < 2) rec.hung = true; return orig(rec); };
+  e.up('items', [e.item(A, 60000), e.item(Y, 25000)]);
+  e.activeId = A; e.video(A, 0);
+  let swipe = null, first = null;
+  for (let ms = 0; ms < at + 20000; ms += 250) {
+    if (ms === at) { e.videos.get(A).paused = true; e.activeId = Y; e.video(Y, 0); swipe = e.perf; }
+    await e.tick(250);
+    if (swipe == null) continue;
+    const cv = e.vid(Y), ph = e.dbg.playhead;
+    if (!cv) continue;
+    let ok = (cv.chunks.get(0) || {}).status === 'ok';
+    for (const q of cv.quick.values()) if (ph >= q.from && ph < q.to && q.status === 'ok') ok = true;
+    if (ok && first == null) first = e.perf - swipe;
+  }
+  return first;
+}
+// (b) Y mở lạnh, mục lục 150 KB; lượt tải đầu tiên của Y nhỏ giọt 20 KB/s (lượt sau bình thường). other: có video kế P
+// tải cùng lúc (bằng chứng đường truyền còn dư). bw: đường truyền.
+async function slowMoov(dir, { other = true, bw = 200000, firstCap = 20000 } = {}) {
+  let n = 0;
+  const P = '7500000000000000072';
+  const e = makeEnv(dir, { bw, autoReplyMs: 1500, head: 150000, cap: (a, b, vid) => (vid === Y && b == null && n++ === 0 ? firstCap : 0) });
+  e.up('items', [e.item(Y, 25000), ...(other ? [e.item(P, 25000)] : [])]);
+  e.activeId = Y; e.video(Y, 0);
+  let first = null;
+  for (let ms = 0; ms < 25000; ms += 250) {
+    await e.tick(250);
+    const cv = e.vid(Y), ph = e.dbg.playhead;
+    if (!cv) continue;
+    let ok = (cv.chunks.get(0) || {}).status === 'ok';
+    for (const q of cv.quick.values()) if (ph >= q.from && ph < q.to && q.status === 'ok') ok = true;
+    if (ok && first == null) first = e.perf;
+  }
+  return { first, heads: e.fetches.filter((f) => f.vid === Y && f.open).length };
+}
+
+await t('Lượt tải lúc dịch sẵn treo rồi mới lướt tới: thử lại ngay; mục lục nhỏ giọt khi có video khác tải nhanh: gọi lại một lần; đường truyền chậm đều thì như cũ', async () => {
+  // Đo 2/11 trên Douyin thật: lượt tải lúc dịch sẵn treo hai lần ("tải video quá lâu"), lướt tới thì chờ đủ 20 s mới thử lại,
+  // nhãn "lỗi" suốt lúc đó: sub sau 16,9 s. Bản 0.2.30 ở ca (a): không có sub trong 20 s.
+  const a = await hungPrefetch(EXT);
+  assert.ok(a != null && a <= 5000, '(a) có sub sau ' + a + ' ms');
+  // (b) Bản 0.2.30: 9,25 s.
+  const b = await slowMoov(EXT);
+  assert.ok(b.first != null && b.first <= 6500 && b.heads === 2, '(b) ' + JSON.stringify(b));
+  // (c), (d) Đối chứng: không có bằng chứng chậm riêng thì không gọi lại (gọi lại tải mục lục từ byte 0), như 0.2.30.
+  const c = await slowMoov(EXT, { other: false, bw: 9000, firstCap: 0 });
+  assert.ok(c.heads === 1 && c.first != null && c.first <= 18250, '(c) ' + JSON.stringify(c));
+  const d = await slowMoov(EXT, { bw: 30000, firstCap: 0 });
+  assert.ok(d.heads === 1 && d.first != null && d.first <= 9000, '(d) ' + JSON.stringify(d));
+});
+
 await t('Tua về đầu ngay sau khi bỏ đoạn đầu: không tải lại đoạn đó khi còn trong nó, không gửi mẩu thường chồng lên đoạn đã có sub', async () => {
   // Verifier 1/11: hết thời gian chờ lúc chỗ đang xem còn trong đoạn (giây ~18), đoạn bị tải lại, và mẩu thường q18 chồng
   // lên đoạn [20,50) đã có sub (16,5 s âm thanh trả tiền vô ích).

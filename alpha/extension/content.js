@@ -325,7 +325,13 @@
   const chunkAt = (plan, t) => plan.findIndex(([a, b]) => t >= a && t < b);
   // Lỗi thì thử lại sau c.wait (RETRY_MS, đặt lúc nhận lỗi: xem done() của runChunk), hoặc sau thời gian server báo nếu
   // lâu hơn (vd. dịch hết lượt trong ngày, key sai: server tạm nghỉ vài phút).
-  const retryWait = (c) => Math.max(c.wait || RETRY_MS[0], c.retryAfterMs || 0);
+  // Lỗi tải video (chưa gửi server: dl) của video đang xem thì thử lại sau DL_RETRY_CUR, tối đa DL_FAST_MAX lần liền, rồi mới
+  // theo RETRY_MS: tải lỗi không tốn tiền, và lần gọi lại qua /aweme/v1/play/ có thể sang máy chủ video khác. Đo 2/11 trên
+  // Douyin thật: lượt tải lúc dịch sẵn treo hai lần ("tải video quá lâu"), lướt tới thì chờ đủ 20 s mới thử lại, nhãn "lỗi"
+  // suốt lúc đó, có sub sau 16,9 s.
+  const DL_RETRY_CUR = 1000, DL_FAST_MAX = 3;
+  const fastRetry = (c, id) => !!c.dl && id === currentId && (c.dlFails || 0) <= DL_FAST_MAX;
+  const retryWait = (c, id) => (fastRetry(c, id) ? DL_RETRY_CUR : Math.max(c.wait || RETRY_MS[0], c.retryAfterMs || 0));
   // Kết quả một yêu cầu đã gửi: trả true nếu là lỗi không do server trả (không gọi được, không có phản hồi). Server vừa
   // trả lời lại sau một lúc không gọi được (vừa chạy hoặc khởi động lại, thường là sau khi sửa .env): các đoạn đang chờ
   // thử lại được gửi ngay, đếm lỗi từ đầu, thay vì chờ hết 20–180 s (hay thời gian tạm nghỉ của server cũ) tính từ trước.
@@ -347,7 +353,7 @@
     // Đoạn bị bỏ vì tải chậm (dropSlow): không tải lại khi chỗ đang xem còn trong đoạn đó (mẩu nối tiếp phủ chỗ đó; trước
     // đây hết thời gian chờ là tải lại ở 2 s cuối đoạn, server khởi động lại cũng làm nó tải lại ngay). Hết cần thì
     // cancelUnwanted xoá nó, tua về lại thì tải lại từ đầu.
-    return !c || (c.status === 'error' && !c.slow && (c.rateLimited ? !rateWait() : Date.now() - (c.at || 0) > retryWait(c)));
+    return !c || (c.status === 'error' && !c.slow && (c.rateLimited ? !rateWait() : Date.now() - (c.at || 0) > retryWait(c, id)));
   }
   // Thời gian nghỉ chung sau HTTP 429 (BACKOFF_429). at: lần 429 cuối; n: số lần 429 liên tiếp (về 0 khi tải được, hay
   // 10 phút không bị 429).
@@ -566,7 +572,7 @@
     mark(id, 'moov');
     // Đoạn đầu file treo (quá 4 s chưa thấy mục lục) hoặc lỗi mạng (đo được: máy chủ video cắt ngang,
     // ERR_CONTENT_LENGTH_MISMATCH) thì gọi lại một lần, có thể sang máy chủ video khác.
-    const retry = (e) => e.timeout || e instanceof TypeError;
+    const retry = (e) => e.timeout || e.slowMoov || e instanceof TypeError;
     // Mở video từ đầu (đoạn 0 đang cần, chưa có kết quả, chỗ đang xem trước giây QUICK hay chưa biết): một lượt tải cho cả
     // mục lục lẫn âm thanh đoạn 0 (loadHead). Chỗ đang xem đã xa hơn thì mẩu nhanh cần phần sau của đoạn 0: đọc từ byte 0
     // tới đó thì mẩu nhanh tới muộn hơn lượt tải riêng, và đoạn [0,20) (phần lớn đã phát qua) cũng bị gửi đi nhận dạng (mô
@@ -624,6 +630,9 @@
   // video khác nhận byte không nhanh hơn hẳn (othersLoading, như dropSlow) thì chậm có thể do chia đường truyền: không thôi
   // (mô phỏng 2500 B/s có 2 video dịch sẵn: thôi lượt này thì q0 không kịp, sub 1 s thay vì 1,75 s trong 60 s đầu).
   const HEAD_SLOW = 6000;
+  // Mục lục của video đang xem tải quá MOOV_SLOW ms mà còn quá MOOV_LEFT ms nữa mới đủ: gọi lại (loadHead). Đo 2/11 trên Douyin
+  // thật, 21 video: mục lục thường 0,5–1,7 s, 5 lần 3,6–4,9 s.
+  const MOOV_SLOW = 2500, MOOV_LEFT = 1500;
   function headLate(h, now) {
     const q = [...h.waiters].find((w) => !w.prog);
     if (!q || now - h.first < 1000) return false;
@@ -675,6 +684,20 @@
                 head = TodMp4.headerEnd(headBytes(h, 0, h.got - 1));
                 if (head == null && (done || h.got >= HEAD_PROBE)) throw new Error('video không có mục lục ở đầu file (chưa hỗ trợ)');
                 if (head != null) idleNow = 6000;   // đã thấy moov: phần còn lại của nó như lượt tải [0, moov) cũ, im tới 6 s
+              }
+              // Video đang xem mà mục lục nhỏ giọt: quá MOOV_SLOW chưa đủ, theo tốc độ 1 s gần nhất còn quá MOOV_LEFT nữa, và có
+              // bằng chứng là chậm riêng lượt này (spareCapacity): thôi lượt này, loadMedia gọi lại qua /aweme/v1/play/ (có thể
+              // sang máy chủ video khác). Lượt nhỏ giọt không bao giờ "im" đủ lâu để idleMs cắt. Mỗi video một lần
+              // (moovRetried), và chỉ khi có bằng chứng: lượt mới tải lại mục lục từ byte 0, đường truyền chậm đều mà cứ gọi lại
+              // thì không bao giờ xong (mô phỏng: 9000 B/s, mục lục 150 KB: không có sub trong 20 s, bản trước 18 s).
+              if (head != null && h.got < head && id === currentId && !v.moovRetried && now - h.at > MOOV_SLOW) {
+                let g = 0;
+                for (const [t, x] of h.hist) { if (t > now - 1000) break; g = x; }
+                const rate = (h.got - g) / 1000;
+                if (rate > 0 && (head - h.got) / rate > MOOV_LEFT && spareCapacity(rate, h.at)) {
+                  v.moovRetried = true;
+                  throw Object.assign(new Error('tải mục lục quá chậm'), { slowMoov: true });
+                }
               }
               if (head != null && h.got >= head) {
                 h.media = useMedia(id, v, api, TodMp4.parse(headBytes(h, 0, head - 1)), total, res.url);
@@ -876,6 +899,14 @@
     fastDone.push({ speed, start, at: now });
     while (fastDone.length && now - fastDone[0].at > FAST_RECENT) fastDone.shift();
   }
+  // Có bằng chứng đường truyền còn dư cho lượt tốc độ rate bắt đầu lúc since: một lượt chạy cùng lúc đã xong nhanh gấp 3, hay
+  // lượt của video khác đang tải nhanh gấp 3. Không có lượt nào khác thì không có bằng chứng (khác othersLoading: false).
+  const spareCapacity = (rate, since) => {
+    const now = performance.now();
+    return rate > 0 && (fastDone.some((x) => now - x.at < FAST_RECENT && x.start >= since - CONCURRENT_SLACK && x.speed >= 3 * rate)
+      || [...vids].some(([id, v]) => id !== currentId && [...v.chunks.values()].some((c) => c.status === 'pending' && !c.sent && c.since != null && now - c.last < 1000
+        && c.got / Math.max(1, now - c.since) >= 3 * rate)));
+  };
   const othersLoading = (rate = null, since = -Infinity) => {
     const now = performance.now();
     if (rate != null && rate > 0 && fastDone.some((x) => now - x.at < FAST_RECENT && x.start >= since - CONCURRENT_SLACK && x.speed >= 3 * rate)) return false;
@@ -983,8 +1014,10 @@
       if (pg != null) takePron(v, pg, r, false);
       const paid = sent && !down;
       const n = fails + (paid ? 1 : 0);
+      // dl: lỗi mạng tạm thời trước khi gửi server (tải video); dlFails: số lần liền như vậy (fastRetry).
       v.chunks.set(k, { ...r, pre: entry.pre, at: Date.now(), ...(r.status === 'error'
-        ? { fails: n, wait: paid ? RETRY_MS[Math.min(n, RETRY_MS.length) - 1] : RETRY_MS[0] } : {}) });
+        ? { fails: n, wait: paid ? RETRY_MS[Math.min(n, RETRY_MS.length) - 1] : RETRY_MS[0],
+          ...(!sent && r.transient ? { dl: true, dlFails: (before && before.dl ? before.dlFails || 0 : 0) + 1 } : {}) } : {}) });
       mergeCues(v);
       wakeTurns();   // đoạn kế đang chờ lượt gửi (sendWait) gửi ngay
     };
@@ -1039,7 +1072,10 @@
       if (id === currentId) pump(lanes.prefetch);   // hàng dịch sẵn hết nhường (prefetchHeld)
     } catch (e) {
       if (entry.ctl.signal.aborted) { if (v.chunks.get(k) === entry) v.chunks.delete(k); return; }
-      done({ status: 'error', error: e.message, ...(e.rateLimited ? { rateLimited: true } : {}) });   // 429: tải lại khi hết nghỉ
+      // transient: lỗi mạng tạm thời (treo, đứt, HTTP lỗi, thiếu dữ liệu, file vừa đổi, quá chậm), thử lại có thể được
+      // (fastRetry). Lỗi đọc file (không có mục lục ở đầu, không phải AAC…) thì thử lại cũng vậy.
+      const transient = !!(e.timeout || e.slowMoov || e.changed || e instanceof TypeError || /^tải (video|mục lục)/.test(e.message));
+      done({ status: 'error', error: e.message, ...(e.rateLimited ? { rateLimited: true } : {}), ...(transient ? { transient } : {}) });   // 429: tải lại khi hết nghỉ
     }
   }
   // Đoạn ở chỗ đang xem chưa dịch xong thì chưa làm đoạn kế của cùng video: sau khi tua, chỗ đang xem được server
@@ -1253,6 +1289,9 @@
         currentId = act.id; watched.add(currentId);
         markCurrent(currentId);
         opened = { id: currentId, need: null, hold: false, since: 0, warm: false, played: 0, last: 0 };
+        // Đoạn lỗi tải lúc dịch sẵn: thử lại ngay, đủ DL_FAST_MAX lần nhanh (fastRetry) tính từ lúc lướt tới.
+        const nv = vids.get(currentId);
+        if (nv) for (const c of nv.chunks.values()) if (c.status === 'error' && c.dl) Object.assign(c, { at: 0, dlFails: 0 });
       }
       const pv = settings.enabled && act ? videoFor(act) : null;
       if (pv) markVideo(pv);
@@ -1304,7 +1343,8 @@
     if (cv && (!res || res.status === 'pending' || res.slow)) {
       for (const q of cv.quick.values()) if (t >= q.from && t < q.to && q.status === 'ok') res = q;
     }
-    const st = res ? (res.slow ? 'pending' : res.status) : (eligible(items.get(currentId)) ? 'pending' : null);
+    // Lỗi tải sắp được thử lại ngay (fastRetry): vẫn là "đang dịch", không hiện "lỗi".
+    const st = res ? (res.slow || (res.status === 'error' && fastRetry(res, currentId)) ? 'pending' : res.status) : (eligible(items.get(currentId)) ? 'pending' : null);
     const wait = rateWait();
     if (now < toastUntil) {
       badgeDot.style.background = BADGE.ok[0];

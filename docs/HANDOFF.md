@@ -87,7 +87,7 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 |---|---|
 | `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới, đánh dấu dòng hát, tiếng đệm trong lời hát, dòng nói ngắn gộp vào dòng hát, câu nói nhanh trong đoạn cả bài (20 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới ở cả hai chế độ lời bài hát, `rank`), Gemini hết lượt trong ngày (9 kiểm tra). `asr-fallback-test.mjs`: Fun-ASR hết hạn mức thì chuyển sang model dự phòng, giới hạn theo phút thì gọi lại (20 kiểm tra). `warm-test.mjs`: `/v1/warm` làm nóng đúng dịch vụ đang dùng, giãn 3 s, bỏ qua khi vừa có lệnh gọi thật, log thời gian kết nối (12 kiểm tra). `pronoun-test.mjs`: luật xưng hô trong câu lệnh, bảng xưng hô nhận vào và trả về, đọc bảng của đoạn trước từ cache, giới tính người đăng (21 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON, dịch chậm hơn hạn lần đầu thì lần gọi lại được hạn dài hơn, dịch vụ treo hẳn thì thôi sau 3 lần quá hạn, lượt rút gọn treo thì giữ dòng đầy đủ (14 kiểm tra). `lyrics-test.mjs`: chế độ lời bài hát, kể cả điệp khúc câu ngắn, ngữ cảnh ở chế độ thường, hai chế độ cùng lúc, đoạn cả bài có câu nói nhanh ở hai chế độ, kể cả khi không câu nào tự đủ là câu hát (19 kiểm tra) |
 | `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng, slide feed bị ẩn, trang kết quả tìm kiếm, đóng modal, HTTP 429, đoạn cả bài không dùng chung giữa hai chế độ , bảng xưng hô theo từng video, bảng thông tin khi rê chuột vào nhãn (52 kiểm tra) |
-| `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước, đoạn đầu tải chậm qua máy chủ chậm (trang video và feed), tải nhanh rồi chậm hẳn, rời feed, tải chậm vừa phải, đường truyền chậm đều, khựng giữa chừng, tua về sau khi bỏ đoạn , hàng dịch sẵn nhường video vừa mở, báo làm nóng, mốc thời gian trong câu trả lời status; một lượt tải từ byte 0 cho mục lục + q0 + đoạn 0 (nhiều rtt và băng thông, dịch sẵn, tua lúc đang tải, moov lớn, không có moov ở đầu, 200 cả file, lướt đi, 429, CDN treo, lượt đó chậm từ byte 0, đổi chế độ lời bài hát gửi đúng byte cũ, mở giữa video, tiến độ cho dropSlow); xem video dài trên đường truyền chậm, đoạn kế chờ lượt gửi (chế độ video dài, §6t); video sau slide livestream có lượt tải đầu chậm riêng (§6v) (30 kiểm tra) |
+| `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước, đoạn đầu tải chậm qua máy chủ chậm (trang video và feed), tải nhanh rồi chậm hẳn, rời feed, tải chậm vừa phải, đường truyền chậm đều, khựng giữa chừng, tua về sau khi bỏ đoạn , hàng dịch sẵn nhường video vừa mở, báo làm nóng, mốc thời gian trong câu trả lời status; một lượt tải từ byte 0 cho mục lục + q0 + đoạn 0 (nhiều rtt và băng thông, dịch sẵn, tua lúc đang tải, moov lớn, không có moov ở đầu, 200 cả file, lướt đi, 429, CDN treo, lượt đó chậm từ byte 0, đổi chế độ lời bài hát gửi đúng byte cũ, mở giữa video, tiến độ cho dropSlow); xem video dài trên đường truyền chậm, đoạn kế chờ lượt gửi (chế độ video dài, §6t); video sau slide livestream có lượt tải đầu chậm riêng (§6v); lượt tải lúc dịch sẵn treo rồi lướt tới, mục lục nhỏ giọt (§6w) (31 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms; `headerEnd` trên phần đầu file đang tải dở (5 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
 | `node alpha/dev/background-test.mjs` | background.js gửi `POST /v1/warm` (kiểu JSON) tới server trên máy, bỏ qua lỗi, chặn địa chỉ ngoài máy (2 kiểm tra) |
@@ -197,7 +197,7 @@ Nguyên nhân và cách sửa:
 Còn lại, chưa làm:
 - **Key Gemini gói miễn phí** không đủ cho việc lướt bình thường: hết lượt trong ngày sau vài chục video. Lượt rút gọn (§8) gọi thêm một lần mỗi đoạn có dòng dài. Cần chủ dự án chọn: bật trả phí, đổi model, hay bỏ lượt rút gọn.
 - **Máy chủ video chậm.** `/aweme/v1/play/` có lúc chuyển sang `v5-hl-mly-ov.zjcdn.com`, chỉ tải 0,3–0,9 MB/s (các máy khác trên 3 MB/s), nên đoạn đầu 2–4 MB mất 5–11 s. Có thể tải song song nhiều khoảng byte, nhưng như thế là lách giới hạn tốc độ của CDN, cần chủ dự án quyết theo quy tắc ở §2.
-- **Feed tới muộn.** Khi vào trang, `/aweme/v1/web/tab/feed` tới sau ~12 s. Video 1–2 chỉ thấy qua player nên chưa dịch sẵn được video 2. Có thể tìm metadata của chúng trong `self.__pace_f` (hiện chỉ đếm, chưa đọc).
+- **Feed tới muộn.** Khi vào trang, `/aweme/v1/web/tab/feed` tới sau ~12 s. Video 1–2 chỉ thấy qua player nên chưa dịch sẵn được video 2. Có thể tìm metadata của chúng trong `self.__pace_f` (hiện chỉ đếm, chưa đọc). (2/11: `tap.main.js` đã đọc `__pace_f` từ bản trước; trang chỉ nhúng 2 video đầu, xem §6w.)
 
 Ghi chú môi trường test:
 - Extension nạp bằng `--load-extension` trong Chrome for Testing bị tắt nếu gọi `chrome.runtime.reload()`; phải khởi động lại trình duyệt.
@@ -938,7 +938,30 @@ Một agent test như người dùng thật (10 video, chế độ khách), rồ
   - Video sau livestream thứ nhất có sub ngay.
   - Video sau livestream thứ hai đã gửi dịch sẵn 7 s trước, mà "đang dịch" 12 s nữa. Server: nhận dạng 2,7 s, dịch 16,2 s (lượt gọi OpenAI đầu không trả lời trong 10 s, gọi lại thì 6,2 s). Cùng lúc các lượt dịch khác mất 8–9 s (bình thường 2–4 s), lượt làm nóng tới cả hai dịch vụ quá 3 s: mạng hay dịch vụ chậm lúc đó, không phải do livestream.
   - Chủ dự án chọn giữ hạn lượt gọi dịch đầu 10 s (không lên 15 s): kết nối treo vẫn bị cắt sớm.
-- **Chưa làm:** lấy thông tin video từ `self.__pace_f` lúc vào trang (§6d) để dịch sẵn được từ video thứ 3. Hiện API feed tới khi lướt tới video thứ 2.
+- **Không làm được:** lấy thêm thông tin video lúc vào trang. Trang chỉ nhúng 2 video đầu vào `__pace_f`, và `tap.main.js` đã đọc chúng. Video thứ 3 trở đi chỉ có khi Douyin gọi API feed, lúc lướt tới video thứ 2. Extension tự gọi API đó thì phải giả chữ ký của Douyin (§6w).
+
+## 6w. Giảm thời gian chờ: 4 hướng (2/11, extension 0.2.31, server)
+
+Chủ dự án hỏi thời gian dịch tổng. Số đo hôm đó:
+- 21 video đã lướt (mốc của extension):
+  - video đã dịch sẵn có sub sau 0–0,5 s;
+  - mở lạnh 4,0–5,2 s (mục lục 0,85–1,66 s, âm thanh 0,15–0,21 s, server 3,0–3,3 s);
+  - 4 ca chậm 12–23 s.
+- 503 đoạn trong cache server: ASR 1,8 s, dịch 2,4 s (1 lượt 1,8 s, có rút gọn 4,0 s), tổng 4,3 s (trung vị; 90% dưới 7,1 s).
+
+Chủ dự án chọn làm cả 4 hướng.
+
+1. **Bỏ lượt rút gọn khi đoạn gấp** (server, `urgent`): xong. Mẩu nhanh và đoạn dịch sẵn đã bỏ từ trước. Test server: đoạn gấp 1 lần gọi dịch; các test đụng lượt rút gọn gửi `urgent: false`.
+2. **Đọc trước danh sách video lúc vào trang:** không làm được. Trang chỉ nhúng 2 video đầu vào `__pace_f`, và `tap.main.js` đã đọc chúng từ trước (ghi chú cũ "chỉ đếm, chưa đọc" là sai). Video thứ 3 trở đi chỉ có khi Douyin gọi `/aweme/v1/web/tab/feed/`, lúc lướt tới video thứ 2. Extension tự gọi API đó thì phải giả chữ ký: không làm.
+3. **Lượt tải treo, mục lục nhỏ giọt** (extension 0.2.31):
+   - Đo: video `…277715` lúc dịch sẵn treo hai lần (`tải video quá lâu`). Lướt tới thì chờ đủ 20 s mới thử lại (`RETRY_MS[0]`, vốn cho lúc server chưa chạy), nhãn "lỗi" suốt lúc đó: sub sau 16,9 s.
+   - Sửa: lỗi mạng tạm thời trước khi gửi server (treo, đứt, HTTP lỗi, thiếu dữ liệu, file vừa đổi, quá chậm: `transient`) của video đang xem thì thử lại sau 1 s, tối đa 3 lần liền (`fastRetry`), rồi mới theo `RETRY_MS`. Lướt tới video có đoạn lỗi tải thì thử lại ngay. Nhãn vẫn "đang dịch" trong lúc đó. Lỗi đọc file (không có mục lục ở đầu…) thì không thử lại nhanh.
+   - Mục lục của video đang xem nhỏ giọt (quá 2,5 s mà còn quá 1,5 s nữa): gọi lại một lần qua `/aweme/v1/play/`, chỉ khi có bằng chứng chậm riêng (`spareCapacity`: lượt chạy cùng lúc đã xong nhanh gấp 3, hay video khác đang tải nhanh gấp 3). Bản đầu gọi lại cả khi không có lượt nào khác: đường truyền chậm đều thì mục lục tải lại từ byte 0 mãi không xong (mô phỏng: không có sub trong 20 s, bản cũ 18 s).
+   - Mô phỏng (content-time-test, ca mới):
+     - treo lúc dịch sẵn: 0.2.30 không có sub trong 20 s, nay 3,25 s;
+     - mục lục nhỏ giọt có video khác tải nhanh: 9,25 s, nay 5,75 s;
+     - đường truyền chậm đều / chia đều: như cũ, không gọi lại.
+4. **Hiện từng dòng khi dịch xong** (streaming): §6x.
 
 ## 7. Việc tiếp theo trên Mac
 
