@@ -220,7 +220,7 @@ try {
   servers.push(lg);
   const m7 = mtPrompts.length;
   mtMode = 'long-hang';
-  const longHang = await post(lg, '7500000000000000100', 0);
+  const longHang = await post(lg, '7500000000000000100', 0, { urgent: false });   // đoạn gấp bỏ lượt rút gọn
   mtMode = 'ok';
   t('lượt rút gọn treo: chờ tối đa 2 lần hạn đầu rồi giữ dòng đầy đủ, đoạn vẫn có sub', () => {
     assert.equal(longHang.status, 'ok', JSON.stringify(longHang));

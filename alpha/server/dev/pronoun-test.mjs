@@ -220,7 +220,7 @@ try {
   // Lượt rút gọn dòng quá dài nhận bảng xưng hô sau lượt dịch đầu.
   long = true;
   const before = bodies.length;
-  const c = await post(o, ID, 150, { lyrics: false, pronouns: { pairs: [BUSKER] } });
+  const c = await post(o, ID, 150, { lyrics: false, urgent: false, pronouns: { pairs: [BUSKER] } });   // đoạn gấp bỏ lượt rút gọn
   long = false;
   t('lượt rút gọn nhận bảng xưng hô (bảng sau lượt dịch đầu)', () => {
     assert.equal(c.status, 'ok');

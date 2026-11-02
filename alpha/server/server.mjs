@@ -189,8 +189,10 @@ async function handleSubtitles(req, res) {
         }
         return [];
       };
-      // Mẩu nhanh và đoạn dịch sẵn (video kế tiếp) bỏ lượt rút gọn: bớt một lần gọi model, xong sớm hơn.
-      opts = { kind: 'aac', offset: meta.audioStart, from: meta.from, to: meta.to, context, condense: !quick && meta.prefetch !== true };
+      // Mẩu nhanh, đoạn dịch sẵn (video kế tiếp) và đoạn gấp (chứa hay sắp tới chỗ đang xem: urgent) bỏ lượt rút gọn: bớt một
+      // lần gọi model, xong sớm hơn. Đo 2/11 trên 503 đoạn trong cache: có rút gọn thì dịch mất 4,0 s (trung vị) thay vì 1,8 s.
+      // Đoạn gấp là lúc đang trễ (vừa tua, mạng chậm): sub sớm hơn ~2 s đáng hơn dòng ngắn hơn.
+      opts = { kind: 'aac', offset: meta.audioStart, from: meta.from, to: meta.to, context, condense: !quick && meta.prefetch !== true && meta.urgent !== true };
     }
     opts.lyrics = lyrics;
     const buf = Buffer.from(chunked ? meta.aac : meta.b64, 'base64');

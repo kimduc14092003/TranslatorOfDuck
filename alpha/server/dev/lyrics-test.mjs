@@ -136,7 +136,7 @@ try {
   });
   // Điệp khúc câu ngắn: server báo sung = 0 (không câu nào tự tính là câu hát) dù cả đoạn là bài hát. Trước đây chế độ
   // thường nhận nhầm kết quả của chế độ lời bài hát (noSinging chỉ xét sung và label), hiện các dòng ♪.
-  const ch1 = await post(chorus, true);
+  const ch1 = await post(chorus, true, { urgent: false });   // không gấp: có lượt rút gọn (đoạn gấp bỏ lượt này)
   t('điệp khúc câu ngắn, chế độ lời bài hát: dịch cả đoạn, mọi dòng là dòng hát dù sung = 0', () => {
     assert.equal(ch1.status, 'ok', JSON.stringify(ch1)); assert.equal(ch1.sung, 0);
     assert.ok(ch1.cues.length >= 1 && ch1.cues.every(c => c.sung === true), JSON.stringify(ch1.cues));

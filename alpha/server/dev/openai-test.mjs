@@ -82,16 +82,19 @@ try {
     assert.equal(openaiBodies[0].reasoning_effort, 'none');
     assert.ok(!('temperature' in openaiBodies[0]));
   });
-  // Dòng dịch quá dài: đoạn thường gọi thêm lượt rút gọn, đoạn dịch sẵn (video kế tiếp) thì không.
+  // Dòng dịch quá dài: đoạn thường (chưa gấp) gọi thêm lượt rút gọn, đoạn dịch sẵn (video kế tiếp) và đoạn gấp thì không.
   mode = 'long';
   let before = openaiBodies.length;
-  await post(120);
+  await post(120, { urgent: false });
   const normalCalls = openaiBodies.length - before;
   before = openaiBodies.length;
-  await post(150, { prefetch: true });
+  await post(150, { prefetch: true, urgent: false });
   const prefetchCalls = openaiBodies.length - before;
-  t('đoạn dịch sẵn bỏ lượt rút gọn dòng dài (1 lần gọi thay vì 2)', () => {
-    assert.equal(normalCalls, 2); assert.equal(prefetchCalls, 1);
+  before = openaiBodies.length;
+  await post(180, { urgent: true });
+  const urgentCalls = openaiBodies.length - before;
+  t('đoạn dịch sẵn và đoạn gấp (urgent) bỏ lượt rút gọn dòng dài (1 lần gọi thay vì 2)', () => {
+    assert.equal(normalCalls, 2); assert.equal(prefetchCalls, 1); assert.equal(urgentCalls, 1);
   });
   mode = 'rate';
   const t0 = Date.now();
