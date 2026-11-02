@@ -86,13 +86,13 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 | Lệnh | Kiểm tra gì |
 |---|---|
 | `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới, đánh dấu dòng hát, tiếng đệm trong lời hát, dòng nói ngắn gộp vào dòng hát, câu nói nhanh trong đoạn cả bài (20 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới ở cả hai chế độ lời bài hát, `rank`), Gemini hết lượt trong ngày (9 kiểm tra). `asr-fallback-test.mjs`: Fun-ASR hết hạn mức thì chuyển sang model dự phòng, giới hạn theo phút thì gọi lại (20 kiểm tra). `warm-test.mjs`: `/v1/warm` làm nóng đúng dịch vụ đang dùng, giãn 3 s, bỏ qua khi vừa có lệnh gọi thật, log thời gian kết nối (12 kiểm tra). `pronoun-test.mjs`: luật xưng hô trong câu lệnh, bảng xưng hô nhận vào và trả về, đọc bảng của đoạn trước từ cache, giới tính người đăng (21 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON, dịch chậm hơn hạn lần đầu thì lần gọi lại được hạn dài hơn, dịch vụ treo hẳn thì thôi sau 3 lần quá hạn, lượt rút gọn treo thì giữ dòng đầy đủ (14 kiểm tra). `lyrics-test.mjs`: chế độ lời bài hát, kể cả điệp khúc câu ngắn, ngữ cảnh ở chế độ thường, hai chế độ cùng lúc, đoạn cả bài có câu nói nhanh ở hai chế độ, kể cả khi không câu nào tự đủ là câu hát (19 kiểm tra) |
-| `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng, slide feed bị ẩn, trang kết quả tìm kiếm, đóng modal, HTTP 429, đoạn cả bài không dùng chung giữa hai chế độ , bảng xưng hô theo từng video (51 kiểm tra) |
+| `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng, slide feed bị ẩn, trang kết quả tìm kiếm, đóng modal, HTTP 429, đoạn cả bài không dùng chung giữa hai chế độ , bảng xưng hô theo từng video, bảng thông tin khi rê chuột vào nhãn (52 kiểm tra) |
 | `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước, đoạn đầu tải chậm qua máy chủ chậm (trang video và feed), tải nhanh rồi chậm hẳn, rời feed, tải chậm vừa phải, đường truyền chậm đều, khựng giữa chừng, tua về sau khi bỏ đoạn , hàng dịch sẵn nhường video vừa mở, báo làm nóng, mốc thời gian trong câu trả lời status; một lượt tải từ byte 0 cho mục lục + q0 + đoạn 0 (nhiều rtt và băng thông, dịch sẵn, tua lúc đang tải, moov lớn, không có moov ở đầu, 200 cả file, lướt đi, 429, CDN treo, lượt đó chậm từ byte 0, đổi chế độ lời bài hát gửi đúng byte cũ, mở giữa video, tiến độ cho dropSlow); xem video dài trên đường truyền chậm, đoạn kế chờ lượt gửi (chế độ video dài, §6t) (29 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms; `headerEnd` trên phần đầu file đang tải dở (5 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
 | `node alpha/dev/background-test.mjs` | background.js gửi `POST /v1/warm` (kiểu JSON) tới server trên máy, bỏ qua lỗi, chặn địa chỉ ngoài máy (2 kiểm tra) |
 | `node alpha/dev/tap-test.mjs` | tap.main.js đọc response API với Response thật (fetch, XHR): thân chia khúc của search/stream, thân hỏng, giữ thứ tự danh sách tìm kiếm khi search/single đọc xong trước (3 kiểm tra) |
-| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua, đồng hồ trình phát lệch 50 s, CDN treo một lần, lời bài hát ♪, bấm ô tắt lời bài hát trong popup, video mở từ trang tìm kiếm, video đầu tải một lượt từ byte 0 , bảng xưng hô gửi lại cho đoạn sau (29 kiểm tra) |
+| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua, đồng hồ trình phát lệch 50 s, CDN treo một lần, lời bài hát ♪, bấm ô tắt lời bài hát trong popup, video mở từ trang tìm kiếm, video đầu tải một lượt từ byte 0 , bảng xưng hô gửi lại cho đoạn sau, rê chuột thật vào nhãn thì hiện bảng thông tin (30 kiểm tra) |
 
 Cần cho các test: Node 18+, `playwright`, `ffmpeg`, `openssl`.
 
@@ -885,6 +885,22 @@ Một agent test như người dùng thật (10 video, chế độ khách), rồ
   - Đường truyền dưới ~2 lần bitrate video thì vẫn không kịp: mỗi đoạn tải 5–6 MB để lấy 0,6 MB tiếng.
   - Hướng lớn nếu cần: tải tiếng riêng như trình phát (thử lại `bit_rate_audio`), cần chủ dự án quyết và đo lại.
 - **Test:** content-time-test thêm hai ca (29 kiểm tra): xem video dài trên đường truyền chậm; đoạn kế chờ lượt gửi rồi mang bản xưng hô của đoạn trước, kể cả khi dò hụt video lúc hết chờ. Bản 0.2.27 trượt cả hai. Content-sim-test giữ nguyên 51 kiểm tra, đều đạt. e2e 29 kiểm tra đạt.
+
+## 6u. Rê chuột vào nhãn: thông tin đã dịch của video đang xem (2/11, extension 0.2.29)
+
+- Chủ dự án muốn: rê chuột vào nhãn ("VI", "VI · đang dịch…") thì thấy video đang xem đã dịch tới đâu.
+- Bảng hiện ngay dưới nhãn, cập nhật 4 lần/giây, rời nhãn (hay chuột ra khỏi cửa sổ) thì ẩn. Nội dung:
+  - thời lượng video, chỗ đang xem;
+  - đã xong tới đâu tính từ chỗ đang xem (đoạn liền nhau đã xong, hay mẩu nhanh đang phủ chỗ đó). "Xong" là có bản dịch hay không cần dịch (nhạc, không lời); bỏ qua vì dịch lỗi thì chưa xong;
+  - số đoạn đã xong / tổng số đoạn, số dòng, số dòng ♪;
+  - tối đa 8 đoạn gần chỗ đang xem (▶ là đoạn đang phát): ✓ số dòng, bỏ qua (lý do), lỗi, đang tải %, đã tải chờ đoạn trước, đang dịch ở server (bao lâu rồi), chờ tải;
+  - mẩu nhanh gần đây, bảng xưng hô (tối đa 3 cặp), đang dịch trước bao xa, chế độ lời bài hát.
+- Lớp phủ vẫn `pointer-events: none`: không bắt chuột, chỉ đọc vị trí chuột (`mousemove` ở window) rồi so với khung của nhãn. Click ở chỗ nhãn vẫn tới trang Douyin bên dưới (nút đóng modal có thể nằm đó).
+- Chữ đặt bằng `textContent` (tên trong bảng xưng hô đến từ server, không chèn HTML).
+- Nhãn dời khỏi chuột mà chuột không động (vào/thoát toàn màn hình): xét lại theo vị trí chuột cuối. Lướt sang video khác thì bảng đổi ngay. Lỗi khi dựng chữ không làm hỏng phần vẽ sub.
+- Đã xem trên Douyin thật (video 678 s, giây 40): bảng ghi đã dịch tới 1:20, 3/23 đoạn, 22 dòng, ba đoạn ✓, xưng hô hai cặp; rời nhãn thì ẩn.
+- Kiểm: một verifier soát diff, có chạy thử các trạng thái lạ (ok_with_fixes, 0 lỗi chặn; không chặn click, không chèn HTML, không đổi hành vi tải và gửi). Đã áp: phần trăm tải đúng ở lượt nối tiếp sau lượt tải đầu video; đoạn dịch lỗi không tính là xong; đóng khi nhãn dời đi; lướt video thì đổi ngay; chỗ đang xem ngoài lưới đoạn thì liệt kê đoạn gần nó; mẩu nhanh ở server có số giây. Không làm: chờ ~300 ms mới mở (bảng có thể che nút Douyin nằm dưới nhãn, không chặn click); đoạn vừa bị huỷ có thể hiện "đang tải 99%" một lúc.
+- Test: content-sim-test 52 (rê vào thì hiện đúng các dòng, đoạn chưa cần thì không liệt kê, đoạn dịch lỗi không tính là xong, rời ra thì ẩn, lướt video thì đổi, tắt sub thì ẩn), e2e 30 (rê chuột thật trong Chromium).
 
 ## 7. Việc tiếp theo trên Mac
 

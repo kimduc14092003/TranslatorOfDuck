@@ -21,7 +21,7 @@ function makeEnv(dir, { bw = 9000, stall = () => 0, total = () => 99999999, auto
   const setTimeout_ = (fn, ms = 0) => { const id = ++env.tid; env.timers.push({ id, at: env.perf + ms, fn }); return id; };
   const clearTimeout_ = (id) => { env.timers = env.timers.filter((t) => t.id !== id); };
   const el = () => ({ style: {}, textContent: '' });
-  const shadow = { '.sub': el(), '.badge': el(), '.badge .txt': el(), '.badge .dot': el() };
+  const shadow = { '.sub': el(), '.badge': el(), '.badge .txt': el(), '.badge .dot': el(), '.info': el() };
   const document = {
     createElement: () => ({ style: {}, attachShadow: () => ({ set innerHTML(_) {}, querySelector: (s) => shadow[s] }) }),
     addEventListener() {}, fullscreenElement: null, body: { appendChild() {} }, documentElement: {},

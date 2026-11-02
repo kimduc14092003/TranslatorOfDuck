@@ -18,7 +18,7 @@ function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () 
   const env = { now: 1_000_000, perf: 0, sent: [], replies: new Map(), fetches: [], rafs: [], listeners: {}, videos: new Map(), activeId: null,
     href: 'https://www.douyin.com/', onChanged: null };
   const el = () => ({ style: {}, textContent: '' });
-  const shadow = { '.sub': el(), '.badge': el(), '.badge .txt': el(), '.badge .dot': el() };
+  const shadow = { '.sub': el(), '.badge': el(), '.badge .txt': el(), '.badge .dot': el(), '.info': el() };
   const document = {
     createElement: () => ({ style: {}, attachShadow: () => ({ set innerHTML(_) {}, querySelector: (s) => shadow[s] }) }),
     addEventListener() {}, fullscreenElement: null, body: { appendChild() {} }, documentElement: {},
@@ -90,6 +90,10 @@ function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () 
   env.subs = () => env.sent.filter((m) => m.type === 'subtitles').map((m) => m.key);
   env.cancels = () => env.sent.filter((m) => m.type === 'cancel').flatMap((m) => m.keys);
   env.subText = () => (shadow['.sub'].style.display === 'block' ? shadow['.sub'].textContent : null);
+  // Rê chuột tới (x, y) (nhãn ở góc trên trái: 10..90 × 10..30); bảng thông tin đang hiện thì trả chữ của nó.
+  shadow['.badge'].getBoundingClientRect = () => ({ left: 10, top: 10, right: 90, bottom: 30 });
+  env.hover = (x, y) => env.listeners.mousemove({ clientX: x, clientY: y });
+  env.infoText = () => (shadow['.info'].style.display === 'block' ? shadow['.info'].textContent : null);
   env.badge = () => (shadow['.badge'].style.display === 'block' ? shadow['.badge .txt'].textContent : null);
   env.vid = (id) => env.dbg.vids.get(id);
   return env;
@@ -450,6 +454,40 @@ await t('Đổi chế độ lời bài hát khi một đoạn đang tải: khôn
   slow.release(); await e.flush(); await e.tick();
   assert.deepEqual(e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':1').map((m) => m.payload.lyrics), [false]);
   assert.equal(e.fetches.filter((f) => f.a === 18500).length, 1, 'tải một lần, không tải lại');
+});
+
+await t('Rê chuột vào nhãn: bảng thông tin đã dịch của video đang xem (tới đâu, từng đoạn, mẩu nhanh, xưng hô); rời nhãn thì ẩn', async () => {
+  const e = makeEnv();
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  const PA = { pairs: [{ who: 'A → B', self: 'anh', other: 'em' }] };
+  await e.reply(A + ':0', { status: 'ok', sung: 1, cues: [C(2, 4, 'Lời nói'), { ...C(5, 7, 'Lời hát'), sung: true }], pronouns: PA });
+  await e.reply(A + ':q2', { status: 'ok', cues: [C(2.2, 4, 'Q')] });
+  await e.tick();
+  assert.equal(e.infoText(), null, 'chưa rê chuột thì không hiện');
+  e.hover(50, 20); await e.tick();
+  const txt = e.infoText() || '';
+  for (const want of ['Video 1:40 · đang xem 0:02', 'Đã xong tới 0:20 (trước chỗ đang xem 18 s)', 'Đã xong 1/4 đoạn · 2 dòng (1 dòng ♪)',
+    '▶ 0:00–0:20  ✓ 2 dòng, 1 dòng ♪', 'Mẩu nhanh 0:02–0:12  ✓ 1 dòng', 'Xưng hô: A → B: anh/em', 'Dịch trước 30 s · lời bài hát: dịch']) {
+    assert.ok(txt.includes(want), 'thiếu "' + want + '" trong:\n' + txt);
+  }
+  assert.match(txt, /\n {3}0:20–0:50 {2}(đang dịch ở server|đang tải|chờ tải)/, txt);
+  assert.ok(!txt.includes('0:50–1:20'), 'đoạn chưa cần, chưa làm thì không liệt kê');
+  e.hover(500, 400); await e.tick();
+  assert.equal(e.infoText(), null, 'rời nhãn thì ẩn');
+  // Đoạn bị bỏ qua vì dịch lỗi không tính là xong (verifier 2/11).
+  await e.reply(A + ':1', { status: 'skipped', label: 'untranslated', cues: [] });
+  e.hover(50, 20); await e.tick();
+  assert.ok((e.infoText() || '').includes('Đã xong 1/4 đoạn') && (e.infoText() || '').includes('0:20–0:50  bỏ qua: dịch lỗi'), e.infoText());
+  // Lướt sang video khác lúc bảng đang mở: bảng theo video mới ngay; tắt sub thì ẩn.
+  e.up('items', [e.item(B, 12000)]);
+  e.activeId = B; e.videos.clear(); e.video(B, 1).paused = true;
+  await e.tick();
+  assert.ok((e.infoText() || '').startsWith('Video 0:12 · đang xem 0:01'), e.infoText());
+  e.onChanged({ settings: { newValue: { enabled: false } } }, 'local');
+  await e.tick();
+  assert.equal(e.infoText(), null, 'tắt sub thì ẩn');
 });
 
 await t('Dòng hát (sung) hiện kèm "♪ "', async () => {

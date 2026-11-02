@@ -925,7 +925,7 @@
       const aac = w.build(bytes);
       if (!act) await actBack(id);
       if (!quickWanted(id, q)) { if (v.quick.get(from) === q) { v.quick.delete(from); if (!act) quickTried = -1; } return; }
-      q.sent = true; q.lyrics = lyricsOn();
+      q.sent = true; q.sentAt = Date.now(); q.lyrics = lyricsOn();
       mark(id, 'quickPost');
       const pg = v.pronGen;
       chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':q' + from, payload: {
@@ -983,7 +983,7 @@
       if (!w) return done({ status: 'no_audio', from, to });
       if (w.seconds > 0) v.bps = (w.end - w.start) / w.seconds;   // aheadFor
       if (v.quickGate) await v.quickGate;   // mẩu nhanh của video này đang tải: nhường đường truyền
-      entry.bytes = w.end - w.start;   // tiến độ tải (since, got) ghi vào entry, cho dropSlow
+      entry.bytes = entry.win = w.end - w.start;   // tiến độ tải (since, got) ghi vào entry, cho dropSlow; win: bảng thông tin
       // Mốc chunk*: đoạn ở chỗ đang xem (video chưa xem: đoạn 0, chỗ bắt đầu phát khi lướt tới).
       entry.head = k === (id === currentId && headOf === id ? chunkAt(plan, playhead) : 0);
       if (entry.head) mark(id, 'chunkDl');
@@ -1115,11 +1115,15 @@
     .badge { position: absolute; left: 10px; top: 10px; font-size: 12px; color: #fff; background: rgba(0,0,0,.55);
       padding: 2px 8px; border-radius: 10px; display: none; }
     .badge .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
-  </style><div class="wrap"><div class="badge"><span class="dot"></span><span class="txt"></span></div><div class="sub"></div></div>`;
+    .info { position: absolute; left: 10px; top: 36px; max-width: min(380px, 90%); max-height: 75%; overflow: hidden;
+      font-size: 12px; line-height: 1.5; color: #fff; background: rgba(0,0,0,.82); padding: 7px 10px; border-radius: 8px;
+      white-space: pre-wrap; font-variant-numeric: tabular-nums; display: none; }
+  </style><div class="wrap"><div class="badge"><span class="dot"></span><span class="txt"></span></div><div class="info"></div><div class="sub"></div></div>`;
   const subEl = root.querySelector('.sub');
   const badgeEl = root.querySelector('.badge');
   const badgeTxt = root.querySelector('.badge .txt');
   const badgeDot = root.querySelector('.badge .dot');
+  const infoEl = root.querySelector('.info');
   function attachHost() {
     const parent = document.fullscreenElement || document.body || document.documentElement;
     if (host.parentNode !== parent) parent.appendChild(host);
@@ -1135,6 +1139,65 @@
   };
   const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
   const SKIP_WHY = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch lỗi' };
+  // ---- Rê chuột vào nhãn: bảng thông tin đã dịch của video đang xem (infoText), cập nhật 4 lần/giây. Lớp phủ vẫn không
+  // nhận chuột (pointer-events: none), chỉ đọc vị trí chuột: click vẫn tới trang Douyin bên dưới nhãn.
+  let infoOpen = false, infoAt = 0, infoId = null, mouseX = -1, mouseY = -1;
+  function overBadge(x, y) {
+    if (badgeEl.style.display !== 'block') return false;
+    const b = badgeEl.getBoundingClientRect();
+    return x >= b.left - 4 && x <= b.right + 4 && y >= b.top - 4 && y <= b.bottom + 4;
+  }
+  function setInfo(open) {
+    if (open === infoOpen) return;
+    infoOpen = open; infoAt = 0;
+    if (!open) infoEl.style.display = 'none';
+  }
+  window.addEventListener('mousemove', (e) => { mouseX = e.clientX; mouseY = e.clientY; setInfo(overBadge(mouseX, mouseY)); }, { passive: true, capture: true });
+  document.addEventListener('mouseout', (e) => { if (!e.relatedTarget) setInfo(false); }, true);   // chuột ra khỏi cửa sổ
+  function pieceState(c) {
+    if (!c) return 'chờ tải';
+    const cues = c.cues || [], sung = cues.filter((x) => x.sung).length;
+    if (c.status === 'ok') return cues.length ? `✓ ${cues.length} dòng${sung ? `, ${sung} dòng ♪` : ''}` : '✓ không có lời';
+    if (c.status === 'skipped') return 'bỏ qua: ' + (SKIP_WHY[c.label] || 'không dịch');
+    if (c.status === 'no_audio') return 'không có âm thanh';
+    if (c.status === 'error') return c.slow ? 'tải quá chậm, dùng mẩu nhanh' : 'lỗi: ' + String(c.error || '').slice(0, 50);
+    if (c.sent) return `đang dịch ở server${c.sentAt ? ` (${Math.round((Date.now() - c.sentAt) / 1000)} s)` : ''}`;
+    if (c.waiting) return 'đã tải, chờ đoạn trước dịch xong';
+    // win: cả cửa sổ; bytes: phần lượt đang chạy phải tải (lượt nối tiếp sau lượt tải đầu video chỉ tải phần còn thiếu).
+    if (c.since != null && c.bytes) { const w = c.win || c.bytes; return `đang tải ${Math.min(99, Math.max(0, Math.round(100 * (w - c.bytes + (c.got || 0)) / w)))}%`; }
+    return 'đang tải';
+  }
+  function infoText(v, plan, t) {
+    const d = items.get(currentId);
+    const D = (d && d.durationMs ? d.durationMs / 1000 : 0) || (v && v.media && v.media.duration) || 0;
+    const end = (x) => (D ? Math.min(x, D) : x);
+    const out = [`Video ${D ? mmss(D) : '?'} · đang xem ${mmss(t)}`];
+    if (!eligible(d)) return out.concat('Không dịch được video này (ảnh, quảng cáo, livestream hay chưa có thông tin)').join('\n');
+    if (!v || !plan) return out.concat('Đang tải mục lục video…').join('\n');
+    // Xong: có bản dịch, hay không cần dịch (nhạc, không lời, không có âm thanh). Bỏ qua vì dịch lỗi thì chưa xong.
+    const fin = (c) => !!c && (c.status === 'ok' || c.status === 'no_audio' || (c.status === 'skipped' && c.label !== 'untranslated'));
+    const cur = chunkAt(plan, t);
+    let upto = null;
+    if (cur >= 0 && fin(v.chunks.get(cur))) { for (let k = cur; k < plan.length && fin(v.chunks.get(k)); k++) upto = plan[k][1]; }
+    else for (const q of v.quick.values()) if (q.status === 'ok' && t >= q.from && t < q.to) upto = q.to;
+    out.push(upto != null ? `Đã xong tới ${mmss(end(upto))} (trước chỗ đang xem ${Math.max(0, Math.round(end(upto) - t))} s)` : 'Chỗ đang xem chưa có bản dịch');
+    const done = [...v.chunks.values()].filter((c) => c.status === 'ok');
+    const lines = done.reduce((x, c) => x + (c.cues || []).length, 0), sung = done.reduce((x, c) => x + (c.cues || []).filter((y) => y.sung).length, 0);
+    out.push(`Đã xong ${[...v.chunks.values()].filter(fin).length}/${plan.length} đoạn · ${lines} dòng${sung ? ` (${sung} dòng ♪)` : ''}`);
+    // Các đoạn đã có việc hay đang cần, gần chỗ đang xem nhất (tối đa 8), theo thứ tự thời gian. Chỗ đang xem ngoài lưới
+    // đoạn (thời lượng báo thiếu, đồng hồ lệch): lấy đoạn gần nó nhất theo thời gian.
+    const near = cur >= 0 ? cur : t >= plan[plan.length - 1][0] ? plan.length - 1 : 0;
+    const ks = plan.map((_, k) => k).filter((k) => v.chunks.has(k) || wanted.has(currentId + ':' + k));
+    const show = [...ks].sort((a, b) => Math.abs(a - near) - Math.abs(b - near) || a - b).slice(0, 8).sort((a, b) => a - b);
+    for (const k of show) out.push(`${k === cur ? '▶' : '  '} ${mmss(plan[k][0])}–${mmss(end(plan[k][1]))}  ${pieceState(v.chunks.get(k))}`);
+    if (ks.length > show.length) out.push(`   (+${ks.length - show.length} đoạn khác)`);
+    const qs = [...v.quick.values()].filter((q) => q.to > t - 10).sort((a, b) => a.from - b.from).slice(-2);
+    for (const q of qs) out.push(`Mẩu nhanh ${mmss(q.from)}–${mmss(end(q.to))}  ${pieceState(q)}`);
+    const pairs = v.pron && Array.isArray(v.pron.pairs) ? v.pron.pairs.filter((x) => x && x.who) : [];
+    if (pairs.length) out.push('Xưng hô: ' + pairs.slice(0, 3).map((x) => `${x.who}: ${x.self}/${x.other}`).join('; ') + (pairs.length > 3 ? ` (+${pairs.length - 3})` : ''));
+    out.push(`Dịch trước ${aheadFor(v)} s${watching() ? (v.slow ? ' (đang xem, tải chậm)' : ' (đang xem)') : ''} · lời bài hát: ${lyricsOn() ? 'dịch' : 'bỏ qua'}`);
+    return out.join('\n');
+  }
   let lastFind = 0;
   let zeroSeen = false;
   let toastText = '';
@@ -1200,7 +1263,7 @@
       }
     }
     const v = settings.enabled && act ? videoFor(act) : null;
-    if (!v) { host.style.width = '0'; subEl.style.display = 'none'; badgeEl.style.display = 'none'; return; }
+    if (!v) { host.style.width = '0'; subEl.style.display = 'none'; badgeEl.style.display = 'none'; infoEl.style.display = 'none'; return; }
     attachHost();
     const r = v.getBoundingClientRect();
     host.style.left = r.left + 'px'; host.style.top = r.top + 'px'; host.style.width = r.width + 'px'; host.style.height = r.height + 'px';
@@ -1236,6 +1299,16 @@
         : BADGE[st][1];
       badgeEl.style.display = 'block';
     } else badgeEl.style.display = 'none';
+    // Nhãn dời khỏi chuột mà chuột không động (vào/thoát toàn màn hình, trang đổi bố cục): xét lại theo vị trí chuột cuối.
+    if (infoOpen && (!infoAt || now - infoAt >= 250)) setInfo(overBadge(mouseX, mouseY));
+    if (!infoOpen || badgeEl.style.display !== 'block') infoEl.style.display = 'none';
+    else if (!infoAt || now - infoAt >= 250 || infoId !== currentId) {
+      infoAt = now; infoId = currentId;
+      let text;
+      try { text = infoText(cv, plan, t); } catch (e) { text = 'Không hiện được thông tin: ' + e.message; }   // không làm hỏng phần vẽ sub
+      if (infoEl.textContent !== text) infoEl.textContent = text;
+      infoEl.style.display = 'block';
+    }
     if (hold) { subEl.style.display = 'none'; return; }
     const c = cv ? TodCues.at(cv.cues, playhead - (Number(settings.delay) || 0)) : null;
     if (!c) { subEl.style.display = 'none'; return; }

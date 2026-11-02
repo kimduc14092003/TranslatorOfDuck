@@ -257,6 +257,18 @@ long.chunksBeforeSeek = providerHits.longChunks.length;               // đoạn
 long.at85 = await waitSub(85.0, 'Đi thôi!');                          // tua tới 85 s: đoạn 4, âm thanh từ 78,5 s → "走吧" ở 84,5 s
 long.at83 = await subAt(83.5);                                        // giữa 2 câu (câu 1 hết lúc 83,1 s): trống
 long.chunks = [...providerHits.longChunks];
+// Rê chuột thật vào nhãn: bảng thông tin đã dịch hiện ra (chỗ đang xem 85 s, đoạn [80,101) đã dịch), rời nhãn thì ẩn.
+const info = () => page.evaluate(() => {
+  const host = [...document.querySelectorAll('div')].find(d => d.shadowRoot && d.shadowRoot.querySelector('.sub'));
+  const b = host.shadowRoot.querySelector('.badge').getBoundingClientRect(), el = host.shadowRoot.querySelector('.info');
+  return { x: b.left + b.width / 2, y: b.top + b.height / 2, text: el.style.display === 'block' ? el.textContent : null };
+});
+const ib = await info();
+await page.mouse.move(ib.x, ib.y);
+for (let i = 0; i < 20 && !(long.info = (await info()).text); i++) await page.waitForTimeout(100);
+await page.mouse.move(ib.x + 300, ib.y + 300);
+await page.waitForTimeout(300);
+long.infoAfter = (await info()).text;
 // Feed 推荐 phát nối đoạn: tua thì <video>.currentTime không đổi, chỉ đồng hồ trình phát (window.player.currentTime)
 // nhảy. Giả lập trình phát chạy trước <video> 50 s: <video> ở 35 s nghĩa là đang xem 85 s → phải hiện "Đi thôi!".
 await page.evaluate(() => {
@@ -315,6 +327,7 @@ const checks = {
   'long video: chunk 2 line lands at 20.5 s (video time)': long.at21.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
   'long video: only chunks within 30 s of playhead processed': long.chunksBeforeSeek === 3,
   'long video: seek to 85 s translates that chunk': long.at85.sub === 'Đi thôi!' && long.at83.sub === null && long.chunks.length === 4,
+  'hover on the badge shows what has been translated (playhead chunk ✓), hidden after leaving': /▶ 1:20–1:40 {2}✓ \d+ dòng/.test(long.info || '') && /Đã xong tới/.test(long.info || '') && long.infoAfter === null,
   // Đoạn 2 được gửi cùng lúc với đoạn 1 (cả hai nằm trong 30 s đầu): server chờ đoạn 1 dịch xong để lấy ngữ cảnh.
   'later chunks translated with previous lines as context (chunks 2–4)': providerHits.withContext >= 3,
   'first translation got HTTP 429, server retried (first video still has subs)': providerHits.rateLimited > 1 && first.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
