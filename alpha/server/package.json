@@ -5,7 +5,7 @@
   "description": "Server chạy trên máy cho bản Alpha: nhận đoạn đầu video Douyin, trả sub tiếng Việt.",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node dev/test.mjs && node dev/queue-test.mjs && node dev/openai-test.mjs && node dev/errors-test.mjs && node dev/lyrics-test.mjs && node dev/asr-fallback-test.mjs && node dev/warm-test.mjs && node dev/pronoun-test.mjs"
+    "test": "node dev/test.mjs && node dev/queue-test.mjs && node dev/openai-test.mjs && node dev/errors-test.mjs && node dev/lyrics-test.mjs && node dev/asr-fallback-test.mjs && node dev/warm-test.mjs && node dev/pronoun-test.mjs && node dev/stream-test.mjs"
   },
   "optionalDependencies": {
     "ffmpeg-static": "^5.2.0"

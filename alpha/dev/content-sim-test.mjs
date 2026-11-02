@@ -55,7 +55,7 @@ function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () 
     else if (fetchHang(a, b, url)) rec.release = fin; else queueMicrotask(fin);
   });
   const chrome = {
-    runtime: { id: 'x', onMessage: { addListener() {} },
+    runtime: { id: 'x', onMessage: { addListener: (f) => { env.onMsg = f; } },
       sendMessage: (msg) => {
         env.sent.push({ at: env.now, ...msg, payload: msg.payload && { ...msg.payload, aac: undefined } });
         if (msg.type !== 'subtitles') return Promise.resolve();
@@ -488,6 +488,28 @@ await t('Rê chuột vào nhãn: bảng thông tin đã dịch của video đang
   e.onChanged({ settings: { newValue: { enabled: false } } }, 'local');
   await e.tick();
   assert.equal(e.infoText(), null, 'tắt sub thì ẩn');
+});
+
+await t('Dòng dịch xong trước (server gửi dần, tin partial): hiện tạm ngay, nhãn "VI"; kết quả cuối thay; tin của yêu cầu đã xong hay không rõ thì bỏ', async () => {
+  const e = makeEnv();
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  const sent = e.sent.filter((m) => m.type === 'subtitles');
+  assert.ok(sent.length && sent.every((m) => m.payload.stream === true), 'gửi kèm stream: true');
+  assert.equal(e.subText(), null);
+  assert.match(e.badge(), /đang dịch/);
+  e.onMsg({ type: 'partial', key: A + ':0', cues: [C(1.5, 4, 'Tạm 1')] }, {}, () => {});
+  e.onMsg({ type: 'partial', key: A + ':7', cues: [C(1.5, 4, 'Không rõ')] }, {}, () => {});   // không có đoạn đó: bỏ
+  await e.tick();
+  assert.equal(e.subText(), 'Tạm 1');
+  assert.equal(e.badge(), 'VI');
+  await e.reply(A + ':0', { status: 'ok', cues: [C(1.5, 4, 'Cuối 1')] });
+  await e.tick();
+  assert.equal(e.subText(), 'Cuối 1', 'kết quả cuối thay dòng tạm');
+  e.onMsg({ type: 'partial', key: A + ':0', cues: [C(1.5, 4, 'Muộn')] }, {}, () => {});   // yêu cầu đã xong: bỏ
+  await e.tick();
+  assert.equal(e.subText(), 'Cuối 1');
 });
 
 await t('Dòng hát (sung) hiện kèm "♪ "', async () => {

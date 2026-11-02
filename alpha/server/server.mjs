@@ -147,6 +147,9 @@ async function handleSubtitles(req, res) {
   if (hit) return send(res, 200, withPronouns(fromCache(hit)));
   let job = inflight.get(key);
   if (job && !job.started) { job.urgent = job.urgent || !!meta.urgent; job.rank = Math.min(job.rank, rankOf(meta.rank)); job.seq = ++seq; pumpQueue(); }   // lại được hỏi: đẩy lên
+  // Dòng dịch xong trước (OpenAI stream): việc giữ bản mới nhất (partials) và báo các request đang chờ nó (listeners), kể cả
+  // request nhập vào việc đang chạy của request khác.
+  const feed = (job && job.feed) || { partials: null, listeners: new Set() };
   if (!job) {
     // TOD_DUMP=1: giữ âm thanh nhận được ở work/dump (tên file kèm audioStart) để soi lỗi ASR, mốc thời gian. Chỉ để trên máy, xoá sau khi xong.
     if (process.env.TOD_DUMP) {
@@ -214,7 +217,8 @@ async function handleSubtitles(req, res) {
       // người đăng. Không vào khoá cache: cùng đoạn thì dùng lại kết quả đã có. Request cũ không gửi thì như trước.
       // Extension gửi author là chuỗi tên, giới tính ở trường riêng authorGender ('male'/'female'): gộp lại cho authorHint.
       const author = meta.authorGender ? { nickname: typeof meta.author === 'string' ? meta.author : '', gender: meta.authorGender } : meta.author;
-      const r = await makeSubtitles({ desc: meta.desc, hashtags: meta.hashtags, author, pronouns: meta.pronouns }, buf, { ...opts, signal, asrCache });
+      const onPartial = (cues) => { feed.partials = cues; for (const l of feed.listeners) l(cues); };
+      const r = await makeSubtitles({ desc: meta.desc, hashtags: meta.hashtags, author, pronouns: meta.pronouns }, buf, { ...opts, signal, asrCache, onPartial });
       const out = { id, ...(chunked ? { from: meta.from, to: meta.to } : {}), ...r };
       // 'untranslated' (dịch không ra dòng nào) không cache: lần sau thử dịch lại, ASR đã có sẵn ở asrFile.
       // Lỗi (kể cả không chạy được ffmpeg) thì báo 'error' qua catch bên dưới, không bao giờ cache.
@@ -224,8 +228,26 @@ async function handleSubtitles(req, res) {
       }
       return out;
     });
+    job.feed = feed;
   }
   job.waiters++;
+  // stream: true (extension từ 0.2.32): trả từng dòng JSON (NDJSON). Mỗi lần có thêm dòng dịch xong: { partial: [dòng…] } (đủ
+  // các dòng đã xong tới lúc đó, chưa rút gọn); dòng cuối là kết quả như trả lời thường (có status). Đã gửi header 200 nên
+  // lỗi cũng nằm ở dòng cuối ({ status: 'error' }). Kết quả có sẵn trong cache thì trả một lần như trước (đã return ở trên).
+  const stream = meta.stream === true;
+  const sendFinal = (status, obj) => {
+    if (res.writableEnded || res.destroyed) return;
+    if (!stream) return send(res, status, obj);
+    if (!res.headersSent) res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });
+    res.end(JSON.stringify(obj) + '\n');
+  };
+  let listener = null;
+  if (stream) {
+    res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });
+    listener = (cues) => { if (!res.writableEnded && !res.destroyed) res.write(JSON.stringify({ partial: cues }) + '\n'); };
+    feed.listeners.add(listener);
+    if (feed.partials) listener(feed.partials);
+  }
   res.on('close', () => { if (!res.writableEnded && --job.waiters <= 0) job.cancel(); });
   const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
   const where = chunked ? ` [${quick ? 'nhanh ' : ''}${mmss(meta.from)}–${mmss(meta.to)}${lyrics ? ' ♪' : ''}]` : '';
@@ -250,17 +272,19 @@ async function handleSubtitles(req, res) {
       (out.pronouns && !out.cached ? `\n    xưng hô${pronounsIn || out.debug?.pronounsCtx ? ` (nhận ${pronounsIn} cặp${out.debug?.pronounsCtx ? `, từ cache đoạn trước ${out.debug.pronounsCtx} cặp` : ''})` : ''}: ${out.pronouns.pairs.map(p => `${p.who}: ${p.self}/${p.other}`).join('; ')}` +
         pronounChanges(out.debug?.pronounsIn, out.pronouns).map(c => `\n    xưng hô SỬA: ${c}`).join('') : ''));
     const { debug: _d, ...reply } = out;
-    send(res, 200, reply);
+    sendFinal(200, reply);
   } catch (e) {
     if (e.cancelled) {
       const sec = (ms) => (ms / 1000).toFixed(1) + ' s';
       console.log(`${new Date().toLocaleTimeString()} ${id}${where} huỷ (đã tua đi chỗ khác${job.started ? ', dừng giữa chừng' : ', chưa xử lý'})` +
         (job.started ? ` · xếp hàng ${sec(job.startedAt - job.at)}, chạy ${sec(Date.now() - job.startedAt)}` : ` · xếp hàng ${sec(Date.now() - job.at)}`));
-      if (!res.writableEnded && !res.destroyed) send(res, 200, { id, status: 'cancelled' });
+      sendFinal(200, { id, status: 'cancelled' });
       return;
     }
     console.log(`${new Date().toLocaleTimeString()} ${id}${chunked ? ` [${meta.from}–${meta.to} s]` : ''} LỖI ${e.message}`);
-    send(res, 502, { id, status: 'error', error: String(e.message).slice(0, 300), ...(e.retryAfterMs ? { retryAfterMs: e.retryAfterMs } : {}) });
+    sendFinal(502, { id, status: 'error', error: String(e.message).slice(0, 300), ...(e.retryAfterMs ? { retryAfterMs: e.retryAfterMs } : {}) });
+  } finally {
+    if (listener) feed.listeners.delete(listener);
   }
 }
 

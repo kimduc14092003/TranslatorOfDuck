@@ -31,7 +31,26 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   pending.set(pk, ctl);
   fetch(base + '/v1/subtitles', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(msg.payload), signal: ctl.signal })
     .then(async (res) => {
-      const body = await res.json().catch(() => ({}));
+      // Server trả NDJSON (payload stream: true): các dòng { partial: [dòng…] } (dòng dịch xong trước) chuyển ngay cho tab
+      // qua tin { type: 'partial', key, cues }; dòng cuối là kết quả, trả như trước. Server cũ, hay kết quả có sẵn trong
+      // cache: JSON một lần.
+      let body = {};
+      if (/ndjson/.test(res.headers.get('content-type') || '') && res.body) {
+        const reader = res.body.getReader(), dec = new TextDecoder();
+        let buf = '';
+        const line = (s) => {
+          let o;
+          try { o = JSON.parse(s); } catch (_) { return; }
+          if (o && Array.isArray(o.partial)) { if (tab >= 0) chrome.tabs.sendMessage(tab, { type: 'partial', key: msg.key, cues: o.partial }).catch(() => {}); } else body = o || {};
+        };
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (value) buf += dec.decode(value, { stream: true });
+          for (let nl; (nl = buf.indexOf('\n')) >= 0; buf = buf.slice(nl + 1)) if (buf.slice(0, nl).trim()) line(buf.slice(0, nl));
+          if (done) break;
+        }
+        if (buf.trim()) line(buf);
+      } else body = await res.json().catch(() => ({}));
       reply(res.ok ? body : { ...body, status: 'error', error: body.error || 'HTTP ' + res.status });
     })
     .catch((e) => reply(e.name === 'AbortError' ? { status: 'cancelled' }

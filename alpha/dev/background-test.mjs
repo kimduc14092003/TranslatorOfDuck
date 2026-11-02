@@ -30,9 +30,11 @@ async function startServer(routes = ['/v1/warm', '/v1/bump', '/v1/subtitles']) {
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   return { got, base: 'http://127.0.0.1:' + srv.address().port, close: () => new Promise((r) => srv.close(r)) };
 }
-function load() {
+// toTab: các tin background.js gửi cho tab (chrome.tabs.sendMessage).
+function load(toTab = []) {
   let listener = null;
-  const ctx = { chrome: { runtime: { onMessage: { addListener: (f) => { listener = f; } } } }, AbortController, fetch };
+  const ctx = { chrome: { runtime: { onMessage: { addListener: (f) => { listener = f; } } },
+    tabs: { sendMessage: (tab, m) => { toTab.push({ tab, ...m }); return Promise.resolve(); } } }, AbortController, fetch, TextDecoder };
   vm.createContext(ctx); vm.runInContext(SRC, ctx);
   return (msg) => { const replies = []; const ret = listener(msg, { tab: { id: 1 } }, (r) => replies.push(r)); return { ret, replies }; };
 }
@@ -71,6 +73,33 @@ await t('warm: địa chỉ server không phải máy này thì không gọi; se
   send({ type: 'warm', server: s.base });   // server đã tắt: lỗi kết nối
   await new Promise((r) => setTimeout(r, 200));
   assert.deepEqual(unhandled.map(String), [], 'lỗi không được bắt');
+});
+
+await t('subtitles dạng stream: các dòng { partial } chuyển ngay cho tab (type partial, đúng key), dòng cuối là câu trả lời; JSON một lần vẫn như cũ', async () => {
+  const fin = { status: 'ok', cues: [{ start: 1, end: 2, vi: 'A' }, { start: 3, end: 4, vi: 'B' }] };
+  const srv = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    req.on('end', () => {
+      if (!JSON.parse(body).stream) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify(fin)); }
+      res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });
+      res.write(JSON.stringify({ partial: [fin.cues[0]] }) + '\n');
+      setTimeout(() => { res.write(JSON.stringify({ partial: fin.cues }) + '\n' + JSON.stringify(fin).slice(0, 10)); }, 30);
+      setTimeout(() => res.end(JSON.stringify(fin).slice(10) + '\n'), 60);   // dòng cuối bị chia làm hai khúc
+    });
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const base = 'http://127.0.0.1:' + srv.address().port;
+  const toTab = [];
+  const send = load(toTab);
+  const r = send({ type: 'subtitles', server: base, key: '7500000000000000004:1', payload: { id: '7500000000000000004', stream: true } });
+  const plain = send({ type: 'subtitles', server: base, key: '7500000000000000004:2', payload: { id: '7500000000000000004' } });
+  for (let i = 0; i < 100 && !(r.replies.length && plain.replies.length); i++) await new Promise((res) => setTimeout(res, 10));
+  await new Promise((res) => srv.close(res));
+  assert.equal(r.ret, true);
+  assert.deepEqual(toTab.map((m) => [m.tab, m.type, m.key, m.cues.map((c) => c.vi).join('')]), [[1, 'partial', '7500000000000000004:1', 'A'], [1, 'partial', '7500000000000000004:1', 'AB']]);
+  assert.equal(JSON.stringify(r.replies), JSON.stringify([fin]));
+  assert.equal(JSON.stringify(plain.replies), JSON.stringify([fin]));
 });
 
 console.log(failed ? `\n${failed} kiểm tra trượt, ${n} đạt.` : `\n${n} kiểm tra đều đạt.`);

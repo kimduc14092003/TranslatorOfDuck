@@ -85,12 +85,12 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 
 | Lệnh | Kiểm tra gì |
 |---|---|
-| `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới, đánh dấu dòng hát, tiếng đệm trong lời hát, dòng nói ngắn gộp vào dòng hát, câu nói nhanh trong đoạn cả bài (20 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới ở cả hai chế độ lời bài hát, `rank`), Gemini hết lượt trong ngày (9 kiểm tra). `asr-fallback-test.mjs`: Fun-ASR hết hạn mức thì chuyển sang model dự phòng, giới hạn theo phút thì gọi lại (20 kiểm tra). `warm-test.mjs`: `/v1/warm` làm nóng đúng dịch vụ đang dùng, giãn 3 s, bỏ qua khi vừa có lệnh gọi thật, log thời gian kết nối (12 kiểm tra). `pronoun-test.mjs`: luật xưng hô trong câu lệnh, bảng xưng hô nhận vào và trả về, đọc bảng của đoạn trước từ cache, giới tính người đăng (21 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON, dịch chậm hơn hạn lần đầu thì lần gọi lại được hạn dài hơn, dịch vụ treo hẳn thì thôi sau 3 lần quá hạn, lượt rút gọn treo thì giữ dòng đầy đủ (14 kiểm tra). `lyrics-test.mjs`: chế độ lời bài hát, kể cả điệp khúc câu ngắn, ngữ cảnh ở chế độ thường, hai chế độ cùng lúc, đoạn cả bài có câu nói nhanh ở hai chế độ, kể cả khi không câu nào tự đủ là câu hát (19 kiểm tra) |
-| `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng, slide feed bị ẩn, trang kết quả tìm kiếm, đóng modal, HTTP 429, đoạn cả bài không dùng chung giữa hai chế độ , bảng xưng hô theo từng video, bảng thông tin khi rê chuột vào nhãn (52 kiểm tra) |
+| `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới, đánh dấu dòng hát, tiếng đệm trong lời hát, dòng nói ngắn gộp vào dòng hát, câu nói nhanh trong đoạn cả bài (20 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới ở cả hai chế độ lời bài hát, `rank`), Gemini hết lượt trong ngày (9 kiểm tra). `asr-fallback-test.mjs`: Fun-ASR hết hạn mức thì chuyển sang model dự phòng, giới hạn theo phút thì gọi lại (20 kiểm tra). `warm-test.mjs`: `/v1/warm` làm nóng đúng dịch vụ đang dùng, giãn 3 s, bỏ qua khi vừa có lệnh gọi thật, log thời gian kết nối (12 kiểm tra). `pronoun-test.mjs`: luật xưng hô trong câu lệnh, bảng xưng hô nhận vào và trả về, đọc bảng của đoạn trước từ cache, giới tính người đăng (21 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn và đoạn gấp bỏ rút gọn (7 kiểm tra). `stream-test.mjs`: dịch dạng stream (NDJSON: dòng xong trước rồi kết quả cuối; trả chậm mà đều không bị cắt; im trước chữ đầu thì gọi lại; cache và request thường trả JSON như cũ) (6 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON, dịch chậm hơn hạn lần đầu thì lần gọi lại được hạn dài hơn, dịch vụ treo hẳn thì thôi sau 3 lần quá hạn, lượt rút gọn treo thì giữ dòng đầy đủ (14 kiểm tra). `lyrics-test.mjs`: chế độ lời bài hát, kể cả điệp khúc câu ngắn, ngữ cảnh ở chế độ thường, hai chế độ cùng lúc, đoạn cả bài có câu nói nhanh ở hai chế độ, kể cả khi không câu nào tự đủ là câu hát (19 kiểm tra) |
+| `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng, slide feed bị ẩn, trang kết quả tìm kiếm, đóng modal, HTTP 429, đoạn cả bài không dùng chung giữa hai chế độ , bảng xưng hô theo từng video, bảng thông tin khi rê chuột vào nhãn, dòng dịch xong trước (tin partial) (53 kiểm tra) |
 | `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước, đoạn đầu tải chậm qua máy chủ chậm (trang video và feed), tải nhanh rồi chậm hẳn, rời feed, tải chậm vừa phải, đường truyền chậm đều, khựng giữa chừng, tua về sau khi bỏ đoạn , hàng dịch sẵn nhường video vừa mở, báo làm nóng, mốc thời gian trong câu trả lời status; một lượt tải từ byte 0 cho mục lục + q0 + đoạn 0 (nhiều rtt và băng thông, dịch sẵn, tua lúc đang tải, moov lớn, không có moov ở đầu, 200 cả file, lướt đi, 429, CDN treo, lượt đó chậm từ byte 0, đổi chế độ lời bài hát gửi đúng byte cũ, mở giữa video, tiến độ cho dropSlow); xem video dài trên đường truyền chậm, đoạn kế chờ lượt gửi (chế độ video dài, §6t); video sau slide livestream có lượt tải đầu chậm riêng (§6v); lượt tải lúc dịch sẵn treo rồi lướt tới, mục lục nhỏ giọt (§6w) (31 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms; `headerEnd` trên phần đầu file đang tải dở (5 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
-| `node alpha/dev/background-test.mjs` | background.js gửi `POST /v1/warm` (kiểu JSON) tới server trên máy, bỏ qua lỗi, chặn địa chỉ ngoài máy (2 kiểm tra) |
+| `node alpha/dev/background-test.mjs` | background.js gửi `POST /v1/warm` (kiểu JSON) tới server trên máy, bỏ qua lỗi, chặn địa chỉ ngoài máy; trả lời NDJSON: dòng { partial } chuyển cho tab, dòng cuối là câu trả lời (3 kiểm tra) |
 | `node alpha/dev/tap-test.mjs` | tap.main.js đọc response API với Response thật (fetch, XHR): thân chia khúc của search/stream, thân hỏng, giữ thứ tự danh sách tìm kiếm khi search/single đọc xong trước (3 kiểm tra) |
 | `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua, đồng hồ trình phát lệch 50 s, CDN treo một lần, lời bài hát ♪, bấm ô tắt lời bài hát trong popup, video mở từ trang tìm kiếm, video đầu tải một lượt từ byte 0 , bảng xưng hô gửi lại cho đoạn sau, rê chuột thật vào nhãn thì hiện bảng thông tin (30 kiểm tra) |
 
@@ -962,6 +962,29 @@ Chủ dự án chọn làm cả 4 hướng.
      - mục lục nhỏ giọt có video khác tải nhanh: 9,25 s, nay 5,75 s;
      - đường truyền chậm đều / chia đều: như cũ, không gọi lại.
 4. **Hiện từng dòng khi dịch xong** (streaming): §6x.
+
+## 6x. Hiện từng dòng ngay khi dịch xong (2/11, extension 0.2.32, server)
+
+- **Server:**
+  - Lượt dịch đầu gọi OpenAI dạng stream (`stream: true`, SSE; `readSse` trong `httpJson`). `completedCues` đọc các dòng đã đóng trong JSON đang về dở, `translate(…, { onPartial })` báo các dòng đó, cùng dạng dòng như kết quả cuối, chưa rút gọn.
+  - Request có `stream: true` nhận NDJSON: mỗi lần có thêm dòng là `{ partial: [dòng…] }` (đủ các dòng tới lúc đó), dòng cuối là kết quả như trả lời thường. Lỗi cũng nằm ở dòng cuối vì đã gửi header 200.
+  - Request nhập vào việc đang chạy cũng nhận các dòng đó (`job.feed`). Kết quả có trong cache, request không xin stream, hay dịch bằng Gemini: JSON một lần như trước.
+- **Hạn của lượt stream:**
+  - hạn 10/20/30 s tính tới chữ đầu tiên;
+  - chữ đã về thì chỉ cắt khi im quá 6 s, cả lượt tối đa 60 s.
+
+  Lượt chậm mà đều không bị cắt giữa chừng rồi gọi lại như trước.
+- **Extension:**
+  - `background.js` đọc NDJSON và chuyển `{ type: 'partial', key, cues }` cho tab.
+  - `content.js` giữ các dòng đó ở đoạn hay mẩu nhanh còn ở server (`partial`) và hiện tạm (`mergeCues`). Dòng tạm nhường dòng của đoạn đã xong và của mẩu nhanh đã xong. Kết quả cuối thay hết. Tin của yêu cầu đã xong hay không rõ thì bỏ.
+  - Nhãn "VI" khi dòng tạm đã tới chỗ đang xem. Bảng thông tin ghi "đã có N dòng".
+  - Mốc `quickPartial`, `chunkPartial`.
+- **Đo trên Douyin thật** (Chromium riêng, server riêng, key thật, 3 video mở lạnh):
+  - dòng tạm đầu tiên của mẩu nhanh tới trước kết quả cuối 0,33–0,58 s, sub đầu sau 3,56 / 4,47 / 6,63 s;
+  - đoạn 0 (~10 dòng): dòng tạm đầu sớm hơn 1,08–1,19 s.
+
+  Lợi lớn hơn khi dịch vụ chậm (thời gian viết tỉ lệ với số dòng).
+- **Test:** `stream-test.mjs` (server, 6 kiểm tra), background-test (3), content-sim-test (53). e2e dùng Gemini giả nên không đi đường stream.
 
 ## 7. Việc tiếp theo trên Mac
 

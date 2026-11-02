@@ -198,6 +198,39 @@ onChannel('undici:client:sendHeaders', ({ request, socket }) => {
 });
 // Lần gần nhất có lệnh gọi thật tới mỗi origin (lúc bắt đầu và lúc xong): warmProviders bỏ qua origin vừa dùng.
 const lastReal = new Map();
+// Lượt gọi dạng stream (init.onText, chỉ lượt dịch đầu của OpenAI): hạn của lần gọi tính tới chữ đầu tiên; chữ đã về thì
+// chỉ cắt khi im quá STREAM_IDLE_MS, cả lượt tối đa STREAM_MAX_MS (đang trả lời chậm mà đều thì không cắt giữa chừng).
+const STREAM_IDLE_MS = 6000, STREAM_MAX_MS = 60000;
+// Đọc trả lời dạng SSE của Chat Completions (stream: true): gọi onText(nội dung đã nhận) mỗi lần có chữ mới, kick() để gia
+// hạn. Trả về như trả lời thường ({ choices: [{ message: { content } }] }) để phần còn lại của httpJson, openaiJson không đổi.
+async function readSse(res, onText, kick) {
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '', content = '', refusal = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    for (let nl; (nl = buf.indexOf('\n')) >= 0; ) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line.startsWith('data:')) continue;
+      const data = line.slice(5).trim();
+      if (data === '[DONE]') continue;
+      let ev;
+      try { ev = JSON.parse(data); } catch (_) { continue; }
+      if (ev.error) throw new Error('OpenAI stream: ' + JSON.stringify(ev.error).slice(0, 200));
+      const d = ev.choices && ev.choices[0] && ev.choices[0].delta;
+      if (d && typeof d.refusal === 'string') refusal += d.refusal;
+      if (d && typeof d.content === 'string' && d.content) {
+        content += d.content;
+        kick();
+        try { onText(content); } catch (_) { /* lỗi ở phía nhận không làm hỏng lượt gọi */ }
+      }
+    }
+  }
+  return JSON.stringify({ choices: [{ message: { content, ...(refusal ? { refusal } : {}) } }] });
+}
 async function httpJson(url, init, timeoutMs = 20000) {
   const host = new URL(url).host;
   const origin = new URL(url).origin;
@@ -210,15 +243,21 @@ async function httpJson(url, init, timeoutMs = 20000) {
     const rec = { headMs: null, fresh: null };
     calls?.push(rec);
     const limitMs = typeof timeoutMs === 'function' ? timeoutMs(i) : timeoutMs;
+    const { onText, ...fetchInit } = init;
+    const ctl = new AbortController();
+    const timeout = () => ctl.abort(new DOMException('quá hạn', 'TimeoutError'));
+    let timer = setTimeout(timeout, limitMs);
+    const whole = onText ? setTimeout(timeout, STREAM_MAX_MS) : null;
+    const kick = () => { clearTimeout(timer); timer = setTimeout(timeout, STREAM_IDLE_MS); };
     try {
-      const limit = AbortSignal.timeout(limitMs);
+      const limit = ctl.signal;
       const t0 = Date.now();
       lastReal.set(origin, t0);
       try {
-        res = await netCtx.run({ calls, rec }, () => fetch(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, limit]) : limit }));
+        res = await netCtx.run({ calls, rec }, () => fetch(url, { ...fetchInit, signal: fetchInit.signal ? AbortSignal.any([fetchInit.signal, limit]) : limit }));
         rec.headMs = Date.now() - t0;
-        text = await res.text();
-      } finally { lastReal.set(origin, Date.now()); }
+        text = onText && res.ok && /event-stream/.test(res.headers.get('content-type') || '') ? await readSse(res, onText, kick) : await res.text();
+      } finally { clearTimeout(timer); clearTimeout(whole); lastReal.set(origin, Date.now()); }
     } catch (e) {
       if (init.signal?.aborted) throw e;
       const timedOut = e.name === 'TimeoutError';
@@ -365,12 +404,13 @@ const toJsonSchema = (x) => {
   if (out.type === 'object') out.additionalProperties = false;
   return out;
 };
-async function openaiJson(text, schema, temperature, signal, timeoutMs = 10000) {
+// onText (nếu có): gọi dạng stream, onText(nội dung JSON đã nhận tới lúc đó) mỗi lần có chữ mới.
+async function openaiJson(text, schema, temperature, signal, timeoutMs = 10000, onText = null) {
   const reasoning = OPENAI_REASONING_EFFORT || /^(o\d|gpt-([5-9]|\d\d))/.test(OPENAI_MODEL);   // model suy luận không nhận temperature
   const b = await httpJson(`${OPENAI_BASE}/chat/completions`, {
-    method: 'POST',
+    method: 'POST', ...(onText ? { onText } : {}),
     signal, headers: { Authorization: 'Bearer ' + ENV.OPENAI_API_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: OPENAI_MODEL, messages: [{ role: 'user', content: text }], ...(reasoning ? {} : { temperature }),
+    body: JSON.stringify({ model: OPENAI_MODEL, messages: [{ role: 'user', content: text }], ...(reasoning ? {} : { temperature }), ...(onText ? { stream: true } : {}),
       ...(OPENAI_REASONING_EFFORT ? { reasoning_effort: OPENAI_REASONING_EFFORT } : {}),
       response_format: { type: 'json_schema', json_schema: { name: 'subtitles', strict: true, schema: toJsonSchema(schema) } } }),
   }, timeoutMs);
@@ -379,8 +419,9 @@ async function openaiJson(text, schema, temperature, signal, timeoutMs = 10000) 
   return JSON.parse((m && m.content) || '{}');
 }
 // Lượt gọi model dịch: hạn tăng dần (MT_LIMIT). httpJson nhận hạn là số (cố định) hay hàm (theo lần gọi).
-const mtJson = (text, schema, temperature, signal) =>
-  (mtProvider() === 'openai' ? openaiJson(text, schema, temperature, signal, MT_LIMIT) : geminiJson([{ text }], schema, temperature, signal, MT_LIMIT));
+// onText: chỉ OpenAI (stream); Gemini trả một lần như trước.
+const mtJson = (text, schema, temperature, signal, onText = null) =>
+  (mtProvider() === 'openai' ? openaiJson(text, schema, temperature, signal, MT_LIMIT, onText) : geminiJson([{ text }], schema, temperature, signal, MT_LIMIT));
 const mtService = () => (mtProvider() === 'openai' ? 'OpenAI' : 'Gemini');
 async function geminiAsr(mp3, signal) {
   const schema = { type: 'OBJECT', properties: { segments: { type: 'ARRAY', items: { type: 'OBJECT', properties: {
@@ -710,14 +751,44 @@ const PRONOUN_RULES = [
   'Lời hát: chọn một cặp cho cả bài theo người đang hát và người được hát tặng (tình ca nam hát → anh/em, nữ hát → em/anh; hát tặng người được gọi 姐姐 → em/chị như lời nói quanh đó; bài thiếu nhi → mình/bạn, không anh/em kiểu người yêu) rồi giữ cặp đó ở mọi dòng hát và mọi đoạn.',
 ].join('\n');
 const budget = (c) => Math.floor(Math.min(84, 17 * (c.end - c.start)));
+// Các object đã đóng trong mảng "cues" của JSON đang nhận dở ({"pronouns":…,"cues":[{"id":1,"vi":"…"},{"id":2,"vi":"…).
+export function completedCues(text) {
+  const at = text.indexOf('"cues"');
+  const open = at < 0 ? -1 : text.indexOf('[', at);
+  if (open < 0) return [];
+  const out = [];
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = open + 1; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') { if (depth === 0) start = i; depth++; }
+    else if (ch === '}') { depth--; if (depth === 0 && start >= 0) { try { out.push(JSON.parse(text.slice(start, i + 1))); } catch (_) { /* bỏ object hỏng */ } start = -1; } }
+    else if (ch === ']' && depth === 0) break;
+  }
+  return out;
+}
 // context: dòng đã dịch ngay trước (hoặc ở đoạn đã dịch gần nhất phía trước, far = true). before: lời nói ngay trước
 // đoạn (chữ Hán, chưa dịch) khi đoạn trước chưa dịch, ví dụ vừa tua tới.
 // condense = false: bỏ lượt rút gọn dòng quá dài (mẩu nhanh: sub ra sớm hơn một lần gọi model).
 // Dòng có sung (chế độ lời bài hát) được dịch như lời bài hát.
 // meta.pronouns: bảng xưng hô video đã dùng (extension gửi lại); meta.author: người đăng. Trả { cues, pronouns }.
 // Không tăng PIPELINE_VERSION: file cache cũ (không có pronouns) vẫn dùng được, chỉ không mang bảng xưng hô.
-export async function translate(meta, cues, context = [], signal, { far = false, before = [], condense = true } = {}) {
+// onPartial(cues): các dòng đã dịch xong trong lúc model còn đang viết (lượt dịch đầu, OpenAI stream), mỗi lần có thêm dòng;
+// cùng dạng dòng như kết quả cuối, chưa rút gọn. Extension hiện tạm, kết quả cuối thay.
+export async function translate(meta, cues, context = [], signal, { far = false, before = [], condense = true, onPartial = null } = {}) {
   const sung = cues.some(c => c.sung);
+  let shown = 0;
+  const byId = new Map(cues.map(c => [c.id, c]));
+  const onText = onPartial && ((content) => {
+    const done = completedCues(content);
+    if (done.length <= shown) return;
+    shown = done.length;
+    const part = done.map(x => ({ c: byId.get(x.id), vi: fixViText(String(x.vi || '')) }))
+      .filter(x => x.c && x.vi && !(x.vi.match(HAN) || []).length)
+      .map(({ c, vi }) => ({ start: c.start, end: c.end, se: c.se, vi, zh: c.zh, ...(c.sung ? { sung: true } : {}) }));
+    if (part.length) onPartial(part);
+  });
   if (!mtProvider()) throw new Error('Chưa có OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env');
   const known = normalizePronouns(meta.pronouns);
   const author = authorHint(meta.author);
@@ -744,7 +815,7 @@ export async function translate(meta, cues, context = [], signal, { far = false,
       + (known ? 'chỉ ghi cặp MỚI (người nói hay người nghe chưa có trong bảng) hoặc cặp SỬA (ghi đúng "who" như trong bảng); cặp trong bảng không đổi thì không chép lại, không có gì mới thì pairs rỗng. Dịch "cues" theo bảng cùng các cặp vừa ghi.'
         : 'các cặp xưng hô dùng trong các dòng này. Dịch "cues" đúng theo các cặp đó.'),
     'Các dòng: ' + JSON.stringify(cues.map(c => ({ id: c.id, seconds: round(c.end - c.start, 1), max_chars: budget(c), zh: c.zh, ...(c.sung ? { sung: true } : {}) }))),
-  ].join('\n'), TRANSLATE_SCHEMA, 0.2, signal);
+  ].join('\n'), TRANSLATE_SCHEMA, 0.2, signal, onText);
   const pronouns = mergePronouns(first.pronouns, known);
   const vi = new Map((first.cues || []).map(c => [c.id, fixViText(c.vi)]));
   const out = cues.map(c => {
@@ -844,7 +915,7 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   base.debug.pronounsIn = normalizePronouns(tmeta.pronouns);
   base.debug.pronounsCtx = ctxPronouns ? ctxPronouns.pairs.length : 0;
   opts.signal?.throwIfAborted();
-  const tr = cues.length ? await netCtx.run({ calls: net.mt }, () => translate(tmeta, cues, context, opts.signal, { far, before: context.length && !far ? [] : before, condense: opts.condense !== false })) : { cues: [], pronouns: null };
+  const tr = cues.length ? await netCtx.run({ calls: net.mt }, () => translate(tmeta, cues, context, opts.signal, { far, before: context.length && !far ? [] : before, condense: opts.condense !== false, onPartial: opts.onPartial })) : { cues: [], pronouns: null };
   opts.signal?.throwIfAborted();   // huỷ giữa lượt rút gọn (lượt đó tự bắt lỗi): không trả kết quả dở
   const tMt = Date.now();
   const vi = tr.cues;

@@ -166,7 +166,8 @@
   //   t: ms theo performance.now() tính từ lúc đó, xếp theo thời gian, mỗi mốc chỉ lần đầu; số âm: làm trước khi lướt tới
   //     (dịch sẵn). Mốc: current (0) thành video đang xem; item có metadata; video thấy thẻ <video> của nó; ready
   //     readyState >= 1; play thời gian phát chạy; settle bắt đầu tính "đứng yên" (SETTLE); moov, moovEnd tải mục lục;
-  //     quickDl, quickDlEnd tải âm thanh mẩu nhanh; quickPost, quickReply gửi, nhận mẩu nhanh; chunkDl, chunkDlEnd,
+  //     quickDl, quickDlEnd tải âm thanh mẩu nhanh; quickPost, quickPartial, quickReply gửi, dòng tạm đầu tiên (server gửi
+  //     dần), nhận mẩu nhanh; chunkDl, chunkDlEnd, chunkPartial,
   //     chunkPost, chunkReply như vậy cho đoạn ở chỗ đang xem (video chưa xem: đoạn 0); drawn vẽ dòng sub đầu tiên.
   // Video chưa là video đang xem mà đã có mốc (dịch sẵn) giữ riêng, cũng tối đa MARKS_MAX.
   const MARKS_MAX = 20;
@@ -814,9 +815,16 @@
     const se = (c) => c.se || c.end;
     const covered = (cue) => done.some(ch => (cue.start >= ch.from && cue.start < ch.to)
       || (ch.cues || []).some(x => cue.start < se(x) - 0.1 && x.start < se(cue) - 0.1));
-    const quick = [...v.quick.values()].filter(q => q.status === 'ok')
-      .map(q => ({ ...q, cues: (q.cues || []).filter(x => !covered(x)) })).filter(q => q.cues.length);
-    v.cues = TodCues.merge([...done, ...quick].sort((a, b) => a.from - b.from));
+    // Dòng dịch xong trước (partial, server gửi dần: 0.2.32) của đoạn, mẩu nhanh còn ở server: hiện tạm, nhường dòng của đoạn
+    // đã xong và của mẩu nhanh đã xong; kết quả cuối thay (done() của runChunk, runQuick).
+    const live = (x) => x.status === 'pending' && x.sent && Array.isArray(x.partial) && x.partial.length > 0;
+    const quick = [...v.quick.values()].filter(q => q.status === 'ok' || live(q))
+      .map(q => ({ ...q, cues: (q.status === 'ok' ? q.cues || [] : q.partial).filter(x => !covered(x)) })).filter(q => q.cues.length);
+    const quickOk = quick.filter(q => q.status === 'ok');
+    const byQuick = (cue) => quickOk.some(q => q.cues.some(x => cue.start < se(x) - 0.1 && x.start < se(cue) - 0.1));
+    const part = [...v.chunks.values()].filter(live)
+      .map(c => ({ from: c.from, to: c.to, cues: c.partial.filter(x => !covered(x) && !byQuick(x)) })).filter(c => c.cues.length);
+    v.cues = TodCues.merge([...done, ...quick, ...part].sort((a, b) => a.from - b.from));
   }
   const superseded = (v, q) => !!v.plan && v.plan.every(([a, b], k) => b <= q.from || a >= q.to || (v.chunks.get(k) || {}).status === 'ok');
   // Không thấy video đang xem (một lượt dò hụt, hay vừa đóng modal): chờ tối đa ~1,2 s xem nó có quay lại không rồi mới
@@ -983,7 +991,7 @@
       const pg = v.pronGen;
       chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':q' + from, payload: {
         id, desc: d.desc, hashtags: d.hashtags, ...authorPayload(d), durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
-        quick: true, urgent: true, rank: 0, lyrics: q.lyrics, ...pronPayload(v), aac: toBase64(aac) } })
+        quick: true, urgent: true, rank: 0, lyrics: q.lyrics, stream: true, ...pronPayload(v), aac: toBase64(aac) } })
         .then((r) => { mark(id, 'quickReply'); r = r && r.status ? r : { status: 'error', error: (r && r.error) || 'không có phản hồi', unreachable: true }; noteReply(r); done(r, pg); })
         .catch((e) => { mark(id, 'quickReply'); const r = { status: 'error', error: e.message, unreachable: true }; noteReply(r); done(r); });
       if (id === currentId) pump(lanes.prefetch);   // hàng dịch sẵn hết nhường (prefetchHeld)
@@ -1065,7 +1073,7 @@
       const pg = v.pronGen;
       chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':' + k, payload: {
         id, desc: d.desc, hashtags: d.hashtags, ...authorPayload(d), durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
-        prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, prefetch: id !== currentId, lyrics: entry.lyrics, ...pronPayload(v),
+        prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, prefetch: id !== currentId, lyrics: entry.lyrics, stream: true, ...pronPayload(v),
         rank: id === currentId ? 0 : next >= 0 ? next + 1 : PREFETCH, aac: toBase64(aac) } })
         .then((r) => done(r && r.status ? { ...r, from, to } : { status: 'error', error: (r && r.error) || 'không có phản hồi', unreachable: true, from, to }, true, pg))
         .catch((e) => done({ status: 'error', error: e.message, unreachable: true, from, to }, true));
@@ -1219,7 +1227,7 @@
     if (c.status === 'skipped') return 'bỏ qua: ' + (SKIP_WHY[c.label] || 'không dịch');
     if (c.status === 'no_audio') return 'không có âm thanh';
     if (c.status === 'error') return c.slow ? 'tải quá chậm, dùng mẩu nhanh' : 'lỗi: ' + String(c.error || '').slice(0, 50);
-    if (c.sent) return `đang dịch ở server${c.sentAt ? ` (${Math.round((Date.now() - c.sentAt) / 1000)} s)` : ''}`;
+    if (c.sent) return `đang dịch ở server${c.sentAt ? ` (${Math.round((Date.now() - c.sentAt) / 1000)} s` : ''}${Array.isArray(c.partial) && c.partial.length ? `${c.sentAt ? ', ' : ' ('}đã có ${c.partial.length} dòng)` : c.sentAt ? ')' : ''}`;
     if (c.waiting) return 'đã tải, chờ đoạn trước dịch xong';
     // win: cả cửa sổ; bytes: phần lượt đang chạy phải tải (lượt nối tiếp sau lượt tải đầu video chỉ tải phần còn thiếu).
     if (c.since != null && c.bytes) { const w = c.win || c.bytes; return `đang tải ${Math.min(99, Math.max(0, Math.round(100 * (w - c.bytes + (c.got || 0)) / w)))}%`; }
@@ -1342,6 +1350,10 @@
     // mẩu nhanh nối tiếp và đoạn kế đang làm, không phải lỗi.
     if (cv && (!res || res.status === 'pending' || res.slow)) {
       for (const q of cv.quick.values()) if (t >= q.from && t < q.to && q.status === 'ok') res = q;
+      // Đoạn (hay mẩu nhanh) ở server đã gửi dần dòng dịch tới chỗ đang xem: "VI" (dòng đang hiện), không "đang dịch".
+      const ahead = (x) => x && x.status === 'pending' && Array.isArray(x.partial) && x.partial.some(c => c.start <= t + 1);
+      if (res && ahead(res)) res = { status: 'ok' };
+      else for (const q of cv.quick.values()) if (t >= q.from && t < q.to && ahead(q)) res = { status: 'ok' };
     }
     // Lỗi tải sắp được thử lại ngay (fastRetry): vẫn là "đang dịch", không hiện "lỗi".
     const st = res ? (res.slow || (res.status === 'error' && fastRetry(res, currentId)) ? 'pending' : res.status) : (eligible(items.get(currentId)) ? 'pending' : null);
@@ -1425,6 +1437,21 @@
     }
   }
   chrome.runtime.onMessage.addListener((msg, _s, reply) => {
+    // Dòng dịch xong trước của một yêu cầu còn ở server (background.js chuyển từ NDJSON): giữ ở đoạn/mẩu nhanh đó (partial,
+    // đủ các dòng tới lúc đó), hiện tạm (mergeCues). key như lúc gửi: "<id>:<k>" (đoạn) hay "<id>:q<from>" (mẩu nhanh).
+    if (msg && msg.type === 'partial') {
+      const m = typeof msg.key === 'string' && /^(\d+):(q?)(\d+)$/.exec(msg.key);
+      const v = m && vids.get(m[1]);
+      const x = v && (m[2] ? v.quick.get(Number(m[3])) : v.chunks.get(Number(m[3])));
+      if (x && x.status === 'pending' && x.sent && Array.isArray(msg.cues)) {
+        if (!x.partial) mark(m[1], m[2] ? 'quickPartial' : (x.head ? 'chunkPartial' : 'partial'));   // mốc: dòng tạm đầu tiên
+        x.partial = msg.cues.filter(c => c && typeof c.start === 'number' && typeof c.end === 'number' && c.end > c.start && typeof c.vi === 'string' && c.vi)
+          .slice(0, 200).map(c => ({ start: c.start, end: c.end, se: typeof c.se === 'number' ? c.se : c.end, vi: c.vi.slice(0, 300),
+            zh: typeof c.zh === 'string' ? c.zh : '', ...(c.sung ? { sung: true } : {}) }));
+        mergeCues(v);
+      }
+      return false;
+    }
     if (msg && msg.type === 'status') {
       // Mỗi video tính một lần: có đoạn đã dịch thì là "ok", còn đang chờ thì "pending"…
       const counts = {};
