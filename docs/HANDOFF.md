@@ -87,7 +87,7 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 |---|---|
 | `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới, đánh dấu dòng hát, tiếng đệm trong lời hát, dòng nói ngắn gộp vào dòng hát, câu nói nhanh trong đoạn cả bài (20 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới ở cả hai chế độ lời bài hát, `rank`), Gemini hết lượt trong ngày (9 kiểm tra). `asr-fallback-test.mjs`: Fun-ASR hết hạn mức thì chuyển sang model dự phòng, giới hạn theo phút thì gọi lại (20 kiểm tra). `warm-test.mjs`: `/v1/warm` làm nóng đúng dịch vụ đang dùng, giãn 3 s, bỏ qua khi vừa có lệnh gọi thật, log thời gian kết nối (12 kiểm tra). `pronoun-test.mjs`: luật xưng hô trong câu lệnh, bảng xưng hô nhận vào và trả về, đọc bảng của đoạn trước từ cache, giới tính người đăng (21 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn bỏ rút gọn (7 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON, dịch chậm hơn hạn lần đầu thì lần gọi lại được hạn dài hơn, dịch vụ treo hẳn thì thôi sau 3 lần quá hạn, lượt rút gọn treo thì giữ dòng đầy đủ (14 kiểm tra). `lyrics-test.mjs`: chế độ lời bài hát, kể cả điệp khúc câu ngắn, ngữ cảnh ở chế độ thường, hai chế độ cùng lúc, đoạn cả bài có câu nói nhanh ở hai chế độ, kể cả khi không câu nào tự đủ là câu hát (19 kiểm tra) |
 | `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng, slide feed bị ẩn, trang kết quả tìm kiếm, đóng modal, HTTP 429, đoạn cả bài không dùng chung giữa hai chế độ , bảng xưng hô theo từng video (51 kiểm tra) |
-| `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước, đoạn đầu tải chậm qua máy chủ chậm (trang video và feed), tải nhanh rồi chậm hẳn, rời feed, tải chậm vừa phải, đường truyền chậm đều, khựng giữa chừng, tua về sau khi bỏ đoạn , hàng dịch sẵn nhường video vừa mở, báo làm nóng, mốc thời gian trong câu trả lời status; một lượt tải từ byte 0 cho mục lục + q0 + đoạn 0 (nhiều rtt và băng thông, dịch sẵn, tua lúc đang tải, moov lớn, không có moov ở đầu, 200 cả file, lướt đi, 429, CDN treo, lượt đó chậm từ byte 0, đổi chế độ lời bài hát gửi đúng byte cũ, mở giữa video, tiến độ cho dropSlow) (27 kiểm tra) |
+| `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước, đoạn đầu tải chậm qua máy chủ chậm (trang video và feed), tải nhanh rồi chậm hẳn, rời feed, tải chậm vừa phải, đường truyền chậm đều, khựng giữa chừng, tua về sau khi bỏ đoạn , hàng dịch sẵn nhường video vừa mở, báo làm nóng, mốc thời gian trong câu trả lời status; một lượt tải từ byte 0 cho mục lục + q0 + đoạn 0 (nhiều rtt và băng thông, dịch sẵn, tua lúc đang tải, moov lớn, không có moov ở đầu, 200 cả file, lướt đi, 429, CDN treo, lượt đó chậm từ byte 0, đổi chế độ lời bài hát gửi đúng byte cũ, mở giữa video, tiến độ cho dropSlow); xem video dài trên đường truyền chậm, đoạn kế chờ lượt gửi (chế độ video dài, §6t) (29 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms; `headerEnd` trên phần đầu file đang tải dở (5 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
 | `node alpha/dev/background-test.mjs` | background.js gửi `POST /v1/warm` (kiểu JSON) tới server trên máy, bỏ qua lỗi, chặn địa chỉ ngoài máy (2 kiểm tra) |
@@ -826,6 +826,65 @@ Một agent test như người dùng thật (10 video, chế độ khách), rồ
   - lượt rút gọn treo: giữ dòng đầy đủ sau 2 lượt gọi.
   - Chạy thử trên bản sao code bỏ từng phần sửa thì đúng kiểm tra tương ứng hỏng. Mọi bộ khác đạt.
 - **Bẫy khi đo:** máy Mac chạy pin về đêm thì vào "Maintenance Sleep". Lô đo kéo từ 10 phút lên 2,4 giờ, warm-test hỏng ECONNRESET dù code đúng. Xem `pmset -g log` trước khi tin một lần chạy chậm hay chập chờn.
+
+## 6t. Video dài: sub đứt quãng vì dịch không kịp (2/11, extension 0.2.28)
+
+- **Chủ dự án báo:** xem một video dài (678 s) trên feed thì sub cứ ngắt quãng.
+- **Log và mốc của extension lúc đó:**
+  - Server không chậm: nhận dạng ~1 s, dịch 1–4 s mỗi đoạn.
+  - Lượt tải đoạn 0 bắt đầu từ lúc dịch sẵn, 4,2 s trước khi mở video, và không bao giờ xong. Mục lục mất 3,9 s.
+  - Đoạn [0,20) và [20,50) không tới server. Có mẩu nhanh 0–10 s, rồi các mẩu nối tiếp từ giây 22.
+  - Trong 15 s đầu, hàng dịch sẵn gửi đoạn đầu của 4 video kế.
+- **Cách đo, dùng lại được** (scratchpad của phiên, không vào repo):
+  - Chromium for Testing riêng: cổng 9334, profile tạm, tắt tiếng.
+  - Server riêng: cổng 8788, cache riêng.
+  - Mở `https://www.douyin.com/jingxuan?modal_id=<id>` (khách không mở được `/video/<id>`, bị chuyển sang 精选).
+  - Giới hạn tải về cho cả tab bằng CDP `Network.emulateNetworkConditions`.
+  - Mẫu mỗi 250 ms: chỗ đang xem, nhãn, sub. Mọi lượt tải video qua CDP Network. Log server.
+- **Đo trên video đó (103 MB, 1,2 Mbit/s, âm thanh 128 kbit/s), bản 0.2.27:**
+  - Mạng tốt (1–3 MB/s): theo kịp, chỉ 2,5 s "đang dịch" trong 180 s.
+  - Giới hạn 450 KB/s: 66% thời gian phát hiện "đang dịch", đoạn nào cũng về muộn 12–18 s.
+    - Mỗi đoạn 30 s là 5–6 MB, tải mất 20–28 s, cộng 6–7 s ở server.
+    - Đoạn kế chỉ bắt đầu tải khi đoạn ở chỗ đang xem đã có kết quả, nên mỗi vòng quá 30 s: đã trễ là trễ mãi.
+    - 2 phút đầu hàng dịch sẵn tải ~20 MB đoạn đầu của 4 video kế, chia đường truyền với video đang xem.
+  - Tải riêng phần tiếng vẫn không được (như §6c): đoạn 37,5 s có 0,6 MB tiếng nằm trong 5,3 MB, chia làm 1.125 mẩu xen giữa hình.
+    - CDN có nhận Range nhiều khoảng (trả `multipart/byteranges` cho 3 khoảng).
+    - Không dùng: một yêu cầu cả nghìn khoảng là kiểu yêu cầu bất thường (giống tấn công Range) với CDN của Douyin.
+  - Trình phát của trang tự tải tiếng riêng (DASH, `media-audio-und-mp4a`). `bit_rate_audio` từng trả 403 ở S1, chưa thử lại.
+- **Sửa: chế độ video dài.** Video đang xem đã phát quá 10 s (`WATCH_MS`, tính theo thời gian phát) thì:
+  - Hàng dịch sẵn không bắt đầu lượt tải mới khi video đang xem còn đoạn đang cần mà chưa tải xong (`currentBehind`).
+    - Lượt dịch sẵn đang chạy thì để chạy nốt.
+    - Video đang xem không nhận byte nào quá 1,5 s (CDN treo) thì không giữ.
+    - Đoạn đã tải xong, chờ lượt gửi thì không giữ.
+  - Đoạn kế tải ngay khi đoạn ở chỗ đang xem đã gửi server (`holdBack` chỉ chờ lúc nó còn đang tải).
+    - Tải xong thì chờ đoạn đó và đoạn liền trước có kết quả rồi mới gửi (`sendWait`), nên bảng xưng hô và ngữ cảnh đi theo thứ tự như cũ.
+    - Đoạn đã thành gấp thì gửi luôn.
+  - Đoạn còn xa không tải chung với mẩu nhanh đang tải cho chỗ đang xem.
+  - Dịch trước 60 s thay vì 30 s (`LOOKAHEAD_LONG`) chỉ khi ước một đoạn 30 s tải quá 10 s theo tốc độ đo được của video đó (`SLOW_CHUNK_MS`), và giữ luôn cho video đó.
+  - 10 s đầu y như 0.2.27.
+    - Mô phỏng lướt feed: bật các luật này ngay từ lúc mở thì lướt 4 s/video còn 3/12 video có sẵn kết quả thay vì 4/12; mạng chậm lướt 8 s/video có 2 video không kịp có sub.
+    - Bật từ giây 8, 10 hay 12 thì kết quả lướt y như cũ.
+- **Đo lại trên Douyin thật, cùng video:**
+  - Giới hạn 450 KB/s: "đang dịch" 35% trong 180 s (bản cũ 66% trong 150 s). Đoạn về muộn giảm dần 19,2 → 18,7 → 8,7 → 5,7 → 3,7 → 0,8 s, từ đoạn 170–200 thì về trước chỗ đang xem.
+  - Mạng tốt (bản giữa chừng, luôn dịch trước 60 s): 3,8 s "đang dịch" trong 150 s, chỉ trước khi mẩu đầu về; dịch sẵn vẫn chạy.
+- **Mô phỏng** (`content-time-test`, video 600 s, server 6 s): "đang dịch" trên 150 s giảm từ 82,25 s xuống 55 s ở 3000 B/s, và từ 24,5 s xuống 17,5 s ở 6000 B/s. Lướt 4 s và 8 s/video ở 9000 và 3000 B/s y như 0.2.27.
+- **Kiểm:** một verifier soát diff, có mô phỏng riêng (ok_with_fixes, 0 lỗi chặn, không thấy kẹt). Đã áp:
+  - dịch trước 60 s chỉ khi tải chậm: mạng nhanh thì không bớt "đang dịch", mà người ở lại 12–25 s rồi lướt đi trả thêm 22–48% lượt nhận dạng, dịch;
+  - dò lại video đang xem sau khi chờ lượt gửi (trước đó lần dò hụt làm tải lại đoạn đã tải);
+  - chờ cả đoạn liền trước để bảng xưng hô theo thứ tự;
+  - đoạn chờ lượt gửi không giữ hàng dịch sẵn lúc dừng xem;
+  - `prog.bytes` theo phần phải tải ở lượt nối tiếp;
+  - tính 10 s theo thời gian phát.
+- **Chưa làm** (verifier nêu, nhẹ):
+  - CDN chậm theo từng lượt (§6d) mà danh sách feed tới muộn: hàng dịch sẵn bị giữ suốt lúc video đang xem còn trễ, dù giữ không giúp gì.
+  - Đoạn gấp trả lỗi thì đoạn kế (đã cắt với 1,5 s gửi dư) không có 8 s ngữ cảnh như sau khi tua.
+  - Đoạn gấp bị huỷ hay đổi chế độ lời bài hát lúc ở server: đoạn kế có thể gửi trước lần xin lại.
+  - Tua lùi về sát đoạn gấp đang ở server: đoạn ở chỗ tua chờ tới khi đoạn gấp xong; mẩu nhanh vẫn phủ.
+- **Còn lại:**
+  - Phần đầu vẫn trễ trên mạng chậm: lượt dịch sẵn bắt đầu trong 10 s đầu vẫn chạy nốt; lúc vào trang, mục lục tải chung với chính trang Douyin (đo: 21 s cho 0,7 MB).
+  - Đường truyền dưới ~2 lần bitrate video thì vẫn không kịp: mỗi đoạn tải 5–6 MB để lấy 0,6 MB tiếng.
+  - Hướng lớn nếu cần: tải tiếng riêng như trình phát (thử lại `bit_rate_audio`), cần chủ dự án quyết và đo lại.
+- **Test:** content-time-test thêm hai ca (29 kiểm tra): xem video dài trên đường truyền chậm; đoạn kế chờ lượt gửi rồi mang bản xưng hô của đoạn trước, kể cả khi dò hụt video lúc hết chờ. Bản 0.2.27 trượt cả hai. Content-sim-test giữ nguyên 51 kiểm tra, đều đạt. e2e 29 kiểm tra đạt.
 
 ## 7. Việc tiếp theo trên Mac
 

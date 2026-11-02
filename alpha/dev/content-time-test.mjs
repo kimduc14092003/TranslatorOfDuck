@@ -247,7 +247,8 @@ await t('Đoạn đầu tải chậm (~25 s) qua máy chủ chậm, q0 bị bỏ
   assert.ok(qs.length <= 3 && qs.every((p, i) => i === 0 || p.from >= qs[i - 1].to - 1) && qs.every((p) => p.to <= 20), 'mẩu nhanh: ' + qs.map((p) => p.from + '-' + p.to));
   const f = await slowStart(() => 0);   // mọi lượt tải nhanh: như trước khi sửa
   assert.deepEqual(f.quick, ['q0']);
-  // Mục lục, q0 và đoạn [0,20) trên một lượt tải từ byte 0 (bản 0.2.25: lượt 64 KB, q0, đoạn 0 là ba lượt riêng).
+  // Mục lục, q0 và đoạn [0,20) trên một lượt tải từ byte 0 (bản 0.2.25: lượt 64 KB, q0, đoạn 0 là ba lượt riêng). Tải
+  // nhanh nên chế độ video dài (0.2.28) vẫn chỉ dịch trước 30 s: không tải thêm đoạn [80,88).
   assert.deepEqual(f.e.media().map((x) => x.a), [0, 18500, 48500], f.e.media().map(f.e.fmt).join(' | '));
 });
 
@@ -292,6 +293,57 @@ await t('Đường truyền chậm đều lúc vào trang (2 video dịch sẵn,
     assert.deepEqual(sent, keys, bw + ' B/s: ' + sent);
     assert.ok(cov >= cover, bw + ' B/s: có sub ' + cov + ' s trong 60 s đầu (cần ' + cover + ' s)');
     assert.ok(first != null && first < early, bw + ' B/s: sub đầu ở giây ' + first);
+  }
+});
+
+await t('Xem video dài trên feed, đường truyền chậm, 4 video kế chờ dịch sẵn: ở lại quá 10 s thì dịch sẵn nhường video đang xem, đoạn kế tải trong lúc đoạn trước ở server, đuổi kịp chỗ đang xem', async () => {
+  // Đo 2/11 trên Douyin thật (video 678 s, giới hạn 450 KB/s cho cả tab): bản 0.2.27 hàng dịch sẵn tải đoạn đầu của 4 video
+  // kế song song với đoạn của video đang xem, đoạn kế chỉ bắt đầu tải khi đoạn trước có kết quả; đoạn nào cũng về muộn
+  // 12–18 s, 66% thời gian phát hiện "đang dịch". Mô phỏng: video 600 s, 1000 B mỗi giây video, server trả lời sau 6 s,
+  // 150 s. Bản 0.2.27: "đang dịch" 82,25 s ở 3000 B/s (lần cuối ở giây 88), 24,5 s ở 6000 B/s (lần cuối ở giây 31). Lượt
+  // dịch sẵn đã bắt đầu trong 10 s đầu vẫn chạy nốt (ngắt thì lướt feed kém đi), nên phần đầu vẫn trễ.
+  const F = ['7500000000000000051', '7500000000000000052', '7500000000000000053', '7500000000000000054'];
+  for (const [bw, most, caught] of [[3000, 55, 60], [6000, 17.5, 25]]) {
+    const e = makeEnv(EXT, { bw, autoReplyMs: 6000 });
+    e.up('items', [e.item(A, 600000), ...F.map((id) => e.item(id, 120000))]);
+    e.activeId = A; e.video(A, 0);
+    let pend = 0, last = null, overlap = 0;
+    for (let i = 0; i < 600; i++) {
+      await e.tick(250);
+      const cv = e.vid(A), ph = e.dbg.playhead;
+      if (!cv || !cv.plan) continue;
+      let ok = (cv.chunks.get(cv.plan.findIndex(([a, b]) => ph >= a && ph < b)) || {}).status === 'ok';
+      for (const q of cv.quick.values()) if (ph >= q.from && ph < q.to && q.status === 'ok') ok = true;
+      if (!ok) { pend += 0.25; last = ph; }
+      // Đã ở lại quá 10 s (chế độ video dài): lượt dịch sẵn bắt đầu trong lúc video đang xem có lượt tải đang chạy.
+      const live = e.fetches.filter((f) => !f.done && !f.aborted);
+      if (e.perf > 10500 && live.some((f) => f.vid === A) && live.some((f) => f.vid !== A && f.vid !== 'x' && f.start === e.perf)) overlap++;
+    }
+    assert.ok(pend <= most, bw + ' B/s: "đang dịch" ' + pend + ' s / 150 s');
+    assert.ok(last == null || last < caught, bw + ' B/s: lần cuối chỗ đang xem chưa có sub ở giây ' + last);
+    assert.equal(overlap, 0, bw + ' B/s: lượt dịch sẵn bắt đầu giữa lúc video đang xem đang tải');
+  }
+});
+
+await t('Chế độ video dài: đoạn kế tải trong lúc đoạn ở chỗ đang xem ở server, gửi ngay sau khi đoạn đó có kết quả, kèm bản xưng hô của nó; lần dò hụt lúc hết chờ không làm tải lại', async () => {
+  // Verifier 2/11: dò hụt (không thấy video đang xem một lượt 250 ms) đúng lúc hết chờ thì đoạn đã tải bị bỏ rồi tải lại.
+  const PA = { pairs: [{ who: 'A → B', self: 'anh', other: 'em' }] };
+  for (const miss of [false, true]) {
+    const e = makeEnv(EXT, { bw: 9000 });   // server không tự trả lời
+    e.up('items', [e.item(A, 600000)]);
+    e.activeId = A; e.video(A, 0);
+    const answer = async () => { for (const k of [...e.replies.keys()]) if (!k.endsWith(':1')) await e.reply(k, { status: 'ok', cues: [] }); };
+    for (let i = 0; i < 112; i++) { await e.tick(250); await answer(); }   // 28 s: đoạn [20,50) ở server, chưa trả lời
+    const c2 = e.vid(A).chunks.get(2);
+    assert.ok(e.replies.has(A + ':1'), 'đoạn [20,50) phải đang ở server');
+    assert.ok(c2 && c2.status === 'pending' && !c2.sent && c2.waiting, 'đoạn [50,80) đã tải, chờ lượt gửi: ' + JSON.stringify(c2 && { st: c2.status, sent: c2.sent, w: c2.waiting }));
+    if (miss) { e.activeId = null; await e.tick(250); e.activeId = A; }
+    await e.reply(A + ':1', { status: 'ok', cues: [], pronouns: PA });
+    await e.tick(250); await e.tick(250);
+    const m2 = e.subs().find((m) => m.key === A + ':2');
+    assert.ok(m2, (miss ? 'dò hụt: ' : '') + 'đoạn [50,80) phải được gửi');
+    assert.equal(JSON.stringify(m2.payload.pronouns), JSON.stringify(PA), 'đoạn [50,80) mang bản xưng hô của đoạn [20,50)');   // khác realm (vm): so JSON
+    assert.equal(e.fetches.filter((f) => f.b === 85999).length, 1, (miss ? 'dò hụt: ' : '') + 'đoạn [50,80) chỉ tải một lần');
   }
 });
 
