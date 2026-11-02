@@ -1133,6 +1133,13 @@ Chủ dự án chọn làm cả 4 hướng.
   - đoạn 0 gửi 12,1 s âm thanh; xem quá 3 s thì gửi đoạn 1 (25,6 s âm thanh, gửi dư 4,5 s); video 27 s chia [0,10), [10,29);
   - không lỗi; worker đúng bản;
   - lướt đi ở giây 4 thì đoạn 1 đã gửi bị huỷ giữa chừng (2 lần mỗi lượt): tốn một phần tiền nhận dạng, cái giá của cửa 3 s.
+- **Chủ dự án dùng thử** (2/11, 19:27–19:33, Chromium của chủ dự án, ô thử bật, bộ ghi chỉ đọc `rec2.mjs` ghi nhãn/sub mỗi 250 ms, trạng thái, mọi lượt tải). Mẫu nhỏ, không có đối chứng bản cũ:
+  - 5 video, 7 lần xem: 5/7 có sub ngay khi tới, 2 lần còn lại chờ 3,4 s và 0,25 s. Video dài (xem 92 s) phủ 100%.
+  - Xem ≥ 12 s: 6 lần, phủ trung bình 88%, hụt đúng ở giây 10 hai lần:
+    - **6,1 s:** đoạn [10,25) gửi lúc 3,3 s, lượt tải qua máy chủ `v5-hl-mly-ov.zjcdn.com` chỉ 230 KB/s (2,34 MB mất 10,2 s), server làm 2,5 s. `restartSlow` không chạy vì so với tốc độ của chính video đó (`v.speed`): lượt dịch sẵn trước đó của video này cũng đi qua máy chủ chậm ấy (368 KB/s). Cùng lúc các video khác tải 4–11 MB/s.
+    - **2,6 s:** server nhận dạng mất 7,5 s (`qwen-audio-3.1-asr-flash`, thường ~1 s); lúc 19:31 một đoạn khác cũng mất 8,6 s.
+  - 13 lượt tải của extension, trung vị 5,3 MB/s. Server 14 việc, 1 huỷ giữa chừng, 0 lỗi, 262 s âm thanh.
+  - Hướng sửa (chưa làm): `restartSlow` so với tốc độ gần đây của mọi video (`fastDone`), không chỉ video đó; lần tải lại đi qua `/aweme/v1/play/` để có thể sang máy chủ khác.
 - **Chưa làm, có từ trước:** đoạn 0 không có lời (bỏ qua: nhạc) thì đoạn 1 gửi dư 8 s (`PRE_SEEK`). Ở chế độ thử điều này hay gặp hơn: 29 s âm thanh cho [10,25) thay vì 25,5 s.
 - **Lưu ý khác** (verifier, chấp nhận cho bản thử):
   - cửa 3 s tính theo thời gian phát, tính lại khi quay lại video;
