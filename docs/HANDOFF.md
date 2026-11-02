@@ -1042,6 +1042,23 @@ Chủ dự án chọn làm cả 4 hướng.
 
   e2e mặc định (Gemini giả) 31/31.
 
+## 6z. Video dài mở ngay sau khi khởi động lại Chromium: 69 s mới có sub (2/11, chỉ đo, chưa sửa)
+
+- **Chuyện xảy ra** (Chromium của chủ dự án, 0.2.33 với worker đúng bản, 16:41): video feed đầu tiên sau khi mở lại trình duyệt, dài 4:35, phát từ đầu.
+  - Mốc (mỗi mốc chỉ ghi lần đầu): mục lục xong ở 2,1 s. Không lượt tải nào của video này xong trước 48 s: không mẩu nhanh, không đoạn 0. Đoạn 0 không bao giờ tới server.
+  - Ở 48 s, đoạn 0:20–0:50 tải xong và được gửi, rồi bị huỷ 1,7 s sau vì chỗ đang xem đã qua 0:50 (server đã chạy nhận dạng 1,7 s).
+  - Đoạn 0:50–1:20 xong ở 70 s; sub đầu ở 69 s (dòng tạm). Sau đó các đoạn về đều, sớm hơn chỗ đang xem.
+  - Cùng lúc đó, video dịch sẵn kế tiếp mất ~20 s mới tới server.
+- **Đo lại** (17:15, Chromium riêng, modal, cùng video, 110 s): sub đầu ở giây 5 của video, không lặp lại được.
+  - Lượt tải trên máy chủ `v5-hl-mly-ov.zjcdn.com` chậm theo từng lượt: một lượt `bytes=0-` (video dịch sẵn) 158 KB/s suốt 28 s. Đoạn 1:50–2:20 hai lần 6 s không có header (cắt vì im), lần ba 762 KB/s, tổng 24 s.
+  - Các lượt khác tới cùng máy chủ đạt 11–19 MB/s.
+- **Chưa biết chắc nguyên nhân lần 16:41:** không có nhật ký từng lượt tải lúc đó. Giả thuyết:
+  - các lượt tải của video đó gặp kết nối CDN chậm;
+  - `headLate`, `dropSlow` không thôi lượt chậm, vì video đầu sau khi mở trình duyệt chưa có tốc độ tham chiếu (`v.speed`), và các lượt dịch sẵn cùng chậm (`othersLoading`).
+
+  Cần nhật ký từng lượt tải lần sau để kiểm.
+- **Số liệu cho hướng "tải tiếng riêng"** (§6t): trình phát của trang tải luồng tiếng riêng 0,13–0,17 MB mỗi ~6 s. Extension tải file gộp 6,4–8,8 MB mỗi đoạn 30 s, tức gấp ~10 lần số byte.
+
 ## 7. Việc tiếp theo trên Mac
 
 1. **Kiểm tra môi trường:** `node -v` (cần 18+), `git status`, đang ở nhánh `claude/busy-newton-1y8nzr`. Có `alpha/server/.env` chưa (chỉ kiểm có file, không đọc nội dung).
