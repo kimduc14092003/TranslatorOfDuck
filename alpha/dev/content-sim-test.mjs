@@ -9,12 +9,15 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const EXT = path.join(ROOT, 'extension');
+const VERSION = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf8')).version;
 
 // ---- content.js trong vm. Đồng hồ: env.now (Date.now), env.perf (performance.now, requestAnimationFrame).
 // fetchHang(a, b, url): lượt tải treo tới khi bị ngắt (lượt tải đầu video "bytes=0-": trả khúc 16 KB đầu, có mục lục, rồi
 // mới treo). total(a, b): cỡ file máy chủ báo trong Content-Range.
 // status(a, b): mã HTTP trả về (vd. 429). retryAfter(a, b): header Retry-After (null: không đọc được).
-function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () => 206, retryAfter = () => null } = {}) {
+// worker: câu trả lời của background.js cho { type: 'hello' } (mặc định đúng bản trong manifest.json, đọc được NDJSON); 'none':
+// worker cũ không biết tin này (Chrome trả undefined, đo 2/11); 'reject': không gửi được; 'hang': không bao giờ trả lời.
+function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () => 206, retryAfter = () => null, worker = { build: VERSION, ndjson: true } } = {}) {
   const env = { now: 1_000_000, perf: 0, sent: [], replies: new Map(), fetches: [], rafs: [], listeners: {}, videos: new Map(), activeId: null,
     href: 'https://www.douyin.com/', onChanged: null };
   const el = () => ({ style: {}, textContent: '' });
@@ -58,9 +61,12 @@ function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () 
     runtime: { id: 'x', onMessage: { addListener: (f) => { env.onMsg = f; } },
       sendMessage: (msg) => {
         env.sent.push({ at: env.now, ...msg, payload: msg.payload && { ...msg.payload, aac: undefined } });
+        if (msg.type === 'hello') return worker === 'reject' ? Promise.reject(new Error('Could not establish connection. Receiving end does not exist.'))
+          : worker === 'hang' ? new Promise(() => {}) : Promise.resolve(worker === 'none' ? undefined : worker);
         if (msg.type !== 'subtitles') return Promise.resolve();
         return new Promise((r) => env.replies.set(msg.key, r));
-      } },
+      },
+      getManifest: () => ({ version: VERSION }) },
     storage: { local: { get: (_k, cb) => cb({ settings: {} }), set() {} }, onChanged: { addListener: (f) => { env.onChanged = f; } } },
   };
   // Mục lục giả: giây t ở byte t*1000.
@@ -488,6 +494,47 @@ await t('Rê chuột vào nhãn: bảng thông tin đã dịch của video đang
   e.onChanged({ settings: { newValue: { enabled: false } } }, 'local');
   await e.tick();
   assert.equal(e.infoText(), null, 'tắt sub thì ẩn');
+});
+
+await t('Service worker cũ (Chrome giữ background.js bản trước, đo 2/11): không đọc được NDJSON (không trả lời hello, hay không báo ndjson) thì gửi không stream (JSON một lần); bản cũ mà đọc được NDJSON thì vẫn stream; bản khác manifest thì bảng thông tin báo; chỉ hỏi một lần', async () => {
+  // Chromium mở lại bằng --load-extension chạy background.js của bản trước 0.2.32 (không đọc NDJSON) với content.js 0.2.33:
+  // mọi đoạn dịch mới báo "lỗi: không có phản hồi", 20 s sau mới có sub (lấy từ cache).
+  // [câu trả lời hello, gửi stream, bảng thông tin báo bản cũ, status.worker]
+  for (const [worker, stream, note, st0] of [['none', false, true, '?'], [{ build: '0.2.31' }, false, true, '0.2.31'],
+    [{ build: VERSION, ndjson: true }, true, false, 'ok'], [{ build: '0.2.33', ndjson: true }, true, true, '0.2.33'], ['reject', false, false, null]]) {
+    const e = makeEnv({ worker });
+    e.up('items', [e.item(A, 100000)]);
+    e.activeId = A; const v = e.video(A, 2); v.paused = true;
+    for (let i = 0; i < 3; i++) await e.tick();
+    const sent = e.sent.filter((m) => m.type === 'subtitles');
+    const tag = JSON.stringify(worker) + ': ';
+    assert.ok(sent.length >= 2, tag + 'số yêu cầu dịch: ' + sent.length);
+    assert.ok(sent.every((m) => m.payload.stream === stream), tag + JSON.stringify(sent.map((m) => [m.key, m.payload.stream])));
+    const hellos = e.sent.filter((m) => m.type === 'hello').length;
+    if (worker !== 'reject') assert.equal(hellos, 1, tag + 'số lần hỏi worker: ' + hellos);
+    else assert.ok(hellos >= 2, tag + 'không gửi được thì hỏi lại lần sau: ' + hellos);
+    // Worker cũ vẫn trả kết quả JSON như trước: sub hiện.
+    await e.reply(sent.find((m) => m.key === A + ':0').key, { status: 'ok', cues: [C(1.5, 4, 'Xin chào')] });
+    await e.tick();
+    assert.equal(e.subText(), 'Xin chào', tag + 'sub');
+    e.hover(50, 20); await e.tick();
+    assert.equal(/service worker/i.test(e.infoText() || ''), note, tag + e.infoText());
+    let st = null; e.onMsg({ type: 'status' }, {}, (r) => { st = r; });
+    assert.equal(st.worker, st0, tag + 'status.worker');
+  }
+});
+
+await t('hello không bao giờ trả lời (worker kẹt): chờ tối đa ~2 s rồi vẫn gửi, không stream (verifier 2/11, F2: trước đây không gửi gì)', async () => {
+  const e = makeEnv({ worker: 'hang' });
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  assert.equal(e.sent.filter((m) => m.type === 'subtitles').length, 0, 'chưa hết giờ chờ');
+  await new Promise((r) => setTimeout(r, 3000));   // WORKER_WAIT 2000 ms, chừa rộng khi máy bận
+  for (let i = 0; i < 3; i++) await e.tick();
+  const sent = e.sent.filter((m) => m.type === 'subtitles');
+  assert.ok(sent.length >= 2, 'số yêu cầu dịch sau khi hết giờ chờ: ' + sent.length);
+  assert.ok(sent.every((m) => m.payload.stream === false), JSON.stringify(sent.map((m) => [m.key, m.payload.stream])));
 });
 
 await t('Dòng dịch xong trước (server gửi dần, tin partial): hiện tạm ngay, nhãn "VI"; kết quả cuối thay; tin của yêu cầu đã xong hay không rõ thì bỏ', async () => {

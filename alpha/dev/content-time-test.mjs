@@ -8,6 +8,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const EXT = path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), 'extension');
+const VERSION = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf8')).version;
 // cap(a, b, id): tốc độ tối đa (byte/s) của riêng lượt tải đó (id: video), như một máy chủ video chậm; 0: không giới hạn.
 // Phần băng thông lượt bị giới hạn không dùng hết thì chia cho các lượt khác. pause(rec, env): lượt tải đang khựng (không
 // nhận byte nào) ở lúc này. rtt (ms): thời gian tới byte đầu của mỗi lượt tải; qua /aweme/v1/play/ tính 2 lần (chuyển
@@ -85,9 +86,11 @@ function makeEnv(dir, { bw = 9000, stall = () => 0, total = () => 99999999, auto
       sendMessage: (msg) => {
         const aac = msg.payload && msg.payload.aac ? Buffer.from(msg.payload.aac, 'base64') : null;
         env.sent.push({ at: env.now, perf: env.perf, ...msg, payload: msg.payload && { ...msg.payload, aac: undefined, aacLen: aac && aac.length, aacSum: aac && aac.reduce((x, y, i) => (x * 31 + y + i) % 1000000007, 0) } });
+        if (msg.type === 'hello') return Promise.resolve({ build: VERSION, ndjson: true });
         if (msg.type !== 'subtitles') return Promise.resolve();
         return new Promise((r) => { env.replies.set(msg.key, r); if (autoReplyMs != null) setTimeout_(() => { if (env.replies.get(msg.key) === r) { env.replies.delete(msg.key); env.log.push([env.perf, 'reply', msg.key]); r({ status: 'ok', cues: [] }); } }, autoReplyMs); });
-      } },
+      },
+      getManifest: () => ({ version: VERSION }) },
     storage: { local: { get: (_k, cb) => cb({ settings: {} }), set() {} }, onChanged: { addListener: (f) => { env.onChanged = f; } } },
   };
   const TodMp4 = { headerEnd: () => head, parse: () => ({ duration: 0 }),

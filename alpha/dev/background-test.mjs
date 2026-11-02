@@ -8,7 +8,9 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
-const SRC = fs.readFileSync(path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), 'extension', 'background.js'), 'utf8');
+const EXT = path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), 'extension');
+const SRC = fs.readFileSync(path.join(EXT, 'background.js'), 'utf8');
+const VERSION = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf8')).version;
 const unhandled = [];
 process.on('unhandledRejection', (e) => unhandled.push(e));
 
@@ -100,6 +102,35 @@ await t('subtitles dạng stream: các dòng { partial } chuyển ngay cho tab (
   assert.deepEqual(toTab.map((m) => [m.tab, m.type, m.key, m.cues.map((c) => c.vi).join('')]), [[1, 'partial', '7500000000000000004:1', 'A'], [1, 'partial', '7500000000000000004:1', 'AB']]);
   assert.equal(JSON.stringify(r.replies), JSON.stringify([fin]));
   assert.equal(JSON.stringify(plain.replies), JSON.stringify([fin]));
+});
+
+await t('NDJSON hết mà không có dòng kết quả cuối: báo lỗi rõ (trước đây trả {} và content báo "không có phản hồi", verifier 2/11 F5)', async () => {
+  const srv = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });
+      res.end(JSON.stringify({ partial: [{ start: 1, end: 2, vi: 'A' }] }) + '\n');
+    });
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const send = load([]);
+  const r = send({ type: 'subtitles', server: 'http://127.0.0.1:' + srv.address().port, key: '7500000000000000005:0', payload: { id: '7500000000000000005', stream: true } });
+  for (let i = 0; i < 100 && !r.replies.length; i++) await new Promise((res) => setTimeout(res, 10));
+  await new Promise((res) => srv.close(res));
+  assert.equal(r.replies.length, 1);
+  assert.equal(r.replies[0].status, 'error', JSON.stringify(r.replies));
+  assert.match(r.replies[0].error, /dòng kết quả cuối/);
+});
+
+await t('hello: trả bản của background.js, bằng version trong manifest.json (content.js so để biết service worker có phải bản cũ không); không gọi server', async () => {
+  const s = await startServer();
+  const send = load();
+  const r = send({ type: 'hello' });
+  await settle(s.got, 0);
+  await s.close();
+  assert.equal(r.ret, false);
+  assert.equal(JSON.stringify(r.replies), JSON.stringify([{ build: VERSION, ndjson: true }]), 'bản trong background.js khác manifest.json (' + VERSION + '): đổi cả hai khi tăng bản');
+  assert.deepEqual(s.got, []);
 });
 
 console.log(failed ? `\n${failed} kiểm tra trượt, ${n} đạt.` : `\n${n} kiểm tra đều đạt.`);

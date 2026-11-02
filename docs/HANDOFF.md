@@ -86,13 +86,13 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 | Lệnh | Kiểm tra gì |
 |---|---|
 | `cd alpha/server && npm test` | `test.mjs`: chia câu, mốc thời gian, lọc hát, cắt đoạn, giữ độ lệch đầu track âm thanh, câu vắt qua đầu đoạn khi vừa tua tới, đánh dấu dòng hát, tiếng đệm trong lời hát, dòng nói ngắn gộp vào dòng hát, câu nói nhanh trong đoạn cả bài (20 kiểm tra). `queue-test.mjs`: hàng đợi khi tua liên tiếp (ưu tiên, huỷ, đẩy lên khi lướt tới ở cả hai chế độ lời bài hát, `rank`), Gemini hết lượt trong ngày (9 kiểm tra). `asr-fallback-test.mjs`: Fun-ASR hết hạn mức thì chuyển sang model dự phòng, giới hạn theo phút thì gọi lại (20 kiểm tra). `warm-test.mjs`: `/v1/warm` làm nóng đúng dịch vụ đang dùng, giãn 3 s, bỏ qua khi vừa có lệnh gọi thật, log thời gian kết nối (12 kiểm tra). `pronoun-test.mjs`: luật xưng hô trong câu lệnh, bảng xưng hô nhận vào và trả về, đọc bảng của đoạn trước từ cache, giới tính người đăng (21 kiểm tra). `openai-test.mjs`: dịch bằng OpenAI giả, mức suy luận, đoạn dịch sẵn và đoạn gấp bỏ rút gọn (7 kiểm tra). `stream-test.mjs`: dịch dạng stream (NDJSON: dòng xong trước rồi kết quả cuối; trả chậm mà đều không bị cắt; im trước chữ đầu thì gọi lại; cache và request thường trả JSON như cũ) (6 kiểm tra). `errors-test.mjs`: key dịch sai không chạy lại nhận dạng giọng nói, thiếu ffmpeg, file cache hỏng, Origin lạ, không phải JSON, dịch chậm hơn hạn lần đầu thì lần gọi lại được hạn dài hơn, dịch vụ treo hẳn thì thôi sau 3 lần quá hạn, lượt rút gọn treo thì giữ dòng đầy đủ (14 kiểm tra). `lyrics-test.mjs`: chế độ lời bài hát, kể cả điệp khúc câu ngắn, ngữ cảnh ở chế độ thường, hai chế độ cùng lúc, đoạn cả bài có câu nói nhanh ở hai chế độ, kể cả khi không câu nào tự đủ là câu hát (19 kiểm tra) |
-| `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng, slide feed bị ẩn, trang kết quả tìm kiếm, đóng modal, HTTP 429, đoạn cả bài không dùng chung giữa hai chế độ , bảng xưng hô theo từng video, bảng thông tin khi rê chuột vào nhãn, dòng dịch xong trước (tin partial) (53 kiểm tra) |
+| `node alpha/dev/content-sim-test.mjs` | content.js + tap.main.js trong vm, không cần trình duyệt: mẩu nhanh, đồng hồ trình phát, lướt, tua, tắt sub, giãn lần thử lại, `rank`, chế độ lời bài hát và đổi chế độ giữa chừng, slide feed bị ẩn, trang kết quả tìm kiếm, đóng modal, HTTP 429, đoạn cả bài không dùng chung giữa hai chế độ , bảng xưng hô theo từng video, bảng thông tin khi rê chuột vào nhãn, dòng dịch xong trước (tin partial), service worker cũ thì gửi không stream (57 kiểm tra) |
 | `node alpha/dev/content-time-test.mjs` | content.js theo thời gian: đồng hồ giả, các lượt tải chia băng thông. Thứ tự tải sau khi tua, mẩu nhanh nhường đường truyền, mẩu nhanh bị treo, không ngắt đoạn đã tải từ trước, đoạn đầu tải chậm qua máy chủ chậm (trang video và feed), tải nhanh rồi chậm hẳn, rời feed, tải chậm vừa phải, đường truyền chậm đều, khựng giữa chừng, tua về sau khi bỏ đoạn , hàng dịch sẵn nhường video vừa mở, báo làm nóng, mốc thời gian trong câu trả lời status; một lượt tải từ byte 0 cho mục lục + q0 + đoạn 0 (nhiều rtt và băng thông, dịch sẵn, tua lúc đang tải, moov lớn, không có moov ở đầu, 200 cả file, lướt đi, 429, CDN treo, lượt đó chậm từ byte 0, đổi chế độ lời bài hát gửi đúng byte cũ, mở giữa video, tiến độ cho dropSlow); xem video dài trên đường truyền chậm, đoạn kế chờ lượt gửi (chế độ video dài, §6t); video sau slide livestream có lượt tải đầu chậm riêng (§6v); lượt tải lúc dịch sẵn treo rồi lướt tới, mục lục nhỏ giọt (§6w) (31 kiểm tra) |
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms; `headerEnd` trên phần đầu file đang tải dở (5 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
-| `node alpha/dev/background-test.mjs` | background.js gửi `POST /v1/warm` (kiểu JSON) tới server trên máy, bỏ qua lỗi, chặn địa chỉ ngoài máy; trả lời NDJSON: dòng { partial } chuyển cho tab, dòng cuối là câu trả lời (3 kiểm tra) |
+| `node alpha/dev/background-test.mjs` | background.js gửi `POST /v1/warm` (kiểu JSON) tới server trên máy, bỏ qua lỗi, chặn địa chỉ ngoài máy; trả lời NDJSON: dòng { partial } chuyển cho tab, dòng cuối là câu trả lời; `hello` trả bản, bằng version trong manifest; NDJSON thiếu dòng cuối thì báo lỗi rõ (5 kiểm tra) |
 | `node alpha/dev/tap-test.mjs` | tap.main.js đọc response API với Response thật (fetch, XHR): thân chia khúc của search/stream, thân hỏng, giữ thứ tự danh sách tìm kiếm khi search/single đọc xong trước (3 kiểm tra) |
-| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua, đồng hồ trình phát lệch 50 s, CDN treo một lần, lời bài hát ♪, bấm ô tắt lời bài hát trong popup, video mở từ trang tìm kiếm, video đầu tải một lượt từ byte 0 , bảng xưng hô gửi lại cho đoạn sau, rê chuột thật vào nhãn thì hiện bảng thông tin (30 kiểm tra) |
+| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua, đồng hồ trình phát lệch 50 s, CDN treo một lần, lời bài hát ♪, bấm ô tắt lời bài hát trong popup, video mở từ trang tìm kiếm, video đầu tải một lượt từ byte 0 , bảng xưng hô gửi lại cho đoạn sau, rê chuột thật vào nhãn thì hiện bảng thông tin, service worker đúng bản (31 kiểm tra). `E2E_MT=openai`: dịch bằng OpenAI giả trả SSE, có dòng tạm (32 kiểm tra) |
 
 Cần cho các test: Node 18+, `playwright`, `ffmpeg`, `openssl`.
 
@@ -201,7 +201,7 @@ Còn lại, chưa làm:
 
 Ghi chú môi trường test:
 - Extension nạp bằng `--load-extension` trong Chrome for Testing bị tắt nếu gọi `chrome.runtime.reload()`; phải khởi động lại trình duyệt.
-- Khởi động lại vẫn có thể **giữ service worker cũ** (`background.js` bản trước). Kiểm bằng `Debugger.getScriptSource` của service worker; nếu cũ thì tắt trình duyệt, dời thư mục `Default/Service Worker` của profile rồi mở lại. Người dùng bấm Reload ở `chrome://extensions` thì không gặp.
+- Khởi động lại vẫn có thể **giữ service worker cũ** (`background.js` bản trước). Kiểm bằng `Debugger.getScriptSource` của service worker; nếu cũ thì tắt trình duyệt, dời thư mục `Default/Service Worker` của profile rồi mở lại. Người dùng bấm Reload ở `chrome://extensions` thì không gặp. Tăng version trong manifest cũng không đủ (đo 2/11, §6y). Từ 0.2.34 bảng thông tin báo khi worker là bản cũ.
 
 Ghi chú cũ, giữ để tham khảo:
 
@@ -1001,6 +1001,46 @@ Chủ dự án chọn làm cả 4 hướng.
   - content-sim-test (55): thêm tua vào giữa đoạn, huỷ, đổi chế độ, nhãn, HTTP 403 với 404.
 
   Bản 0.2.32 trượt các ca mới. e2e dùng Gemini giả nên không đi đường stream.
+
+## 6y. "lỗi: không có phản hồi": service worker cũ (2/11, extension 0.2.34)
+
+- **Triệu chứng** (chủ dự án chụp màn hình): video 27 s, nhãn "VI · lỗi: không có phản hồi", sub chỉ hiện sau ~24 s.
+- **Nguyên nhân (đo):** Chromium của chủ dự án (Chrome for Testing, `--load-extension`, profile `~/.tod-profile`) chạy `background.js` giống hệt bản 93bcbde (1/11), dù manifest và content script đã là 0.2.33. Kiểm bằng `Debugger.getScriptSource` của service worker; `Default/Service Worker/ScriptCache` không đổi từ 21:31 ngày 1/11. Worker cũ đọc trả lời bằng `res.json()`. Từ 0.2.32 content gửi `stream: true` nên server trả NDJSON nhiều dòng (dòng tạm rồi kết quả), `res.json()` hỏng, worker trả `{}`, content báo "không có phản hồi". 20 s sau gửi lại thì lấy từ cache (JSON một lần) nên mới có sub. Như vậy từ 0.2.32 mọi đoạn dịch mới trên Chromium đó đều trễ thêm 20 s và chưa lần nào hiện dòng tạm.
+- **Tái hiện:** Chromium tạm, mở lại sau khi đổi `background.js` và tăng version: vẫn chạy script cũ. e2e với Gemini giả không thấy lỗi này: NDJSON chỉ có một dòng nên `res.json()` vẫn đọc được. Chỉ OpenAI stream (có dòng tạm) mới hỏng.
+- **Sửa ngay:** tắt Chromium, dời `~/.tod-profile/Default/Service Worker` thành `Service Worker.stale-0211`, mở lại. Worker khớp từng byte với file trên đĩa; sau đó có mốc `partial`, `quickPartial`, `chunkPartial`, không còn lỗi.
+- **Sửa trong extension (0.2.34):**
+  - `background.js` có `BUILD` (phải bằng version trong manifest; background-test kiểm) và trả `{ build, ndjson: true }` cho tin `{ type: 'hello' }`.
+  - `content.js` hỏi `hello` khi trang mở (`workerReady`).
+    - Worker báo `ndjson` thì gửi `stream: true`.
+    - Worker không trả lời (bản trước 0.2.34; Chrome trả `undefined`, đã đo) thì gửi không stream: JSON một lần, worker nào cũng đọc được. Sub vẫn ra, chỉ không có dòng tạm.
+    - Bản worker khác manifest thì bảng thông tin ghi "Service worker của extension là bản cũ (…)" kèm cách sửa; worker đọc được NDJSON thì vẫn stream.
+    - Lỗi gửi, hay quá 2 s không trả lời: lần đó gửi không stream, lần sau hỏi lại.
+    - Câu trả lời `status` có thêm `worker`.
+  - NDJSON hết mà không có dòng kết quả cuối thì `background.js` báo "server ngắt giữa chừng (thiếu dòng kết quả cuối)" thay vì `{}`. Server hiện tại không gửi như vậy; chỉ để lỗi kiểu này không lẫn với worker cũ.
+  - Không dùng `chrome.runtime.reload()` để tự sửa: với `--load-extension` trong Chrome for Testing nó tắt extension (ghi chú ở mục môi trường test phía trên).
+- **Kiểm:** verifier soát bản đầu: ok_with_fixes, 0 major, có chạy mô phỏng và thử background.js 93bcbde với NDJSON nhiều dòng, một dòng, JSON. Đã áp:
+  - `hello` không trả lời thì trước đây không gửi gì cả (đo bằng mô phỏng); nay chờ tối đa 2 s.
+  - Stream quyết theo `ndjson`, không theo bản: trên profile giữ worker cũ, mỗi lần tăng bản không còn tắt stream.
+  - Kiểm tra e2e chế độ OpenAI nay đòi mốc dòng tạm ở tab. Đếm lần gọi stream thì không đủ, vì server luôn gọi OpenAI dạng stream.
+  - Thiếu dòng cuối thì báo lỗi rõ; ghi chú trong bảng thông tin trỏ tới mục này.
+  - Không áp: lo Chrome reject thay vì trả `undefined` khi worker cũ không trả lời. Đã đo trong Chromium tạm: listener trả `false` thì `sendMessage` resolve `undefined`.
+- **Cách nạp bản mới vào Chromium của chủ dự án** (bắt buộc, lần này đã bỏ sót):
+  1. tắt trình duyệt;
+  2. dời `Default/Service Worker` của profile;
+  3. mở lại;
+  4. so script của worker (target có URL đúng `chrome-extension://<id>/background.js`; Chrome for Testing có một extension sẵn cũng tên `background.js`) với file trên đĩa.
+- **Test:**
+  - background-test 5: `hello`, `BUILD` bằng manifest, NDJSON thiếu dòng cuối;
+  - content-sim-test 57: worker không trả lời, trả bản cũ, bản cũ mà đọc được NDJSON, đúng bản, không gửi được, không bao giờ trả lời;
+  - content-time-test 31: stub trả `hello`;
+  - e2e có chế độ `E2E_MT=openai` (OpenAI giả trả SSE, server gửi dòng tạm) và kiểm `worker` là `ok`.
+
+  Đối chứng e2e chế độ OpenAI, chạy trên bản sao:
+  - bản mới: 32/32;
+  - bản mới, `background.js` thay bằng 93bcbde: 30/32, mọi kiểm tra về sub đạt, chỉ trượt kiểm tra worker và kiểm tra dòng tạm (đúng ý: worker cũ không đọc được NDJSON nên gửi không stream);
+  - content 0.2.33 với worker 93bcbde: 23/32, trượt 7 kiểm tra về dịch (sub, ngữ cảnh, xưng hô, video dài), kiểm tra worker và kiểm tra dòng tạm. Log có "lỗi: không có phản hồi" như ảnh của chủ dự án.
+
+  e2e mặc định (Gemini giả) 31/31.
 
 ## 7. Việc tiếp theo trên Mac
 

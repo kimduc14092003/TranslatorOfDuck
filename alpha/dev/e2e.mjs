@@ -2,6 +2,8 @@
 //   Douyin giả (HTTPS, feed JSON + /aweme/v1/play/ → CDN) · dịch vụ AI giả (Fun-ASR, Gemini)
 //   · alpha/server thật · Chromium thật có cài alpha/extension.
 // Cần: Node 18+, playwright (có Chromium), ffmpeg, openssl.   Chạy: node alpha/dev/e2e.mjs
+// E2E_MT=openai: dịch bằng OpenAI giả trả SSE (stream), server gửi dòng tạm (NDJSON nhiều dòng) như với key OpenAI thật;
+// mặc định Gemini giả (không stream, NDJSON chỉ có dòng cuối).
 import { createRequire } from 'node:module';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -25,7 +27,8 @@ const MEDIA = { speech12: video(12, 440), song6: video(6, 300), long100: video(1
 
 // ---- dịch vụ AI giả. Fun-ASR trả lời theo độ dài âm thanh nhận được:
 //   < 8 s: lời hát (chữ kéo dài) · 8–20 s: 2 câu ở 1,0 s và 5,0 s · ≥ 20 s (một đoạn của video dài): 2 câu ở 2,0 s và 6,0 s
-const providerHits = { funasr: 0, gemini: 0, withContext: 0, longChunks: [], rateLimited: 0, pronIn: 0, authorIn: 0 };
+const MT = process.env.E2E_MT === 'openai' ? 'openai' : 'gemini';
+const providerHits = { funasr: 0, gemini: 0, withContext: 0, longChunks: [], rateLimited: 0, pronIn: 0, authorIn: 0, streamed: 0 };
 // Bảng xưng hô model giả trả trong mọi lần dịch (không có trong lượt rút gọn): extension phải gửi lại ở yêu cầu sau.
 const PRON = { pairs: [{ who: 'người kể → người xem', self: 'mình', other: 'các bạn' }] };
 const sentence = (text, b, e) => {
@@ -58,17 +61,28 @@ const providers = http.createServer((req, res) => {
         ['走', 5000, 5300], ['吧', 5300, 5600, '！']].map(([text, b, e, p]) => ({ text, begin_time: b, end_time: e, punctuation: p || '' }));
       return json({ output: { sentence: { begin_time: 1000, end_time: 5600, text: '大家好，今天我们去吃火锅。走吧！', words }, text: '大家好，今天我们去吃火锅。走吧！' } });
     }
-    if (req.url.includes(':generateContent')) {
+    const gem = req.url.includes(':generateContent'), oai = req.url.endsWith('/v1/chat/completions');
+    if (gem || oai) {
       // Lần gọi dịch đầu tiên trả 429 (vượt hạn mức theo phút): server phải tự thử lại.
       if (!providerHits.rateLimited++) { res.writeHead(429, { 'content-type': 'application/json' }); return res.end('{"error":{"code":429}}'); }
-      providerHits.gemini++;
-      const text = JSON.parse(body).contents[0].parts[0].text;
+      providerHits.gemini++;   // số lần gọi dịch (cả OpenAI giả)
+      const b = JSON.parse(body);
+      const text = gem ? b.contents[0].parts[0].text : b.messages[0].content;
       if (text.includes('Các dòng ngay trước')) providerHits.withContext++;
       if (text.includes('Bảng xưng hô đã dùng') && text.includes(JSON.stringify(PRON.pairs))) providerHits.pronIn++;
       if (text.includes('小李旅行')) providerHits.authorIn++;
       const lines = JSON.parse(text.match(/Các dòng: (.*)$/m)[1]);
       const vi = { '大家好，今天我们去吃火锅。': 'Chào cả nhà, hôm nay đi ăn lẩu.', '走吧！': 'Đi thôi!' };
-      return json({ candidates: [{ content: { parts: [{ text: JSON.stringify({ ...(/^Rút gọn/.test(text) ? {} : { pronouns: PRON }), cues: lines.map(l => ({ id: l.id, vi: vi[l.zh] || 'Dòng ' + l.id })) }) }] } }] });
+      const out = JSON.stringify({ ...(/^Rút gọn/.test(text) ? {} : { pronouns: PRON }), cues: lines.map(l => ({ id: l.id, vi: vi[l.zh] || 'Dòng ' + l.id })) });
+      if (gem) return json({ candidates: [{ content: { parts: [{ text: out }] } }] });
+      if (!b.stream) return json({ choices: [{ message: { role: 'assistant', content: out } }] });
+      // SSE: 6 mẩu cách nhau 60 ms, để server gửi dòng tạm trước kết quả cuối.
+      providerHits.streamed++;
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const n = Math.ceil(out.length / 6);
+      for (let i = 0; i * n < out.length; i++) setTimeout(() => { if (!res.writableEnded) res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: out.slice(i * n, (i + 1) * n) } }] })}\n\n`); }, 30 + i * 60);
+      setTimeout(() => { if (!res.writableEnded) res.end('data: [DONE]\n\n'); }, 30 + Math.ceil(out.length / n) * 60);
+      return;
     }
     res.writeHead(404); res.end();
   });
@@ -80,7 +94,8 @@ const PROV = `http://127.0.0.1:${providers.address().port}`;
 const alphaPort = 18787 + Math.floor(Math.random() * 1000);
 const alpha = spawn(process.execPath, [path.join(ROOT, 'server', 'server.mjs')], {
   env: { ...process.env, PORT: String(alphaPort), TOD_WORK: path.join(TMP, 'work'), FFMPEG: 'ffmpeg',
-    DASHSCOPE_API_KEY: 'test', GEMINI_API_KEY: 'test', OPENAI_API_KEY: '', DASHSCOPE_BASE: PROV, GEMINI_BASE: PROV + '/v1beta' },
+    DASHSCOPE_API_KEY: 'test', GEMINI_API_KEY: MT === 'gemini' ? 'test' : '', OPENAI_API_KEY: MT === 'openai' ? 'test-openai' : '', DASHSCOPE_BASE: PROV, GEMINI_BASE: PROV + '/v1beta',
+    OPENAI_BASE: PROV + '/v1', OPENAI_MODEL: 'test-model', OPENAI_REASONING_EFFORT: 'none' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let alphaLog = '';
@@ -340,6 +355,12 @@ const checks = {
   'pronoun table round trip: later chunks of the long video carry the table back into the prompt': providerHits.pronIn >= 2,
   'uploader nickname (author.nickname) reaches the translation prompt': providerHits.authorIn >= 1,
   'no page errors': errors.length === 0,
+  // Content script hỏi service worker bản nào ('hello'): đúng bản này thì gửi stream (§6y).
+  'extension service worker is this build (hello → ok)': !!status && status.worker === 'ok',
+  // Dòng tạm phải tới được tab qua background.js (mốc partial / quickPartial / chunkPartial): server luôn gọi OpenAI dạng stream,
+  // nên đếm lần gọi stream không chứng minh được điều đó (verifier 2/11, F3).
+  ...(MT === 'openai' ? { 'OpenAI stream: partial lines reached the page before the final result (partial marks)': providerHits.streamed > 0
+    && !!status && (status.marks || []).some(m => Object.keys(m.t || {}).some(k => /^(quick|chunk)?[pP]artial$/.test(k))) } : {}),
 };
 console.log('\nCHECKS');
 for (const [k, v] of Object.entries(checks)) console.log((v ? 'PASS ' : 'FAIL ') + k);

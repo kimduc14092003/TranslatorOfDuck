@@ -156,6 +156,27 @@
   let warmAt = -Infinity;        // lần báo làm nóng gần nhất (performance.now())
 
   const alive = () => { try { return !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; } };
+  // Service worker (background.js) có cùng bản với file này không, có đọc được NDJSON (stream) không. Chrome mở lại bằng
+  // --load-extension có thể vẫn chạy background.js của bản trước (đo 2/11 trên Chromium của chủ dự án: worker bản trước 0.2.32,
+  // không đọc được NDJSON, với content 0.2.33: mọi đoạn dịch mới báo "lỗi: không có phản hồi", 20 s sau mới có sub lấy từ
+  // cache; HANDOFF §6y). Worker không báo ndjson (bản trước 0.2.34 không biết tin 'hello', Chrome trả undefined): gửi không
+  // stream (JSON một lần, worker nào cũng đọc được). Bản khác manifest: bảng thông tin báo; đọc được NDJSON thì vẫn stream.
+  // worker: null chưa biết (lỗi gửi, hay quá WORKER_WAIT: gửi không stream, lần gửi sau hỏi lại), 'ok', hay bản của worker
+  // đang chạy ('?': không trả lời). Hỏi ngay khi trang mở, để lần gửi đầu không phải chờ worker thức dậy.
+  const WORKER_WAIT = 2000;
+  let worker = null, workerStream = false, workerAsk = null;
+  function workerReady() {
+    if (worker || !alive()) return Promise.resolve();
+    if (workerAsk) return workerAsk;
+    // Lỗi (không gửi được, extension vừa bị tải lại nên getManifest hỏng): để null, không làm hỏng lần gửi đang chờ.
+    const ask = chrome.runtime.sendMessage({ type: 'hello' }).then((r) => {
+      workerStream = !!(r && r.ndjson === true);
+      worker = r && r.build === chrome.runtime.getManifest().version ? 'ok' : (r && typeof r.build === 'string' ? r.build.slice(0, 20) : '?');
+    }).catch(() => {});
+    // Worker kẹt không bao giờ trả lời: không để mọi lần gửi của trang chờ theo (verifier 2/11).
+    return (workerAsk = Promise.race([ask, new Promise((r) => setTimeout(r, WORKER_WAIT))]).finally(() => { workerAsk = null; }));
+  }
+  workerReady();
 
   // ---------------------------------------------------------------- mốc thời gian lần mở video
   // Chỉ để đo sub đầu ra chậm ở đâu, không đổi hành vi. Trả trong câu trả lời {type:'status'} (cuối file) dưới tên marks:
@@ -992,13 +1013,14 @@
       mark(id, 'quickDlEnd');
       const aac = w.build(bytes);
       if (!act) await actBack(id);
+      if (!worker) await workerReady();
       if (!quickWanted(id, q)) { if (v.quick.get(from) === q) { v.quick.delete(from); if (!act) quickTried = -1; } return; }
       q.sent = true; q.sentAt = Date.now(); q.lyrics = lyricsOn();
       mark(id, 'quickPost');
       const pg = v.pronGen;
       chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':q' + from, payload: {
         id, desc: d.desc, hashtags: d.hashtags, ...authorPayload(d), durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
-        quick: true, urgent: true, rank: 0, lyrics: q.lyrics, stream: true, ...pronPayload(v), aac: toBase64(aac) } })
+        quick: true, urgent: true, rank: 0, lyrics: q.lyrics, stream: workerStream, ...pronPayload(v), aac: toBase64(aac) } })
         .then((r) => { mark(id, 'quickReply'); r = r && r.status ? r : { status: 'error', error: (r && r.error) || 'không có phản hồi', unreachable: true }; noteReply(r); done(r, pg); })
         .catch((e) => { mark(id, 'quickReply'); const r = { status: 'error', error: e.message, unreachable: true }; noteReply(r); done(r); });
       if (id === currentId) pump(lanes.prefetch);   // hàng dịch sẵn hết nhường (prefetchHeld)
@@ -1071,6 +1093,10 @@
         if (id === currentId && !act) await actBack(id);
       }
       entry.waiting = false;
+      if (!worker) {
+        await workerReady();
+        if (entry.ctl.signal.aborted || v.chunks.get(k) !== entry) { if (v.chunks.get(k) === entry) v.chunks.delete(k); return; }
+      }
       if (!wanted.has(id + ':' + k) || (id === currentId && !act)) { if (v.chunks.get(k) === entry) v.chunks.delete(k); return; }
       // Không chờ server xong mới tải đoạn tiếp theo. urgent: đoạn chứa (hoặc sắp tới) chỗ đang xem, server làm trước.
       // rank: 0 là video đang xem, 1–4 là video dịch sẵn theo thứ tự sẽ lướt tới (server làm video gần trước).
@@ -1080,7 +1106,7 @@
       const pg = v.pronGen;
       chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':' + k, payload: {
         id, desc: d.desc, hashtags: d.hashtags, ...authorPayload(d), durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
-        prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, prefetch: id !== currentId, lyrics: entry.lyrics, stream: true, ...pronPayload(v),
+        prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, prefetch: id !== currentId, lyrics: entry.lyrics, stream: workerStream, ...pronPayload(v),
         rank: id === currentId ? 0 : next >= 0 ? next + 1 : PREFETCH, aac: toBase64(aac) } })
         .then((r) => done(r && r.status ? { ...r, from, to } : { status: 'error', error: (r && r.error) || 'không có phản hồi', unreachable: true, from, to }, true, pg))
         .catch((e) => done({ status: 'error', error: e.message, unreachable: true, from, to }, true));
@@ -1249,6 +1275,7 @@
     const D = (d && d.durationMs ? d.durationMs / 1000 : 0) || (v && v.media && v.media.duration) || 0;
     const end = (x) => (D ? Math.min(x, D) : x);
     const out = [`Video ${D ? mmss(D) : '?'} · đang xem ${mmss(t)}`];
+    if (worker && worker !== 'ok') out.push(`Service worker của extension là bản cũ (${worker === '?' ? 'trước 0.2.34' : worker})${workerStream ? '' : ': dịch vẫn chạy, không hiện từng dòng sớm'}. Tải lại extension ở chrome://extensions (Chromium mở bằng --load-extension: xem HANDOFF §6y)`);
     if (!eligible(d)) return out.concat('Không dịch được video này (ảnh, quảng cáo, livestream hay chưa có thông tin)').join('\n');
     if (!v || !plan) return out.concat('Đang tải mục lục video…').join('\n');
     // Xong: có bản dịch, hay không cần dịch (nhạc, không lời, không có âm thanh). Bỏ qua vì dịch lỗi thì chưa xong.
@@ -1483,7 +1510,7 @@
       const cur = currentId ? { id: currentId, act: act ? act.id : null, known: !!d, kind: d ? d.kind : null, src: d ? d.source : null,
         eligible: !!eligible(d), lists: [...orders].filter(([, o]) => o.includes(currentId)).map(([n]) => n), next: upcoming(),
         chunks: cv ? [...cv.chunks].map(([k, c]) => [k, c.status, !!c.sent]) : [] } : { id: null, act: act ? act.id : null };
-      reply({ seen: items.size, counts, chunks, page: pageKind(), marks: list, cur });
+      reply({ seen: items.size, counts, chunks, page: pageKind(), marks: list, cur, worker });
     }
   });
 })();
