@@ -1059,6 +1059,32 @@ Chủ dự án chọn làm cả 4 hướng.
   Cần nhật ký từng lượt tải lần sau để kiểm.
 - **Số liệu cho hướng "tải tiếng riêng"** (§6t): trình phát của trang tải luồng tiếng riêng 0,13–0,17 MB mỗi ~6 s. Extension tải file gộp 6,4–8,8 MB mỗi đoạn 30 s, tức gấp ~10 lần số byte.
 
+## 6aa. Mô phỏng: dịch sẵn chỉ 10 s đầu, xem đủ 5 s mới làm tiếp (2/11, chỉ mô phỏng, chưa đổi code)
+
+- **Đề xuất của chủ dự án:** chỉ tải 10 s đầu; người xem xem hết 5 s đầu mới tải tiếp; mỗi lần lướt thì tải thêm video mới để luôn có n video phía trước. Phần "n video phía trước" đã có sẵn (`PREFETCH` = 4, cửa sổ trượt theo mỗi lần lướt).
+- **Cách mô phỏng:** `content.js` 0.2.34 chạy trong vm với đồng hồ giả, harness lấy từ `content-time-test`.
+  - Mạng: băng thông chia cho mọi lượt tải và cho trình phát của trang (150 KB/s); file gộp 200 KB mỗi giây phim.
+  - Server giả: 2070 ms + 102 ms mỗi giây âm thanh (khớp trung vị log server 2/11), 4 việc cùng lúc + 1 việc gấp, có huỷ.
+  - Feed: 12 video dài 15–240 s.
+  - Bốn bản:
+    - `cur`: như hiện tại;
+    - `h10`: đoạn đầu 10 s, lướt tới thì làm tiếp ngay;
+    - `u5`: đề xuất, chờ xem đủ 5 s;
+    - `u3q`: chờ 3 s, phần tiếp [10, 25) rồi các đoạn 30 s.
+  - Kịch bản (bản sao, không trong repo): mạng 3 MB/s, 1,2 MB/s, 450 KB/s; lướt 2, 4, 8 s, xem 15 s, xem hết.
+- **Kết quả (verifier đã chạy lại, khớp từng số, kèm 8 phép thử độ nhạy):**
+  - **Lướt nhanh, đoạn đầu 10 s thắng rõ.** Bắt đầu ấm (video đầu đã xem 15 s), mạng 1,2 MB/s, lướt 4 s: `cur` có sẵn sub 1/12 video, cả ba bản 10 s được 11/12. Mạng 3 MB/s lướt 4 s thì bốn bản như nhau (11/12).
+  - **Cửa 5 s chủ yếu bớt tiền.** Khi lướt 2–4 s, giây nhận dạng ít hơn `h10` 2,5–3 lần, ít hơn `cur` 38–68% tuỳ mạng. Bắt đầu ấm thì số video có sẵn sub như `h10`.
+  - **Cửa 5 s làm hụt sub quanh giây 10** trên mọi video dài hơn ~25 s mà người xem ở lại. Mạng 3 MB/s, xem 15 s: phủ 84% so với 98%, hụt 3–4 s. Dòng tạm (stream) rút ngắn khoảng 1 s.
+  - `u3q` không hụt ở mạng 3 MB/s, nhưng chỉ dư ~0,8 s: server chậm hơn 1,5 lần là hụt 9/12 video. Ở 1,2 MB/s vẫn hụt (xem 15 s: 86% so với 91%).
+  - **Xem hết video** ở 1,2 MB/s và 450 KB/s thì `cur` tốt nhất (97% so với 86–95%; 60% so với 31–40%). Riêng 450 KB/s xem 15 s thì `cur` kém nhất (38% so với 52–53%).
+- **Phải sửa trước khi làm thật** (verifier tìm ra):
+  - Đoạn đầu 10 s ≤ `QUICK_MIN_CHUNK` (16) nên mất mẩu nhanh, `dropSlow`, và `headLate` (cần mẩu nhanh đang chờ). Lượt tải đầu nhỏ giọt 150 KB/s: `cur` có sub ở 5,75 s, các bản 10 s không có sub trong 15 s.
+  - Cửa 5 s chặn cả đoạn ở chỗ đang xem khi mở giữa video hay tua sớm: phải miễn đoạn đó.
+  - Đoạn [10, 40) luôn là đoạn gấp nên server bỏ lượt rút gọn: dòng dài hơn (§6w).
+- **Thấy thêm ở bản hiện tại:** lướt 2 s từ lúc mở trang (bắt đầu lạnh) thì hàng dịch sẵn không bao giờ chạy. Nó nhường video vừa mở tối đa `PF_HOLD_MAX` 2,5 s, dài hơn khoảng cách giữa hai lần lướt, và tính lại mỗi lần mở.
+- **Chưa mô phỏng:** thời gian server ngẫu nhiên, dòng tạm, lượt rút gọn, chất lượng dịch khi đoạn ngắn (ít ngữ cảnh), tiền của việc bị huỷ giữa chừng.
+
 ## 7. Việc tiếp theo trên Mac
 
 1. **Kiểm tra môi trường:** `node -v` (cần 18+), `git status`, đang ở nhánh `claude/busy-newton-1y8nzr`. Có `alpha/server/.env` chưa (chỉ kiểm có file, không đọc nội dung).
