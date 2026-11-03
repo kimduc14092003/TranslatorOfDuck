@@ -82,7 +82,8 @@ try {
     assert.equal(openaiBodies[0].reasoning_effort, 'none');
     assert.ok(!('temperature' in openaiBodies[0]));
   });
-  // Dòng dịch quá dài: đoạn thường (chưa gấp) gọi thêm lượt rút gọn, đoạn dịch sẵn (video kế tiếp) và đoạn gấp thì không.
+  // Dòng dịch quá dài: rút gọn tắt từ 4/11 (chủ dự án ưu tiên sub đầy đủ), nên đoạn nào cũng chỉ một lần gọi. Khi bật lại
+  // (TOD_CONDENSE=1) thì đoạn thường gọi thêm lượt rút gọn: stream-test, mtfix-test kiểm.
   mode = 'long';
   let before = openaiBodies.length;
   await post(120, { urgent: false });
@@ -93,8 +94,8 @@ try {
   before = openaiBodies.length;
   await post(180, { urgent: true });
   const urgentCalls = openaiBodies.length - before;
-  t('đoạn dịch sẵn và đoạn gấp (urgent) bỏ lượt rút gọn dòng dài (1 lần gọi thay vì 2)', () => {
-    assert.equal(normalCalls, 2); assert.equal(prefetchCalls, 1); assert.equal(urgentCalls, 1);
+  t('rút gọn tắt (mặc định): dòng dài ở đoạn thường, dịch sẵn, gấp đều chỉ 1 lần gọi, không lượt rút gọn', () => {
+    assert.equal(normalCalls, 1); assert.equal(prefetchCalls, 1); assert.equal(urgentCalls, 1);
   });
   mode = 'rate';
   const t0 = Date.now();

@@ -65,7 +65,7 @@ async function startServer(env) {
   const port = 22787 + Math.floor(Math.random() * 1000);
   const work = fs.mkdtempSync(path.join(TMP, 'work-'));
   const proc = spawn(process.execPath, [path.join(HERE, '..', 'server.mjs')], {
-    env: { ...process.env, PORT: String(port), TOD_WORK: work, FFMPEG: ffmpeg, DASHSCOPE_API_KEY: 'test', DASHSCOPE_BASE: PROV,
+    env: { ...process.env, PORT: String(port), TOD_WORK: work, FFMPEG: ffmpeg, TOD_CONDENSE: '1', DASHSCOPE_API_KEY: 'test', DASHSCOPE_BASE: PROV,
       GEMINI_BASE: PROV + '/v1beta', OPENAI_BASE: PROV + '/v1', FUNASR_MODEL: 'fun-asr-flash-2026-06-15', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

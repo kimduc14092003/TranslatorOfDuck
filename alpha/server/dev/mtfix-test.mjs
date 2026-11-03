@@ -82,7 +82,7 @@ const port = 22787 + Math.floor(Math.random() * 1000);
 const WORK = path.join(TMP, 'work');
 // MT_TIMEOUT_MS ngắn: ca lượt dịch lại lỗi không chờ chuỗi gọi lại 10 s (verifier 3/11).
 const server = spawn(process.execPath, [path.join(HERE, '..', 'server.mjs')], {
-  env: { ...process.env, PORT: String(port), TOD_WORK: WORK, FFMPEG: ffmpeg, DASHSCOPE_API_KEY: 'test', GEMINI_API_KEY: '', MT_TIMEOUT_MS: '800',
+  env: { ...process.env, PORT: String(port), TOD_WORK: WORK, FFMPEG: ffmpeg, DASHSCOPE_API_KEY: 'test', GEMINI_API_KEY: '', MT_TIMEOUT_MS: '800', TOD_CONDENSE: '1',
     OPENAI_API_KEY: 'test-openai', OPENAI_MODEL: 'test-model', DASHSCOPE_BASE: PROV, OPENAI_BASE: PROV + '/v1', FUNASR_MODEL: 'fun-asr-flash-2026-06-15' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });

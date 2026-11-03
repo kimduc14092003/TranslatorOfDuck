@@ -1435,7 +1435,11 @@ Chủ dự án chọn làm cả 4 hướng.
 - **Kết luận:** kéo dài chỉ giúp khoảng 2 điểm. Dòng khó đọc phần lớn nằm sát dòng kế. Trong cache có 1.588 dòng khó đọc trên 4.455 dòng; trung vị 6 chữ Hán mỗi giây.
   - 507 dòng chỉ vượt mức tới 10%: luật rút gọn (trên 1,1 lần) không bao giờ đụng tới.
   - Khoảng 384 dòng ghép được với dòng kề thành một dòng hai hàng mà vẫn đọc kịp; nhưng câu sau hiện trước khi người nói tới (lệch nhịp).
-  - Ngày 4/11 chủ dự án chọn ưu tiên sub đầy đủ (ROADMAP §6): không hạ ngưỡng rút gọn, không ghép dòng kề; tốc độ đọc chỉ còn để theo dõi. Lượt rút gọn đang có (dòng vượt 1,1 lần mức, cả "rút gọn sau") giữ nguyên.
+  - Ngày 4/11 chủ dự án chọn ưu tiên sub đầy đủ (ROADMAP §6): không hạ ngưỡng rút gọn, không ghép dòng kề; tốc độ đọc chỉ còn để theo dõi.
+- **Tắt rút gọn (4/11, server):** chủ dự án bảo tắt luôn lượt rút gọn đang có. `server.mjs` có công tắc `TOD_CONDENSE`, mặc định tắt: không rút gọn trong lượt dịch, không "rút gọn sau". `TOD_CONDENSE=1` (trong `.env` hay biến môi trường) bật lại đúng như trước. Code rút gọn giữ nguyên; extension 0.2.43 vẫn gửi `condenseLater`, server tắt thì không gửi dòng `condensed`.
+  - Còn lại: câu lệnh dịch đầu vẫn cho mỗi dòng max_chars và dặn "chỉ rút gọn khi bản dịch đủ ý dài hơn max_chars" (`pipeline.mjs`, translate). Chưa đổi, vì đổi là đổi cách dịch mọi dòng, cần đo lại chất lượng dịch.
+  - Test: mặc định tắt có ca riêng (`stream-test`, `openai-test`). Các ca rút gọn (`stream-test`, `mtfix-test`, `errors-test`, `lyrics-test`, `pronoun-test`) chạy server với `TOD_CONDENSE=1`. `npm test`: 11 bộ đều đạt.
+  - Theo số đo 4/11 (§6an), tắt rút gọn làm tốc độ đọc giảm khoảng 5–7 điểm ở video có dòng dài.
 
 ## 7. Việc tiếp theo trên Mac
 

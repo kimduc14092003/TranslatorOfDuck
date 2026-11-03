@@ -300,7 +300,7 @@ Một ngoại lệ có thể kéo sớm: cho vài người ngoài dùng thử mi
 
 **Đã chốt ngày 4/11:**
 4. Tốc độ đọc: giữ sub ra sớm. Không bật lại lượt rút gọn ở đoạn gấp và đoạn dịch sẵn, vì nó làm sub ra chậm hơn khoảng 2 s. Mốc 85% vẫn là đích, nhưng chỉ theo đuổi bằng cách không làm sub ra chậm hơn (ví dụ: lượt dịch đầu tự viết ngắn; hay rút gọn chạy sau, rồi thay những dòng chưa hiện).
-5. Tốc độ đọc xếp sau sub đầy đủ: không rút gọn thêm (không hạ ngưỡng rút gọn), không ghép dòng kề. Mốc 85% dòng ≤ 17 ký tự/giây chỉ còn để theo dõi.
+5. Tốc độ đọc xếp sau sub đầy đủ: tắt hẳn lượt rút gọn (cả "rút gọn sau"; server bật lại được bằng `TOD_CONDENSE=1`), không ghép dòng kề. Mốc 85% dòng ≤ 17 ký tự/giây chỉ còn để theo dõi. Câu lệnh dịch đầu vẫn có max_chars ("chỉ rút gọn khi bản dịch đủ ý dài hơn").
 
 **Còn mở:**
 1. Nền tảng thử ở giai đoạn 2 (đề xuất: YouTube với phụ đề sẵn, và Bilibili), và có thử TikTok không.

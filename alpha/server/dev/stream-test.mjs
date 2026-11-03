@@ -72,22 +72,30 @@ const providers = http.createServer((req, res) => {
 });
 await new Promise(r => providers.listen(0, '127.0.0.1', r));
 const PROV = `http://127.0.0.1:${providers.address().port}`;
-const port = 22787 + Math.floor(Math.random() * 1000);
-const server = spawn(process.execPath, [path.join(HERE, '..', 'server.mjs')], {
-  env: { ...process.env, PORT: String(port), TOD_WORK: path.join(TMP, 'work'), FFMPEG: ffmpeg, MT_TIMEOUT_MS: '300',
-    DASHSCOPE_API_KEY: 'test', GEMINI_API_KEY: '', OPENAI_API_KEY: 'test-openai', OPENAI_MODEL: 'test-model', OPENAI_REASONING_EFFORT: 'none',
-    DASHSCOPE_BASE: PROV, OPENAI_BASE: PROV + '/v1' },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
+// Hai server: mặc định (rút gọn tắt từ 4/11) và TOD_CONDENSE=1 (bật lại rút gọn: kiểm rút gọn sau). log: cả hai.
 let log = '';
-server.stdout.on('data', d => { log += d; });
-server.stderr.on('data', d => { log += d; });
-while (!/Alpha server/.test(log)) await new Promise(r => setTimeout(r, 50));
+async function startServer(extra = {}) {
+  const port = 22787 + Math.floor(Math.random() * 1000);
+  const proc = spawn(process.execPath, [path.join(HERE, '..', 'server.mjs')], {
+    env: { ...process.env, PORT: String(port), TOD_WORK: path.join(TMP, 'work-' + port), FFMPEG: ffmpeg, MT_TIMEOUT_MS: '300', TOD_CONDENSE: '',
+      DASHSCOPE_API_KEY: 'test', GEMINI_API_KEY: '', OPENAI_API_KEY: 'test-openai', OPENAI_MODEL: 'test-model', OPENAI_REASONING_EFFORT: 'none',
+      DASHSCOPE_BASE: PROV, OPENAI_BASE: PROV + '/v1', ...extra },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let mine = '';
+  proc.stdout.on('data', d => { log += d; mine += d; });
+  proc.stderr.on('data', d => { log += d; mine += d; });
+  while (!/Alpha server/.test(mine)) await new Promise(r => setTimeout(r, 50));
+  return { proc, port, work: path.join(TMP, 'work-' + port) };
+}
+const main = await startServer(), cond = await startServer({ TOD_CONDENSE: '1' });
+const port = main.port;
+const server = { kill: () => { main.proc.kill(); cond.proc.kill(); } };
 
 // Gửi một đoạn, đọc trả lời từng dòng: [{ at: ms từ lúc gửi, obj }], kèm content-type.
-async function post(id, extra = {}) {
+async function post(id, extra = {}, p = port) {
   const t0 = Date.now();
-  const res = await fetch(`http://127.0.0.1:${port}/v1/subtitles`, { method: 'POST', headers: { 'content-type': 'application/json' },
+  const res = await fetch(`http://127.0.0.1:${p}/v1/subtitles`, { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ id, from: 0, to: 30, audioStart: 0, urgent: true, aac: AAC, ...extra }) });
   const type = res.headers.get('content-type') || '';
   const reader = res.body.getReader(), dec = new TextDecoder();
@@ -168,12 +176,25 @@ try {
     assert.match(log, /quá 1\.8 s cả lượt: thôi, báo lỗi/);
   });
 
-  // Rút gọn sau (extension 0.2.42: condenseLater: true): đoạn gấp trả kết quả chưa rút gọn ngay, rồi một dòng { condensed }.
+  // Mặc định (rút gọn tắt, 4/11): đoạn gấp hay không gấp, có hay không condenseLater: không lượt rút gọn nào, dòng dài giữ nguyên.
   mode = 'long';
   calls.length = 0;
-  const lt = await post('7500000000000000208', { stream: true, condenseLater: true });
+  const off1 = await post('7500000000000000211', { stream: true, condenseLater: true });
+  const off2 = await post('7500000000000000212', { stream: true, condenseLater: true, urgent: false });
+  t('rút gọn tắt (mặc định): không gọi lượt rút gọn, không có dòng condensed, dòng dài giữ đủ chữ, ở đoạn gấp lẫn đoạn không gấp', () => {
+    for (const r of [off1, off2]) {
+      assert.equal(r.out.at(-1).obj.status, 'ok', JSON.stringify(r.out.at(-1).obj));
+      assert.ok(r.out.at(-1).obj.cues.every(c => / rất rất /.test(c.vi)), JSON.stringify(r.out.at(-1).obj.cues));
+      assert.ok(!r.out.some(x => x.obj.condensed));
+    }
+    assert.equal(calls.filter(c => c.condense).length, 0);
+  });
+  // TOD_CONDENSE=1. Rút gọn sau (extension 0.2.42: condenseLater: true): đoạn gấp trả kết quả chưa rút gọn ngay, rồi một dòng { condensed }.
+  mode = 'long';
+  calls.length = 0;
+  const lt = await post('7500000000000000208', { stream: true, condenseLater: true }, cond.port);
   const lfin = lt.out.find(x => x.obj.status), lcon = lt.out.find(x => x.obj.condensed);
-  t('rút gọn sau: đoạn gấp trả kết quả chưa rút gọn trước, rồi dòng { condensed } đủ dòng, cùng mốc; cache giữ bản rút gọn', () => {
+  t('TOD_CONDENSE=1, rút gọn sau: đoạn gấp trả kết quả chưa rút gọn trước, rồi dòng { condensed } đủ dòng, cùng mốc; cache giữ bản rút gọn', () => {
     assert.equal(lfin.obj.status, 'ok', JSON.stringify(lt.out.map(x => Object.keys(x.obj))));
     assert.ok(lfin.obj.cues.every(c => / rất rất /.test(c.vi)), 'kết quả đầu phải là bản đầy đủ');
     assert.ok(lcon, 'thiếu dòng condensed: ' + JSON.stringify(lt.out.map(x => Object.keys(x.obj))));
@@ -181,31 +202,31 @@ try {
     assert.deepEqual(lcon.obj.condensed.map(c => c.start), lfin.obj.cues.map(c => c.start));
     assert.ok(lcon.obj.condensed.every(c => /^Ngắn \d+\.$/.test(c.vi)), JSON.stringify(lcon.obj.condensed));
     assert.deepEqual(lcon.obj.condensed.map(c => c.full), lfin.obj.cues.map(c => c.vi), 'full: bản đầy đủ đã trả');
-    const file = fs.readdirSync(path.join(TMP, 'work', 'cache')).find(f => f.startsWith('7500000000000000208.0-30.vi.'));
-    const saved = JSON.parse(fs.readFileSync(path.join(TMP, 'work', 'cache', file), 'utf8'));
+    const file = fs.readdirSync(path.join(cond.work, 'cache')).find(f => f.startsWith('7500000000000000208.0-30.vi.'));
+    const saved = JSON.parse(fs.readFileSync(path.join(cond.work, 'cache', file), 'utf8'));
     assert.ok(saved.cues.every(c => c.full && /^Ngắn/.test(c.vi)) && saved.condensedLater === saved.cues.length, 'cache giữ bản rút gọn kèm full');
     assert.equal(lt.out.indexOf(lcon), lt.out.length - 1, 'dòng condensed là dòng cuối');
     assert.equal(calls.filter(c => c.condense).length, 1);
     assert.match(log, /rút gọn sau: \d+\/\d+ dòng dài/);
   });
-  const lc = await post('7500000000000000208', { stream: true, condenseLater: true });
-  t('rút gọn sau: lần hỏi lại lấy từ cache ra bản đã rút gọn, không gọi thêm', () => {
+  const lc = await post('7500000000000000208', { stream: true, condenseLater: true }, cond.port);
+  t('TOD_CONDENSE=1, rút gọn sau: lần hỏi lại lấy từ cache ra bản đã rút gọn, không gọi thêm', () => {
     assert.equal(lc.out.length, 1); assert.equal(lc.out[0].obj.cached, true);
     assert.ok(lc.out[0].obj.cues.every(c => /^Ngắn \d+\.$/.test(c.vi) && !('full' in c)), JSON.stringify(lc.out[0].obj.cues));
     assert.ok(!('condensedLater' in lc.out[0].obj), 'full, condensedLater chỉ ở file cache');
     assert.equal(calls.filter(c => c.condense).length, 1);
   });
   calls.length = 0;
-  const lo = await post('7500000000000000209', { stream: true });
-  t('extension cũ (không gửi condenseLater): đoạn gấp không rút gọn như trước, không có dòng condensed', () => {
+  const lo = await post('7500000000000000209', { stream: true }, cond.port);
+  t('TOD_CONDENSE=1, extension cũ (không gửi condenseLater): đoạn gấp không rút gọn như trước, không có dòng condensed', () => {
     assert.equal(lo.out.at(-1).obj.status, 'ok');
     assert.ok(lo.out.at(-1).obj.cues.every(c => / rất rất /.test(c.vi)));
     assert.ok(!lo.out.some(x => x.obj.condensed));
     assert.equal(calls.filter(c => c.condense).length, 0);
   });
   calls.length = 0;
-  const ln = await post('7500000000000000210', { stream: true, condenseLater: true, urgent: false });
-  t('đoạn không gấp: rút gọn ngay trong lượt dịch như trước, không có dòng condensed', () => {
+  const ln = await post('7500000000000000210', { stream: true, condenseLater: true, urgent: false }, cond.port);
+  t('TOD_CONDENSE=1, đoạn không gấp: rút gọn ngay trong lượt dịch như trước, không có dòng condensed', () => {
     assert.ok(ln.out.at(-1).obj.cues.every(c => /^Ngắn \d+\.$/.test(c.vi)), JSON.stringify(ln.out.at(-1).obj));
     assert.ok(!ln.out.some(x => x.obj.condensed));
     assert.equal(calls.filter(c => c.condense).length, 1);

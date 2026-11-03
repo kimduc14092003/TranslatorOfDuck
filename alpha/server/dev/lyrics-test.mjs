@@ -82,7 +82,7 @@ const PROV = `http://127.0.0.1:${providers.address().port}`;
 const port = 21787 + Math.floor(Math.random() * 1000);
 const WORK = path.join(TMP, 'work');
 const server = spawn(process.execPath, [path.join(HERE, '..', 'server.mjs')], {
-  env: { ...process.env, PORT: String(port), TOD_WORK: WORK, FFMPEG: ffmpeg, DASHSCOPE_API_KEY: 'test', GEMINI_API_KEY: 'test',
+  env: { ...process.env, PORT: String(port), TOD_WORK: WORK, FFMPEG: ffmpeg, TOD_CONDENSE: '1', DASHSCOPE_API_KEY: 'test', GEMINI_API_KEY: 'test',
     OPENAI_API_KEY: 'test-openai', OPENAI_MODEL: 'test-model', DASHSCOPE_BASE: PROV, GEMINI_BASE: PROV + '/v1beta', OPENAI_BASE: PROV + '/v1',
     MAX_PARALLEL: '1', FUNASR_MODEL: 'fun-asr-flash-2026-06-15' },
   stdio: ['ignore', 'pipe', 'pipe'],

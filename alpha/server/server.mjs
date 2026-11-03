@@ -18,6 +18,10 @@ const MAX_BODY = 40 * 1024 * 1024;
 const MAX_PARALLEL = Number(process.env.MAX_PARALLEL) || 4;
 // Server đo của alpha/dev/real: giữ file nhận dạng (kèm vị trí âm thanh, mô tả) để chạy lại offline; server hằng ngày thì không.
 const KEEP_ASR = process.env.TOD_KEEP_ASR === '1';
+// Lượt rút gọn dòng quá dài (bỏ từ đệm, chi tiết phụ cho vừa 17 ký tự/giây): tắt từ 4/11, chủ dự án ưu tiên sub đầy đủ hơn tốc
+// độ đọc (docs/ROADMAP.md §6). TOD_CONDENSE=1 bật lại như trước: rút gọn trong lượt dịch ở đoạn không gấp, rút gọn sau ở đoạn
+// gấp và dịch sẵn (HANDOFF §6an).
+const CONDENSE = process.env.TOD_CONDENSE === '1';
 fs.mkdirSync(CACHE, { recursive: true });
 
 // Tối đa MAX_PARALLEL đoạn xử lý cùng lúc; cùng một đoạn thì dùng chung một lần xử lý (inflight).
@@ -198,14 +202,14 @@ async function handleSubtitles(req, res) {
         }
         return [];
       };
-      // Mẩu nhanh, đoạn dịch sẵn (video kế tiếp) và đoạn gấp (chứa hay sắp tới chỗ đang xem: urgent) bỏ lượt rút gọn: bớt một
+      // Khi bật rút gọn (CONDENSE): mẩu nhanh, đoạn dịch sẵn (video kế tiếp) và đoạn gấp (chứa hay sắp tới chỗ đang xem: urgent) bỏ lượt rút gọn: bớt một
       // lần gọi model, xong sớm hơn. Đo 2/11 trên 503 đoạn trong cache: có rút gọn thì dịch mất 4,0 s (trung vị) thay vì 1,8 s.
       // Đoạn gấp là lúc đang trễ (vừa tua, mạng chậm): sub sớm hơn ~2 s đáng hơn dòng ngắn hơn.
-      opts = { kind: 'aac', offset: meta.audioStart, from: meta.from, to: meta.to, context, condense: !quick && meta.prefetch !== true && meta.urgent !== true };
+      opts = { kind: 'aac', offset: meta.audioStart, from: meta.from, to: meta.to, context, condense: CONDENSE && !quick && meta.prefetch !== true && meta.urgent !== true };
       // Rút gọn sau (extension từ 0.2.42 gửi condenseLater: true cùng stream: true): đoạn gấp, dịch sẵn vẫn trả kết quả ngay như
       // trên, rồi mới rút gọn dòng dài; bản rút gọn gửi thêm một dòng { condensed: [dòng…] } sau dòng kết quả, và ghi đè vào cache.
       // Extension chỉ thay những dòng chưa hiện (chủ dự án 4/11: giữ sub ra sớm, ROADMAP §6).
-      later = !quick && !opts.condense && meta.stream === true && meta.condenseLater === true;
+      later = CONDENSE && !quick && !opts.condense && meta.stream === true && meta.condenseLater === true;
     }
     opts.lyrics = lyrics;
     const buf = Buffer.from(chunked ? meta.aac : meta.b64, 'base64');
@@ -369,7 +373,7 @@ server.listen(PORT, HOST, () => {
   // Báo tên biến (không bao giờ in giá trị) để tìm lỗi gõ sai tên trong .env.
   const KNOWN = ['OPENAI_API_KEY', 'OPENAI_MODEL', 'OPENAI_BASE', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_BASE', 'DASHSCOPE_API_KEY',
     'DASHSCOPE_BASE', 'FUNASR_MODEL', 'ASR_FALLBACK_MODEL', 'ASR_QUOTA_RETRY_MS', 'OPENAI_REASONING_EFFORT', 'MAX_PARALLEL', 'FFMPEG',
-    'HOST', 'PORT', 'MAX_SECONDS', 'TOD_DUMP', 'TOD_WORK', 'TOD_KEEP_ASR', 'MT_TIMEOUT_MS'];
+    'HOST', 'PORT', 'MAX_SECONDS', 'TOD_DUMP', 'TOD_WORK', 'TOD_KEEP_ASR', 'TOD_CONDENSE', 'MT_TIMEOUT_MS'];
   const odd = dotEnvInfo.names.filter(n => !KNOWN.includes(n));
   if (odd.length) console.log(`  → .env có biến server không dùng: ${odd.join(', ')}. Tên key đúng: OPENAI_API_KEY, GEMINI_API_KEY, DASHSCOPE_API_KEY.`);
   if (misplacedOpenAIKey) console.log(`  → ${misplacedOpenAIKey} có dạng key OpenAI: đang dùng nó để dịch bằng OpenAI. Nên đổi tên dòng đó thành OPENAI_API_KEY.`);

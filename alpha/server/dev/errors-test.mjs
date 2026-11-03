@@ -216,7 +216,7 @@ try {
   });
 
   // Lượt rút gọn (tuỳ chọn) treo: chỉ chờ 2 lần hạn đầu (0,6 s) rồi giữ dòng đầy đủ, không chờ cả chuỗi 0,3 / 0,6 / 0,9 s.
-  const lg = await start(path.join(TMP, 'w5'), { MT_TIMEOUT_MS: '300' });
+  const lg = await start(path.join(TMP, 'w5'), { MT_TIMEOUT_MS: '300', TOD_CONDENSE: '1' });   // rút gọn tắt từ 4/11: bật lại để kiểm
   servers.push(lg);
   const m7 = mtPrompts.length;
   mtMode = 'long-hang';
