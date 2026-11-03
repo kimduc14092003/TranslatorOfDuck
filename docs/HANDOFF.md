@@ -1199,6 +1199,7 @@ Chủ dự án chọn làm cả 4 hướng.
   - Hai video xem quá giây 10 có đoạn [10, …) xong lúc 6 s và 8 s sau khi tới, trước giây 10. Đây là suy ra từ thời gian, không có mẫu nhãn để xác nhận.
   - Một video ở lại 8 s: đoạn 1 gửi ở giây ~4,4 (cửa 4 s) rồi bị huỷ giữa chừng, là cái giá đã biết.
   - Bộ ghi cần sửa: hạn giờ cho mỗi lần đọc, tự kết nối lại sau khi máy ngủ, theo tab đang hiện thay vì tab Douyin đầu tiên.
+  - Chủ dự án xác nhận (3/11): không còn thấy "đang dịch" ở giây 10.
 
 ## 7. Việc tiếp theo trên Mac
 
