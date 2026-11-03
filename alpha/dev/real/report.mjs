@@ -95,6 +95,11 @@ export function report(dir) {
   };
 }
 
+// Vế đã chấp nhận ở chỗ nối hai đoạn (lib.mjs, mergedCheck): in số để còn thấy, không tính là cần duyệt.
+export function seamLine(drops) {
+  const one = drops.filter((x) => x.why === 'ghép sub: khác một chữ').length, part = drops.filter((x) => x.why === 'ghép sub: thiếu vài chữ ở chỗ nối').length;
+  return one || part ? [`  Chỗ nối hai đoạn (đã chấp nhận): ${one} vế khác một chữ, ${part} vế thiếu vài chữ (tính là mất)`] : [];
+}
 const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.round(x % 60)).padStart(2, '0')}`;
 export function print(r) {
   const lines = [
@@ -103,6 +108,7 @@ export function print(r) {
     ...(r.error ? [`  LỖI khi xem: ${r.error}`] : []),
     `  Không mất câu vì luật của ta: ${r.unapproved} vế cần duyệt${r.failed.length ? `; ${r.failed.length} đoạn lỗi hay dịch ra 0 dòng` : ''}${r.staleChunks ? `; ${r.staleChunks} đoạn là kết quả cũ (server sẽ làm lại)` : ''}`,
     ...r.failed.map((x) => `    ${x.span} ${x.status}${x.label ? '/' + x.label : ''}`),
+    ...seamLine(r.drops),
     ...r.drops.filter((x) => !x.accepted).slice(0, 12).map((x) => `    ${x.span}${x.t != null ? ' @' + x.t : ''} ${x.why}${x.text ? ': ' + x.text.slice(0, 30) : x.heard ? ': ' + x.heard.slice(0, 30) : ''}`),
     `  Độ phủ lời nói: ${r.coverage ?? '-'}% (${r.clauses - r.lost}/${r.clauses} vế câu)`,
     `  Hiện đúng dòng: ${r.correct ?? '-'}% (${r.same}/${r.expected} lần chụp mỗi 0,25 s; trống ${r.blank}, khác dòng ${r.other}, sub thừa ${r.extra}), tốc độ ${r.rate ?? '-'}×${r.throttle ? `, mạng ${r.throttle} KB/s` : ''}`,

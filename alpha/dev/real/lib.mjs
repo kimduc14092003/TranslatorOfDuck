@@ -246,6 +246,26 @@ export function mergedCues(chunks) {
   const quick = chunks.filter((c) => c.quick && c.status === 'ok').map((q) => ({ ...q, cues: (q.cues || []).filter((x) => !covered(x)) })).filter((q) => q.cues.length);
   return cuesLib().merge([...done, ...quick].sort((a, b) => a.from - b.from).map((c) => ({ from: c.from, to: c.to, cues: c.cues || [] })));
 }
+// Độ dài chuỗi con chung dài nhất của a và b.
+export function longestCommon(a, b) {
+  let best = 0, prev = new Array(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = new Array(b.length + 1).fill(0);
+    for (let j = 1; j <= b.length; j++) if (a[i - 1] === b[j - 1]) { cur[j] = prev[j - 1] + 1; if (cur[j] > best) best = cur[j]; }
+    prev = cur;
+  }
+  return best;
+}
+// Số chữ phải sửa ít nhất (thêm, bớt, thay) để a thành một khúc liền nào đó của b (so chuỗi gần đúng kiểu Sellers).
+export function editInside(a, b) {
+  let prev = new Array(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return Math.min(...prev);
+}
 export const norm = (t) => String(t || '').toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
 // Tiếng đệm đã chấp nhận: vế câu chỉ có 嗯, 啊, 呃, 额, hay tiếng đệm chữ Latin (yeah, oh: pipeline bỏ từ 31/10) không tính là
 // mất câu. Tiếng kêu khác (诶, 哎呀, 嘿, 哇) vẫn tính, vì chủ dự án chưa quyết có bỏ không (ROADMAP §6).
@@ -260,13 +280,25 @@ export const clausesOf = (text) => String(text || '').split(/[，。！？；、
 // Tiếng đệm khác (诶, 哎呀, 嘿) còn chờ chủ dự án quyết (ROADMAP §6), nên vẫn là "cần duyệt".
 const acceptedSkip = (c, lyrics) => (c.label === 'no_speech' && !norm(c.heard)) || (c.label === 'singing' && !lyrics)
   || (c.label === 'filler' && /^[嗯啊呃额]*$/u.test(norm(c.heard)));
+// Vế p có trong chữ của các dòng đã gộp quanh nó (nối liền, vì một vế có thể vắt qua hai dòng: "…三连音在" + "海绵宝宝…")?
+// Câu vắt qua ranh giới đoạn có ở cả hai đoạn, mỗi bên nghe một kiểu, và cues.js giữ một bản. 'ok': có nguyên vẹn. 'one': khác
+// một chữ (tiếng đệm 啊, 储入/储物), chỉ với vế từ 4 chữ. 'part': thiếu vài chữ ở chỗ nối, phần lớn vế còn liền một khúc; tính là
+// mất nhưng đã chấp nhận. 'lost': mất. Chữ phủ định (不, 没…) của vế phải có trong các dòng: thiếu nó là đổi nghĩa.
+const NEGATION = /[不没別别未非无無]/gu;
+function mergedCheck(p, near) {
+  if (near.includes(p)) return 'ok';
+  if (p.length < 4 || (p.match(NEGATION) || []).some((x) => !near.includes(x))) return 'lost';
+  if (editInside(p, near) <= 1) return 'one';
+  return longestCommon(p, near) >= 0.6 * p.length ? 'part' : 'lost';
+}
 // Mọi vế câu server nghe được ở phần chính của đoạn (không tính phần âm thanh gửi dư), và vế nào không thành dòng sub hiện ra.
 // lost: mọi vế không có dòng (kể cả đã chấp nhận); unapproved: vế mất chưa được chấp nhận.
 export function drops(chunks, { lyrics = true } = {}) {
   const items = [];
   let clauses = 0, lost = 0, unapproved = 0, staleN = 0, noResult = 0;
   const merged = mergedCues(chunks);
-  const mergedHas = (p, a, b) => merged.some((m) => m.end >= a - 1 && m.start <= b + 1 && norm(m.zh).includes(p));
+  // Chữ của các dòng đã gộp quanh [a, b], nối liền: một vế có thể vắt qua hai dòng ("刺耳三连音在" + "海绵宝宝身边时…").
+  const nearText = (a, b) => norm(merged.filter((m) => m.end >= a - 1 && m.start <= b + 1).map((m) => m.zh).join(''));
   for (const c of chunks.filter((x) => !x.quick)) {
     if (c.stale) { staleN++; continue; }
     const main = ((c.debug && c.debug.sentences) || []).filter((s) => { const mid = (s.start + s.end) / 2; return mid >= c.from && mid < c.to; });
@@ -285,10 +317,14 @@ export function drops(chunks, { lyrics = true } = {}) {
     const mt = (c.debug && c.debug.mtFix && c.debug.mtFix.dropped) || [];
     for (const { p, s } of parts) {
       if (have.includes(p)) {
-        // Có trong dòng của đoạn mà bước ghép sub (cues.js) bỏ mất.
+        // Có trong dòng của đoạn; xem bước ghép sub (cues.js) có bỏ mất không. Vế vắt qua hai dòng của đoạn: so theo giờ của câu.
         const cue = (c.cues || []).find((x) => norm(x.zh).includes(p));
-        if (!cue || mergedHas(p, cue.start, cue.end)) continue;
-        lost++; unapproved++;
+        const at = mergedCheck(p, nearText(cue ? cue.start : s.start, cue ? cue.end : s.end));
+        if (at === 'ok') continue;
+        if (at === 'one') { items.push({ span: `${c.from}-${c.to}`, t: +s.start.toFixed(1), why: 'ghép sub: khác một chữ', accepted: true, text: p }); continue; }
+        lost++;
+        if (at === 'part') { items.push({ span: `${c.from}-${c.to}`, t: +s.start.toFixed(1), why: 'ghép sub: thiếu vài chữ ở chỗ nối', accepted: true, text: p }); continue; }
+        unapproved++;
         items.push({ span: `${c.from}-${c.to}`, t: +s.start.toFixed(1), why: 'bỏ khi ghép sub', accepted: false, text: p });
         continue;
       }

@@ -1372,7 +1372,26 @@ Chủ dự án chọn làm cả 4 hướng.
   - 1 đoạn chỉ có số "10" bị coi là không có lời; 1 đoạn bài hát chỉ còn tiếng kêu.
   - 30 đoạn có file nhận dạng mà không có kết quả (dịch ra 0 dòng, lỗi, hay bị huỷ); cache hằng ngày không giữ vị trí âm thanh nên không đếm được vế câu.
 - **Chưa đo:** đúng nhịp (Δin), ♪ đúng. Chưa chạy bộ công cụ trên Windows (phần Windows mới là suy luận).
-- **Kiểm:** verifier soát (accept_with_fixes). 3 lỗi lớn đã sửa: đoạn dịch ra 0 dòng hay lỗi không hiện trong bảng điểm; dòng bị bỏ khi ghép sub không được đếm; 10 s đầu (chụp mỗi 100 ms) nặng gấp 2,5 lần khi chấm. Cùng 17 lỗi nhỏ: dọn dữ liệu khi dừng giữa chừng, chọn đúng thẻ video khi tua, lỗi phía Douyin đếm riêng, chạy trên Windows. Lượt đo thật có tua cho thấy thêm: phải chỉ chấm phần đã xem, nếu không đoạn bị huỷ vì tua đi bị tính là mất câu. Lượt soát 2 (accept_with_fixes): 1 lỗi lớn do chính bản sửa (đổi `PIPELINE_VERSION` thì không thấy file của lượt đo cũ) và 9 lỗi nhỏ, đã sửa; các sửa này chưa được soát lại.
+- **Kiểm (bộ công cụ):** verifier soát (accept_with_fixes). 3 lỗi lớn đã sửa: đoạn dịch ra 0 dòng hay lỗi không hiện trong bảng điểm; dòng bị bỏ khi ghép sub không được đếm; 10 s đầu (chụp mỗi 100 ms) nặng gấp 2,5 lần khi chấm. Cùng 17 lỗi nhỏ: dọn dữ liệu khi dừng giữa chừng, chọn đúng thẻ video khi tua, lỗi phía Douyin đếm riêng, chạy trên Windows. Lượt đo thật có tua cho thấy thêm: phải chỉ chấm phần đã xem, nếu không đoạn bị huỷ vì tua đi bị tính là mất câu. Lượt soát 2 (accept_with_fixes): 1 lỗi lớn do chính bản sửa (đổi `PIPELINE_VERSION` thì không thấy file của lượt đo cũ) và 9 lỗi nhỏ, đã sửa; các sửa này chưa được soát lại.
+
+## 6am. Số đo nền: cả bộ 13 mục (4/11, extension 0.2.41, server alpha-8)
+
+- **Cách đo:** `node run.mjs --name baseline-0411`, Mac, nhận dạng bằng model dự phòng (hết lượt miễn phí của model chính), dịch OpenAI, tốc độ 1×, lời bài hát bật. Điểm số ở `alpha/server/work/real/baseline-0411/summary.json` (không có chữ của video).
+- **Tổng:** 0 lần chờ dịch, 0 lần lỗi của ta, 0 đoạn lỗi hay dịch ra 0 dòng, 0 yêu cầu bị huỷ. Hiện đúng dòng thấp nhất 88,2% (đoạn tiếng Nhật của phim ngắn), các mục khác 97–100%. Sub đầu tiên trung vị 3,8 s, cao nhất 5,5 s. Đọc ≤ 17 ký tự/giây trung vị 64,9% (40,5–100%).
+- **1 mục lỗi:** 7696833663460553073 "không thấy video đang phát" (trang Douyin không mở video trong 60 s). Chạy lại thì ổn (96,1% đúng dòng, sub đầu 3,8 s): lỗi thoáng qua phía trang, không phải của ta.
+- **95 vế "cần duyệt":**
+  - 88 vế là đoạn tiếng Anh bị bỏ "không phải tiếng Trung": cả video 7681279162377061563 (73 vế) và hai đoạn đầu của 7699966439993675034 (15 vế). Đúng thiết kế hiện tại; nguồn tiếng Anh là giai đoạn 3.
+  - 7 vế "bỏ khi ghép sub": 1 ở 7703023641964907827, 4 ở 7677880211542740230, 2 ở 7675802139846823177. Chạy lại 7675802139846823177 và 7696833663460553073 có giữ dữ liệu (lượt `check-0411`): lại ra 2 + 1 vế như vậy, đều ở đầu đoạn (15 s, 140 s). Câu vắt qua ranh giới đoạn có ở cả hai đoạn, mỗi bên nghe một kiểu, và cues.js giữ một bản. 2 vế ở 140 s là báo nhầm: một chữ nằm ở dòng trước (`…三连音在` + `海绵宝宝…`), một vế chỉ thiếu tiếng đệm 啊. Vế ở 15 s thiếu thật 3 chữ đầu (`脸上的` của `脸上的锤子多了不少`); bản dịch của dòng được giữ có "trên mặt" (tôi đọc khi soát, không kiểm lại được). 5 vế của hai video kia không xem được vì dữ liệu đã xoá (suy luận: cùng kiểu).
+- **Sửa công cụ đo** (`lib.mjs`, `mergedCheck`), theo lượt soát của verifier (accept_with_fixes):
+  - Vế coi là có khi chữ của các dòng đã gộp quanh nó, nối liền, chứa nguyên vế. Vế từ 4 chữ khác đúng một chữ với một khúc liền của các dòng đó (`editInside` ≤ 1) thì ghi "ghép sub: khác một chữ", không tính mất.
+  - Thiếu vài chữ ở chỗ nối mà còn ít nhất 60% vế liền một khúc thì ghi "ghép sub: thiếu vài chữ ở chỗ nối": tính là mất, nhưng đã chấp nhận (không cần duyệt), như câu hát khi tắt lời bài hát.
+  - Vế dưới 4 chữ phải có nguyên vẹn; chữ phủ định của vế (不, 没, 别, 未, 非, 无) phải có trong các dòng đó.
+  - Vế vắt qua hai dòng của cùng một đoạn: trước đây không được so với sub đã gộp, nay so theo giờ của câu.
+  - Báo cáo và `cache-scan` in số vế đã chấp nhận ở chỗ nối.
+  - Bản đầu dùng dãy con chung (không cần liền), verifier tìm ra là nó nhận nhầm `我们走了` khi dòng giữ lại là `他们是走了的人啊`, và `他没有去学校` khi chỉ còn `他有去学校`. Ca thử tổng hợp (8 ca, chạy tay, chưa thành test): câu khác hẳn, hai ca trên, `不要了`/`我要了`, `好的`/`好` đều báo "bỏ khi ghép sub"; `今天天气很好我们出去完` là "khác một chữ"; `脸上的…` là "thiếu vài chữ".
+  - Quét lại cache hằng ngày (388 video, 5.601 vế): "bỏ khi ghép sub" từ 5 còn 1; 4 vế "khác một chữ", verifier xem từng ca, đều do hai lượt nhận dạng nghe khác một chữ.
+  - Dữ liệu của `check-0411` đã xoá, nên không chấm lại được bằng bản sửa cuối. `check-0411/summary.json` còn điểm của bản cũ (3 vế cần duyệt). Theo luật mới, 7696833663460553073 sẽ là 0 vế cần duyệt, độ phủ 52/53 (suy luận từ lượt chấm bằng bản đầu).
+- **Một lỗi thật nhỏ của cues.js:** dòng của đoạn sau nằm gọn trong thời gian dòng cuối đoạn trước thì bị bỏ mà không so chữ. 7649415147513375994 ở 21,4 s: chỉ đoạn sau nghe được "哭" (trong bài hát), bị bỏ. 1 ca trong 5.601 vế của cache hằng ngày, chưa sửa.
 
 ## 7. Việc tiếp theo trên Mac
 

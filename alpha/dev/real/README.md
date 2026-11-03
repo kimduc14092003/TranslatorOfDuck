@@ -43,7 +43,7 @@ Server đo dùng key trong `alpha/server/.env`, giống server hằng ngày. Đ�
 ## Bảng điểm đo được
 
 `report.mjs` in, cho mỗi lượt xem:
-- **không mất câu vì luật của ta:** các vế câu cần duyệt: đoạn bị bỏ cả đoạn, đoạn lỗi hay dịch ra 0 dòng (theo proxy và file nhận dạng giữ lại), vế nghe được mà không thành dòng, dòng bỏ ở bước dịch, dòng bỏ khi ghép sub. Đã chấp nhận: đoạn không có chữ nào, chỉ có 嗯/啊, bài hát khi đã tắt lời bài hát. Kết quả cũ mà server sẽ làm lại ("quá ít lời") không tính;
+- **không mất câu vì luật của ta:** các vế câu cần duyệt: đoạn bị bỏ cả đoạn, đoạn lỗi hay dịch ra 0 dòng (theo proxy và file nhận dạng giữ lại), vế nghe được mà không thành dòng, dòng bỏ ở bước dịch, dòng bỏ khi ghép sub. Đã chấp nhận: đoạn không có chữ nào, chỉ có 嗯/啊, bài hát khi đã tắt lời bài hát, vế ở chỗ nối hai đoạn chỉ khác một chữ hay thiếu vài chữ (in riêng một dòng). Kết quả cũ mà server sẽ làm lại ("quá ít lời") không tính;
 - **độ phủ lời nói** (chỉ để theo dõi);
 - **hiện đúng dòng:** so sub đang hiện với dòng lẽ ra phải hiện, trên lưới 0,25 s;
 - **chờ dịch khi đang xem**, **lỗi** (của ta, và phía Douyin như 429), **sub đầu tiên**;
