@@ -989,17 +989,22 @@
     fastDone.push({ speed, start, at: now });
     while (fastDone.length && now - fastDone[0].at > FAST_RECENT) fastDone.shift();
   }
+  // Lượt tải xong nhanh gấp 3 rate, chạy cùng lúc với lượt bắt đầu lúc since: bắt đầu sau nó (dư CONCURRENT_SLACK) và xong sau khi
+  // nó bắt đầu. Trước đây chỉ xét lúc bắt đầu: ở chế độ first10, lượt [10,20) tải sớm của video trước (ngắn, nhanh) xong ngay trước
+  // lượt đầu của video kế, đường truyền chậm đi thì lượt đó bị coi là chậm riêng (mô phỏng 3/11: thôi lượt đầu, tải lại đoạn 0, không
+  // có sub trong 17 s thay vì 11,75 s; cách cũ cũng gặp: thấy với video trước 12–60 s).
+  const fastAlong = (rate, since, now) => fastDone.some((x) => now - x.at < FAST_RECENT && x.start >= since - CONCURRENT_SLACK && x.at > since && x.speed >= 3 * rate);
   // Có bằng chứng đường truyền còn dư cho lượt tốc độ rate bắt đầu lúc since: một lượt chạy cùng lúc đã xong nhanh gấp 3, hay
   // lượt của video khác đang tải nhanh gấp 3. Không có lượt nào khác thì không có bằng chứng (khác othersLoading: false).
   const spareCapacity = (rate, since) => {
     const now = performance.now();
-    return rate > 0 && (fastDone.some((x) => now - x.at < FAST_RECENT && x.start >= since - CONCURRENT_SLACK && x.speed >= 3 * rate)
+    return rate > 0 && (fastAlong(rate, since, now)
       || [...vids].some(([id, v]) => id !== currentId && [...v.chunks.values()].some((c) => c.status === 'pending' && !c.sent && c.since != null && now - c.last < 1000
         && c.got / Math.max(1, now - c.since) >= 3 * rate)));
   };
   const othersLoading = (rate = null, since = -Infinity) => {
     const now = performance.now();
-    if (rate != null && rate > 0 && fastDone.some((x) => now - x.at < FAST_RECENT && x.start >= since - CONCURRENT_SLACK && x.speed >= 3 * rate)) return false;
+    if (rate != null && rate > 0 && fastAlong(rate, since, now)) return false;
     return [...vids].some(([id, v]) => id !== currentId && [...v.chunks.values()].some((c) => c.status === 'pending' && !c.sent && c.since != null && now - c.last < 1000
       && !(rate != null && c.got / Math.max(1, now - c.since) >= 3 * rate)));
   };
@@ -1188,6 +1193,7 @@
       if (id === currentId && !act) await actBack(id);
       while (sendWait(id, k) || f10Hold(id, k)) {
         entry.waiting = true;   // đã tải xong, chờ lượt gửi (currentBehind: không phải lượt tải đứng im)
+        entry.gate = !sendWait(id, k);   // chờ vì cửa chờ (f10Hold), không phải vì đoạn trước: bảng thông tin (pieceState)
         await nextTurn();
         if (entry.ctl.signal.aborted || v.chunks.get(k) !== entry) { if (v.chunks.get(k) === entry) v.chunks.delete(k); return; }
         // Lần dò hụt (không thấy video đang xem) trùng lúc hết chờ: chờ nó quay lại như trên, kẻo bỏ đoạn đã tải xong.
@@ -1245,9 +1251,13 @@
     // sub đầu muộn từ 12,5 s thành 14,25 s).
     if (long && [...vid(currentId).quick.values()].some((q) => q.status === 'pending' && !q.sent)) return true;
     // Đoạn gấp vừa bị mẩu nhanh ngắt (chưa có mục nào) cũng giữ chỗ: không thì đoạn kế lấy lượt tải trước nó, hết 10 s của
-    // mẩu nhanh là mất sub ~5 s (mô phỏng của verifier 31/10: đoạn ở chỗ tua xong lúc 12,4 s thay vì 6,9 s).
+    // mẩu nhanh là mất sub ~5 s (mô phỏng của verifier 31/10: đoạn ở chỗ tua xong lúc 12,4 s thay vì 6,9 s). Đoạn gấp tải lỗi đang
+    // chờ thử lại nhanh (fastRetry, DL_RETRY_CUR) cũng vậy: không thì đoạn kế (chưa gấp) lấy hàng tải trước, lần thử lại sau 1 s thành
+    // sau cả lượt đó (mô phỏng 3/11, first10: [10,20) lỗi lúc 8 s, thử lại lúc 11,65 s thay vì 9,2 s; cách cũ: tua tới [290,320)).
     for (let pk = 0; pk < plan.length; pk++) {
-      if (pk !== k && urgentChunk(currentId, pk, plan) && wanted.has(currentId + ':' + pk) && !vid(currentId).chunks.has(pk)) return true;
+      const pc = vid(currentId).chunks.get(pk);
+      if (pk !== k && urgentChunk(currentId, pk, plan) && wanted.has(currentId + ':' + pk)
+        && (!pc || (pc.status === 'error' && !pc.slow && fastRetry(pc, currentId)))) return true;
     }
     return false;
   }
@@ -1366,7 +1376,7 @@
     if (c.status === 'no_audio') return 'không có âm thanh';
     if (c.status === 'error') return c.slow ? 'tải quá chậm, dùng mẩu nhanh' : 'lỗi: ' + String(c.error || '').slice(0, 50);
     if (c.sent) return `đang dịch ở server${c.sentAt ? ` (${Math.round((Date.now() - c.sentAt) / 1000)} s` : ''}${Array.isArray(c.partial) && c.partial.length ? `${c.sentAt ? ', ' : ' ('}đã có ${c.partial.length} dòng)` : c.sentAt ? ')' : ''}`;
-    if (c.waiting) return 'đã tải, chờ đoạn trước dịch xong';
+    if (c.waiting) return c.gate ? 'đã tải, gửi khi xem tiếp' : 'đã tải, chờ đoạn trước dịch xong';
     // win: cả cửa sổ; bytes: phần lượt đang chạy phải tải (lượt nối tiếp sau lượt tải đầu video chỉ tải phần còn thiếu).
     if (c.since != null && c.bytes) { const w = c.win || c.bytes; return `đang tải ${Math.min(99, Math.max(0, Math.round(100 * (w - c.bytes + (c.got || 0)) / w)))}%`; }
     return 'đang tải';

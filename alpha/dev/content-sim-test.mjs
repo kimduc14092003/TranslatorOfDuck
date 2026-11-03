@@ -1,6 +1,12 @@
 // Mô phỏng content.js + cues.js (và tap.main.js) trong vm: DOM, chrome.*, fetch, đồng hồ đều giả, không cần trình
 // duyệt hay mạng. Mỗi ca dựng lại một lỗi đợt rà soát 31/10 tìm ra (F1, F2, F4, F6, F7, F9, F10, F11, F13, F15) hoặc
-// lần kiểm lại bản sửa tìm ra, và kiểm cách sửa. Chạy: node alpha/dev/content-sim-test.mjs
+// lần kiểm lại bản sửa tìm ra, và kiểm cách sửa. Chạy ở hai chế độ (HANDOFF §6ad, D2):
+//   node alpha/dev/content-sim-test.mjs             cài đặt đã bỏ chọn ô "dịch sẵn 10 s đầu" (cách cũ, dịch sẵn 20–30 s)
+//   FIRST10=1 node alpha/dev/content-sim-test.mjs   chưa lưu cài đặt gì (mặc định từ 0.2.37: dịch sẵn 10 s đầu)
+// Chế độ và lưới đoạn mong đợi lấy từ phía test (cài đặt truyền vào makeEnv, GRID theo luật đã ghi), không đọc từ content.js;
+// e.plan, e.k, e.key, gridOf còn kiểm lưới content.js chia đúng như vậy. Ca chỉ có nghĩa ở cách cũ (mẩu nhanh ở [0,20)) ghi rõ
+// settings: OLD và có ca tương ứng ở cách 10 s; các ca "Dịch sẵn 10 s…" ghi rõ settings: TEN, chạy ở cả hai lượt.
+// EXT_DIR=<thư mục>: chạy với bản sao của alpha/extension (bản đối chứng). ONLY=<regex>: chỉ chạy các ca khớp tên.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -8,7 +14,25 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const EXT = path.join(ROOT, 'extension');
+// EXT_DIR: chạy với bản sao khác của alpha/extension (bản đối chứng: sửa content.js trong bản sao rồi xem ca nào trượt).
+const EXT = process.env.EXT_DIR ? path.resolve(process.env.EXT_DIR) : path.join(ROOT, 'extension');
+// Hai chế độ (HANDOFF §6ad, D2): FIRST10=1 thì cài đặt đã lưu là {} (mặc định từ 0.2.37: dịch sẵn 10 s đầu); không có thì
+// { first10: false, first10Set: true } (đã bỏ chọn ô: dịch sẵn 20–30 s như trước). Ca nào truyền settings thì theo nó.
+const MODE10 = process.env.FIRST10 === '1';
+const OLD = { first10: false, first10Set: true }, TEN = {};
+const DEFAULT_SETTINGS = MODE10 ? TEN : OLD;
+// Cài đặt nào là cách 10 s: first10: false chỉ tính khi có first10Set (HANDOFF §6ad, D1).
+const isTen = (settings) => !(settings.first10 === false && settings.first10Set === true);
+// Lưới đoạn mong đợi (HANDOFF §6ab–§6ad, phía test): cách cũ: video ≤ 30 s dịch một lần, [0,20) rồi các đoạn 30 s; cách 10 s:
+// ≤ 12 s một lần, [0,10), [10,20) rồi 30 s, phần dư cuối ngắn hơn 8 s gộp vào đoạn trước. Đoạn cuối tới ceil(D) + 1.
+function GRID(durMs, ten) {
+  const D = durMs / 1000, end = Math.ceil(D) + 1;
+  if (D <= (ten ? 12 : 30)) return [[0, end]];
+  const g = [[0, ten ? 10 : 20]];
+  for (let a = g[0][1]; a < D;) { const b = a + (ten && a === 10 ? 10 : 30); g.push([a, Math.min(b, end)]); a = b; }
+  if (ten) { const [x, y] = g.slice(-2); if (y[1] - y[0] < 8) g.splice(-2, 2, [x[0], y[1]]); }
+  return g;
+}
 const VERSION = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf8')).version;
 
 // ---- content.js trong vm. Đồng hồ: env.now (Date.now), env.perf (performance.now, requestAnimationFrame).
@@ -17,9 +41,11 @@ const VERSION = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf
 // status(a, b): mã HTTP trả về (vd. 429). retryAfter(a, b): header Retry-After (null: không đọc được).
 // worker: câu trả lời của background.js cho { type: 'hello' } (mặc định đúng bản trong manifest.json, đọc được NDJSON); 'none':
 // worker cũ không biết tin này (Chrome trả undefined, đo 2/11); 'reject': không gửi được; 'hang': không bao giờ trả lời.
-function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () => 206, retryAfter = () => null, worker = { build: VERSION, ndjson: true } } = {}) {
+// settings: cài đặt đã lưu (chrome.storage), mặc định theo FIRST10 (DEFAULT_SETTINGS). bps: byte mỗi giây phim (mục lục giả).
+function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () => 206, retryAfter = () => null, worker = { build: VERSION, ndjson: true },
+  settings = DEFAULT_SETTINGS, bps = 1000 } = {}) {
   const env = { now: 1_000_000, perf: 0, sent: [], replies: new Map(), fetches: [], rafs: [], listeners: {}, videos: new Map(), activeId: null,
-    href: 'https://www.douyin.com/', onChanged: null };
+    href: 'https://www.douyin.com/', onChanged: null, ten: isTen(settings), durs: new Map() };
   const el = () => ({ style: {}, textContent: '' });
   const shadow = { '.sub': el(), '.badge': el(), '.badge .txt': el(), '.badge .dot': el(), '.info': el() };
   const document = {
@@ -67,12 +93,11 @@ function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () 
         return new Promise((r) => env.replies.set(msg.key, r));
       },
       getManifest: () => ({ version: VERSION }) },
-    // first10: false: các ca ở đây kiểm cách dịch sẵn 20–30 s (mặc định từ 0.2.37 là 10 s; content-time-test kiểm cách đó).
-    storage: { local: { get: (_k, cb) => cb({ settings: { first10: false, first10Set: true } }), set() {} }, onChanged: { addListener: (f) => { env.onChanged = f; } } },
+    storage: { local: { get: (_k, cb) => cb({ settings: { ...settings } }), set() {} }, onChanged: { addListener: (f) => { env.onChanged = f; } } },
   };
-  // Mục lục giả: giây t ở byte t*1000.
+  // Mục lục giả: giây t ở byte t*bps (mặc định 1000).
   const TodMp4 = { headerEnd: () => 10, parse: () => ({ duration: 0 }),
-    window: (_m, a, b) => ({ start: Math.round(a * 1000), end: Math.round(b * 1000), startTime: a, seconds: b - a, build: () => new Uint8Array(4) }) };
+    window: (_m, a, b) => ({ start: Math.round(a * bps), end: Math.round(b * bps), startTime: a, seconds: b - a, build: () => new Uint8Array(4) }) };
   const ctx = {
     window: { addEventListener: (t, f) => { env.listeners[t] = f; }, dispatchEvent() {} },
     document, chrome, TodMp4, location: { get href() { return env.href; } }, innerWidth: 1280, innerHeight: 800,
@@ -88,11 +113,13 @@ function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () 
   vm.runInContext(src, ctx);
   env.dbg = ctx.__dbg;
   env.up = (type, data) => env.listeners.__tod_alpha_up({ detail: JSON.stringify({ type, data }) });
-  env.item = (id, durMs, feed = true) => ({ id, kind: 'video', playUri: 'v0d00f' + id, durationMs: durMs, gears: [], audio: [], feed, desc: '', hashtags: [] });
+  env.item = (id, durMs, feed = true) => (env.durs.set(id, durMs), { id, kind: 'video', playUri: 'v0d00f' + id, durationMs: durMs, gears: [], audio: [], feed, desc: '', hashtags: [] });
   env.video = (id, t = 0) => { const v = { currentTime: t, paused: false, playbackRate: 1, readyState: 4,
     getBoundingClientRect: () => ({ left: 0, top: 0, right: 640, bottom: 480, width: 640, height: 480 }) }; env.videos.set(id, v); return v; };
   env.flush = async (n = 30) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
   env.tick = async (ms = 260) => { env.now += ms; env.perf += ms; for (const cb of env.rafs.splice(0)) cb(env.perf); await env.flush(); };
+  // Chờ theo đồng hồ thật (actBack, WORKER_WAIT dùng setTimeout thật) tới khi cond() đúng, tối đa ms.
+  env.until = async (cond, ms = 2000) => { const t0 = Date.now(); while (!cond() && Date.now() - t0 < ms) { await new Promise((r) => setTimeout(r, 20)); await env.flush(); } };
   env.reply = async (key, r) => { const f = env.replies.get(key); assert.ok(f, 'không có yêu cầu đang chờ: ' + key); env.replies.delete(key); f(r); await env.flush(); };
   env.subs = () => env.sent.filter((m) => m.type === 'subtitles').map((m) => m.key);
   env.cancels = () => env.sent.filter((m) => m.type === 'cancel').flatMap((m) => m.keys);
@@ -103,33 +130,84 @@ function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () 
   env.infoText = () => (shadow['.info'].style.display === 'block' ? shadow['.info'].textContent : null);
   env.badge = () => (shadow['.badge'].style.display === 'block' ? shadow['.badge .txt'].textContent : null);
   env.vid = (id) => env.dbg.vids.get(id);
+  // Lưới đoạn mong đợi của video (GRID theo chế độ của env), sau khi kiểm planFor thật chia đúng như vậy. k(t): đoạn chứa giây t,
+  // key(t): "<id>:<k>".
+  env.plan = (id = A) => {
+    const g = GRID(env.durs.get(id), env.ten), v = env.vid(id);
+    assert.equal(JSON.stringify(v && v.plan), JSON.stringify(g), 'lưới đoạn của ' + id + (env.ten ? ' (cách 10 s)' : ' (cách cũ)'));
+    return g;
+  };
+  env.k = (t, id = A) => env.plan(id).findIndex(([a, b]) => t >= a && t < b);
+  env.key = (t, id = A) => id + ':' + env.k(t, id);
+  // Cách 10 s (theo cài đặt của env): phát tiếp ~4,2 s (qua cửa chờ f10Gate, 4 s) rồi tua về chỗ cũ, dừng như trước. Cách cũ
+  // không có cửa chờ: không làm gì.
+  env.passGate = async (v) => {
+    if (!env.ten) return;
+    const t0 = v.currentTime, p = v.paused;
+    v.paused = false;
+    for (let i = 0; i < 16; i++) { v.currentTime += 0.26; await env.tick(); }
+    v.currentTime = t0; v.paused = p;
+    await env.tick();
+  };
   return env;
 }
 
 const A = '7500000000000000004', B = '7500000000000000005', C2 = '7500000000000000006', D = '7500000000000000007';
 const C = (start, se, vi, end = se + 0.3) => ({ start, end, se, vi });
+// Đoạn có mẩu nhanh không (dài hơn QUICK_MIN_CHUNK 16 s): cách cũ [0,20) có, cách 10 s [0,10), [10,20) không.
+const hasQuick = ([a, b]) => b - a > 16;
+const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
 const texts = (cues) => Array.from(cues, (c) => c.vi);
+// Lưới đoạn mong đợi của video A dài durMs (cài đặt mặc định theo FIRST10, hay opts.settings), ten: cách 10 s. Kiểm luôn
+// content.js chia đúng như vậy (env riêng).
+async function gridOf(durMs, opts = {}) {
+  const e = makeEnv(opts);
+  e.up('items', [e.item(A, durMs)]);
+  e.activeId = A; e.video(A, 0).paused = true;
+  await e.tick();
+  return Object.assign(e.plan(), { ten: e.ten });
+}
 const DOWN = 'không kết nối được server (đã chạy "npm start" trong alpha/server chưa?)';   // câu của background.js
 let n = 0, failed = 0;
+// ONLY: chỉ chạy các ca có tên khớp (biểu thức chính quy), để dò lỗi.
+const ONLY = process.env.ONLY ? new RegExp(process.env.ONLY) : null;
 const t = async (name, fn) => {
+  if (ONLY && !ONLY.test(name)) return;
   try { await fn(); n++; console.log('PASS ' + name); } catch (e) { failed++; console.log('FAIL ' + name + '\n     ' + String(e.message).split('\n')[0]); }
 };
 
+await t('Lưới đoạn: content.js chia đúng lưới mong đợi (GRID, theo luật đã ghi) ở cách cũ và cách 10 s, và mặc định của lượt chạy này', async () => {
+  // Ví dụ đã ghi (HANDOFF §6ab–§6ad, content-time-test): GRID tự kiểm trước.
+  assert.deepEqual(GRID(100000, false), [[0, 20], [20, 50], [50, 80], [80, 101]]);
+  assert.deepEqual(GRID(100000, true), [[0, 10], [10, 20], [20, 50], [50, 80], [80, 101]]);
+  assert.deepEqual([45, 27, 31, 62, 12, 13, 17, 25].map((d) => GRID(d * 1000, true)), [[[0, 10], [10, 20], [20, 46]], [[0, 10], [10, 20], [20, 28]],
+    [[0, 10], [10, 20], [20, 32]], [[0, 10], [10, 20], [20, 50], [50, 63]], [[0, 13]], [[0, 14]], [[0, 10], [10, 18]], [[0, 10], [10, 26]]]);
+  assert.deepEqual([45, 30, 31].map((d) => GRID(d * 1000, false)), [[[0, 20], [20, 46]], [[0, 31]], [[0, 20], [20, 32]]]);
+  for (const settings of [OLD, TEN, { first10: false, lyrics: true }, DEFAULT_SETTINGS]) {
+    for (const d of [12000, 13000, 25000, 27000, 30000, 31000, 45000, 62000, 100000, 300000]) await gridOf(d, { settings });
+  }
+});
+
 await t('F1 tua tới 2 s trước ranh giới, đoạn trước bị huỷ: dòng của đoạn sau vẫn hiện, mẩu nhanh không che', async () => {
+  // Ranh giới đầu tiên sau một đoạn có mẩu nhanh: cách cũ 20 s ([0,20) | [20,50)); cách 10 s 50 s ([20,50) | [50,80)), vì
+  // [0,10) và [10,20) không có mẩu nhanh. Mọi mốc dời theo d.
+  const g = await gridOf(100000);
+  const kb = g.findIndex((x, i) => i > 0 && hasQuick(g[i - 1])), d = g[kb][0] - 20;
+  const K0 = A + ':' + (kb - 1), K1 = A + ':' + kb, Q = A + ':q' + (18 + d);
   const e = makeEnv();
   e.up('items', [e.item(A, 100000)]);
-  e.activeId = A; const v = e.video(A, 18);
+  e.activeId = A; const v = e.video(A, 18 + d);
   for (let i = 0; i < 3; i++) await e.tick();
-  assert.deepEqual(e.subs().sort(), [A + ':0', A + ':1', A + ':q18']);
-  await e.reply(A + ':q18', { status: 'ok', cues: [C(18.5, 20.8, 'Q1'), C(21.5, 23.8, 'Q2'), C(25.0, 27.5, 'Q3')] });
-  v.currentTime = 20.5; await e.tick();
-  assert.deepEqual(e.cancels(), [A + ':0']);
-  await e.reply(A + ':0', { status: 'cancelled' });
-  await e.reply(A + ':1', { status: 'ok', cues: [C(21.4, 23.7, 'C1a'), C(24.0, 24.8, 'C1b'), C(25.1, 28.6, 'C1c'), C(30, 32.5, 'C1d')] });
+  assert.deepEqual(e.subs().sort(), [K0, K1, Q]);
+  await e.reply(Q, { status: 'ok', cues: [C(18.5 + d, 20.8 + d, 'Q1'), C(21.5 + d, 23.8 + d, 'Q2'), C(25.0 + d, 27.5 + d, 'Q3')] });
+  v.currentTime = 20.5 + d; await e.tick();
+  assert.deepEqual(e.cancels(), [K0]);
+  await e.reply(K0, { status: 'cancelled' });
+  await e.reply(K1, { status: 'ok', cues: [C(21.4 + d, 23.7 + d, 'C1a'), C(24.0 + d, 24.8 + d, 'C1b'), C(25.1 + d, 28.6 + d, 'C1c'), C(30 + d, 32.5 + d, 'C1d')] });
   assert.deepEqual(texts(e.vid(A).cues), ['Q1', 'C1a', 'C1b', 'C1c', 'C1d']);
   for (const [at, want] of [[19, 'Q1'], [22, 'C1a'], [24.4, 'C1b'], [26, 'C1c'], [31, 'C1d']]) {
-    v.currentTime = at; await e.tick(16);
-    assert.equal(e.subText(), want, 'ở ' + at + ' s');
+    v.currentTime = at + d; await e.tick(16);
+    assert.equal(e.subText(), want, 'ở ' + (at + d) + ' s');
   }
 });
 
@@ -141,7 +219,7 @@ await t('F1 dòng mẩu nhanh chồng lên dòng đầu (vắt qua ranh giới) 
   assert.ok(e.subs().includes(A + ':q45'));
   await e.reply(A + ':q45', { status: 'ok', cues: [C(45.5, 47.6, 'Q1'), C(48.2, 51.0, 'Q2'), C(51.5, 54, 'Q3')] });
   // Đoạn [50,80) gửi dư 8 s phía trước nên giữ cả câu vắt qua 50 s (bắt đầu 48,3 s).
-  await e.reply(A + ':2', { status: 'ok', cues: [C(48.3, 51.1, 'C2a'), C(51.6, 54.2, 'C2b')] });
+  await e.reply(e.key(50), { status: 'ok', cues: [C(48.3, 51.1, 'C2a'), C(51.6, 54.2, 'C2b')] });   // cách cũ A:2, cách 10 s A:3
   assert.deepEqual(texts(e.vid(A).cues), ['Q1', 'C2a', 'C2b']);
   v.currentTime = 49; await e.tick(16);
   assert.equal(e.subText(), 'C2a');
@@ -209,8 +287,9 @@ await t('F6 video 12 s chưa dịch sẵn: chỉ gửi cả đoạn, không gử
 });
 
 await t('F6 lướt tới video dịch sẵn mà đoạn đầu còn đang tải: không tải lần hai bằng mẩu nhanh', async () => {
+  // Cách cũ (đoạn [0,20) có mẩu nhanh); cách 10 s: ca kế tiếp.
   // Đoạn đầu của B (dịch sẵn) tải mãi không xong: lượt tải riêng [0,26) s, hay lượt tải đầu video của B sau khi có mục lục.
-  const e = makeEnv({ fetchHang: (a, b, url) => (b == null ? url.includes(B) : b !== 65535 && b - a > 20000) });
+  const e = makeEnv({ settings: OLD, fetchHang: (a, b, url) => (b == null ? url.includes(B) : b !== 65535 && b - a > 20000) });
   e.up('items', [e.item(A, 12000), e.item(B, 60000)]);
   e.activeId = A; e.video(A, 1);
   await e.tick();
@@ -223,6 +302,28 @@ await t('F6 lướt tới video dịch sẵn mà đoạn đầu còn đang tải
   assert.ok(e.fetches.filter((f) => f.b == null && f.url.includes(B)).length <= 1);
 });
 
+await t('F6 (dịch sẵn 10 s) lướt tới video dịch sẵn mà lượt tải đầu video còn treo: không mẩu nhanh, không tải đoạn 0 lần hai, đoạn 1 chưa tải trước khi đoạn 0 gửi; lượt đó chạy tiếp thì đoạn 0 gửi, đoạn 1 tải nối tiếp và chờ cửa', async () => {
+  // 2000 B/s: đoạn 0 [0,12) s là 24 KB, lượt tải đầu video của B đem về 16 KB rồi treo.
+  const e = makeEnv({ settings: TEN, bps: 2000, fetchHang: (a, b, url) => b == null && url.includes(B) });
+  e.up('items', [e.item(A, 12000), e.item(B, 60000)]);
+  e.activeId = A; e.video(A, 1);
+  await e.tick();
+  e.activeId = B; e.videos.delete(A); e.video(B, 0.5).paused = true;
+  for (let i = 0; i < 12; i++) await e.tick();
+  assert.deepEqual(e.subs(), [A + ':0'], 'B chưa gửi gì, không mẩu nhanh');
+  const ofB = () => e.fetches.filter((f) => f.b !== 65535 && (f.url.includes(B) || f.url.includes('cdn')));
+  // Hàng tải của video đang xem chỉ một chỗ: đoạn 1 chỉ tải sớm khi đoạn 0 đã gửi (verifier 2/11, G1).
+  assert.deepEqual(ofB().map((f) => [f.a, f.b]), [[0, null]], 'chỉ lượt tải đầu video của B');
+  const head = ofB()[0];
+  head.release(); await e.flush();
+  for (let i = 0; i < 3; i++) await e.tick();
+  assert.deepEqual(e.subs(), [A + ':0', B + ':0']);
+  // Đoạn 1 [10,20) gửi dư 4,5 s: cửa sổ [5,5; 26) s, phần đầu đã có trong lượt tải đầu video (32 KB) nên chỉ tải tiếp.
+  assert.deepEqual(ofB().slice(1).map((f) => [f.a, f.b]), [[32768, 51999]]);
+  const c1 = e.vid(B).chunks.get(1);
+  assert.ok(c1 && c1.waiting && !c1.sent, 'đoạn 1 tải xong, chờ cửa (f10Hold): ' + JSON.stringify(c1 && [c1.status, c1.sent, c1.waiting]));
+});
+
 await t('F7 S4: đoạn 30 s tải chậm, phát liền 0 → 30 s: chỉ một mẩu nhanh (trước đây q0, q8, q16, q24)', async () => {
   const e = makeEnv({ fetchHang: (a, b) => b !== 65535 && b - a > 20000 });
   e.up('items', [e.item(A, 100000)]);
@@ -233,7 +334,8 @@ await t('F7 S4: đoạn 30 s tải chậm, phát liền 0 → 30 s: chỉ một 
   }
   // Ở đây chưa lượt tải nào đo được tốc độ (tải xong ngay hay treo), nên không có mẩu nối tiếp (SLOW_SLOT). Mẩu nối tiếp
   // khi một đoạn tải chậm bất thường: content-time-test.mjs.
-  assert.deepEqual(e.subs().filter((k) => k.includes(':q')), [A + ':q0']);
+  // Cách 10 s: đoạn [0,10) không có mẩu nhanh, cũng không có mẩu nối tiếp nào.
+  assert.deepEqual(e.subs().filter((k) => k.includes(':q')), hasQuick(e.plan()[0]) ? [A + ':q0'] : []);
 });
 
 await t('F7 S5: kéo thanh tiến trình 3 s: không mẩu nhanh nào lúc kéo, một mẩu ở chỗ thả', async () => {
@@ -261,7 +363,7 @@ await t('Tua tới chỗ chưa dịch (như e2e "tua tới 85 s"): một mẩu n
   assert.equal(e.subs().filter((k) => k.includes(':q')).length, quickBefore);   // vừa nhảy: chưa gửi
   for (let i = 0; i < 6; i++) await e.tick();
   assert.deepEqual(e.subs().filter((k) => k.includes(':q')).slice(quickBefore), [A + ':q85']);
-  assert.ok(e.subs().includes(A + ':3'));
+  assert.ok(e.subs().includes(e.key(85)));   // [80,101): cách cũ A:3, cách 10 s A:4
 });
 
 await t('Tua: mẩu nhanh tải một mình trước, lượt tải đoạn 30 s đang dở bị ngắt và tải lại sau khi mẩu nhanh tải xong', async () => {
@@ -284,7 +386,8 @@ await t('Tua: mẩu nhanh tải một mình trước, lượt tải đoạn 30 s
 
 await t('Lời bài hát: mặc định gửi lyrics: true; tắt trong popup thì xin lại kết quả có câu hát với lyrics: false, không huỷ việc đang ở server', async () => {
   // Đợt soát 31/10: trước đây đổi nút thì huỷ mọi việc đã gửi; huỷ giữa lúc nhận dạng thì lần gửi lại trả tiền ASR lần nữa.
-  const e = makeEnv();
+  // Cách cũ (việc đang ở server là mẩu nhanh q2); cách 10 s: ca kế tiếp (đoạn [10,20)).
+  const e = makeEnv({ settings: OLD });
   e.up('items', [e.item(A, 100000)]);
   e.activeId = A; const v = e.video(A, 2); v.paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
@@ -302,6 +405,31 @@ await t('Lời bài hát: mặc định gửi lyrics: true; tắt trong popup th
   await e.reply(A + ':q2', { status: 'ok', label: 'speech', sung: 0, cues: [C(2.2, 4, 'Lời nói')] });
   v.currentTime = 2.5; await e.tick();
   assert.equal(e.subText(), 'Lời nói');
+});
+
+await t('Lời bài hát (dịch sẵn 10 s): mặc định gửi lyrics: true; tắt thì chỉ xin lại đoạn có câu hát, với lyrics: false; đoạn [10,20) đang ở server (gửi dư 4,5 s) không bị huỷ, trả về không có câu hát thì giữ và hiện', async () => {
+  const e = makeEnv({ settings: TEN });
+  e.up('items', [e.item(A, 45000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.passGate(v);
+  const first = e.sent.filter((m) => m.type === 'subtitles');
+  assert.deepEqual(first.map((m) => [m.key, m.payload.lyrics, m.payload.audioStart]), [[A + ':0', true, 0], [A + ':1', true, 5.5]]);
+  await e.reply(A + ':0', { status: 'skipped', label: 'singing', sung: 2, cues: [] });
+  assert.deepEqual([...e.replies.keys()], [A + ':1']);
+  await e.tick();   // đoạn 0 đã có kết quả: bỏ phần lượt tải đầu video đã nhận (headCheck), lần xin lại tải riêng
+  const f0 = e.fetches.length;
+  e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+  for (let i = 0; i < 2; i++) await e.tick();
+  assert.deepEqual(e.cancels(), [], 'không huỷ gì');
+  const again = e.sent.filter((m) => m.type === 'subtitles').slice(first.length);
+  assert.deepEqual(again.map((m) => [m.key, m.payload.lyrics]), [[A + ':0', false]]);
+  // Lần xin lại đoạn 0 tải riêng cửa sổ của nó: [0,10) cộng F10_POST 2 s phía sau, tức [0,12) s (byte 0–11999).
+  assert.deepEqual(e.fetches.slice(f0).map((f) => [f.a, f.b]), [[0, 11999]], JSON.stringify(e.fetches.slice(f0).map((f) => [f.url.slice(-20), f.a, f.b])));
+  await e.reply(A + ':1', { status: 'ok', label: 'speech', sung: 0, cues: [C(12.2, 14, 'Lời nói')] });
+  v.currentTime = 12.5; await e.tick();
+  assert.equal(e.subText(), 'Lời nói');
+  assert.equal(e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':1').length, 1, 'không xin lại đoạn [10,20)');
 });
 
 await t('Lời bài hát: đoạn cả bài (song) không dùng chung giữa hai chế độ dù sung = 0 và không có dòng ♪: đổi nút thì xin lại', async () => {
@@ -324,17 +452,20 @@ await t('Đổi chế độ khi đoạn đang ở server: trả lời của ch�
   e.up('items', [e.item(A, 100000)]);
   e.activeId = A; const v = e.video(A, 2); v.paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
+  await e.passGate(v);   // cách 10 s: đoạn [10,20) chỉ gửi khi đã xem 4 s
+  // Đoạn 1: cách cũ [20,50) gửi dư 1,5 s; cách 10 s [10,20) gửi dư 4,5 s (F10_PRE1).
+  const a1 = e.plan()[1][0], x1 = a1 - (e.ten ? 4.5 : 1.5);
   await e.reply(A + ':0', { status: 'ok', label: 'speech', sung: 0, cues: [C(2, 4, 'Lời nói')] });
   for (let i = 0; i < 3; i++) await e.tick();
   assert.ok(e.replies.has(A + ':1'), 'đoạn 1 đang ở server');
   e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
   await e.tick();
-  await e.reply(A + ':1', { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(22, 24, 'hát cũ'), sung: true }] });
+  await e.reply(A + ':1', { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(a1 + 2, a1 + 4, 'hát cũ'), sung: true }] });
   for (let i = 0; i < 2; i++) await e.tick();
   const s1 = e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':1').map((m) => [m.payload.lyrics, m.payload.audioStart]);
-  assert.deepEqual(s1, [[true, 18.5], [false, 18.5]]);
+  assert.deepEqual(s1, [[true, x1], [false, x1]]);
   assert.ok(!e.cancels().includes(A + ':1'), 'đoạn đang ở server không bị huỷ khi đổi nút');
-  v.currentTime = 22.5; await e.tick();
+  v.currentTime = a1 + 2.5; await e.tick();
   assert.notEqual(e.subText(), '♪ hát cũ', 'không hiện kết quả của chế độ cũ');
   v.currentTime = 2.5; await e.tick();
   assert.equal(e.subText(), 'Lời nói', 'đoạn 0 (không có câu hát) vẫn giữ');
@@ -360,6 +491,7 @@ await t('Đổi chế độ: đoạn lỗi giữ số lần lỗi và thời gia
   e.up('items', [e.item(A, 100000)]);
   e.activeId = A; const v = e.video(A, 2); v.paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
+  await e.passGate(v);   // cách 10 s: đoạn [10,20) chỉ gửi khi đã xem 4 s
   await e.reply(A + ':0', { status: 'error', error: 'HTTP 500' });
   for (let i = 0; i < 3; i++) await e.tick();
   await e.reply(A + ':1', { status: 'no_audio' });
@@ -378,16 +510,18 @@ await t('Đổi chế độ khi đã qua một đoạn rồi tua về đầu đo
   e.up('items', [e.item(A, 100000)]);
   e.activeId = A; const v = e.video(A, 2); v.paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
-  await e.reply(A + ':0', { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(2, 4, 'hát 0'), sung: true }] });
-  for (let i = 0; i < 3; i++) await e.tick();
-  await e.reply(A + ':1', { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(36, 37.8, 'hát 1'), sung: true }] });
+  await e.passGate(v);   // cách 10 s: các đoạn sau đoạn 0 chỉ gửi khi đã xem 4 s
+  // Mọi đoạn từ đầu tới đoạn chứa 20,5 s ([20,50): cách cũ A:1, cách 10 s A:2) xong, có câu hát.
+  const kx = e.k(20.5), sung = (k, [a, b]) => ({ status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(a, b, 'hát ' + k), sung: true }] });
+  const lines = e.ten ? [[2, 4], [12, 14], [22, 24]] : [[2, 4], [36, 37.8]];   // dòng hát trả về cho đoạn 0..kx
+  for (let k = 0; k <= kx; k++) { if (k) for (let i = 0; i < 3; i++) await e.tick(); await e.reply(A + ':' + k, sung(k, lines[k])); }
   v.currentTime = 65; for (let i = 0; i < 4; i++) await e.tick();
-  for (const k of [2, 3]) if (e.replies.has(A + ':' + k)) await e.reply(A + ':' + k, { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(52 + 30 * (k - 2), 54 + 30 * (k - 2), 'hát ' + k), sung: true }] });
+  for (const [j, k] of [e.k(65), e.k(65) + 1].entries()) if (e.replies.has(A + ':' + k)) await e.reply(A + ':' + k, sung(k, [52 + 30 * j, 54 + 30 * j]));
   for (let i = 0; i < 3; i++) await e.tick();
   e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
   for (let i = 0; i < 3; i++) await e.tick();
   v.currentTime = 20.5; for (let i = 0; i < 6; i++) await e.tick();
-  const s1 = e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':1').map((m) => [m.payload.lyrics, m.payload.audioStart]);
+  const s1 = e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':' + kx).map((m) => [m.payload.lyrics, m.payload.audioStart]);
   assert.deepEqual(s1.at(-1), [false, 12]);
 });
 
@@ -413,6 +547,7 @@ await t('Đổi chế độ lời bài hát: giữ kết quả không có câu h
   e.up('items', [e.item(A, 100000)]);
   e.activeId = A; const v = e.video(A, 2); v.paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
+  await e.passGate(v);   // cách 10 s: đoạn [10,20) chỉ gửi khi đã xem 4 s
   await e.reply(A + ':0', { status: 'ok', label: 'speech', sung: 0, cues: [C(2, 4, 'Lời nói')] });
   for (let i = 0; i < 3; i++) await e.tick();   // đoạn 1 chờ đoạn 0 xong mới gửi (holdBack)
   await e.reply(A + ':1', { status: 'skipped', label: 'singing', sung: 3, cues: [] });
@@ -436,31 +571,40 @@ await t('Đổi chế độ lời bài hát lúc đang phát liền mạch: đo�
   e.up('items', [e.item(A, 100000)]);
   e.activeId = A; const v = e.video(A, 2); v.paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
-  await e.reply(A + ':0', { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(2, 4, 'hát 0'), sung: true }] });
-  for (let i = 0; i < 3; i++) await e.tick();
-  await e.reply(A + ':1', { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(36, 37.8, 'hát 1'), sung: true }] });
+  await e.passGate(v);   // cách 10 s: các đoạn sau đoạn 0 chỉ gửi khi đã xem 4 s
+  // Mọi đoạn từ đầu tới đoạn chứa 35 s ([20,50): cách cũ A:1, cách 10 s A:2, cả hai gửi dư 1,5 s) xong, có câu hát.
+  const plan = e.plan(), kx = e.k(35);
+  const lines = e.ten ? [[2, 4], [12, 14], [22, 24]] : [[2, 4], [36, 37.8]];   // dòng hát trả về cho đoạn 0..kx
+  for (let k = 0; k <= kx; k++) {
+    if (k) for (let i = 0; i < 3; i++) await e.tick();
+    await e.reply(A + ':' + k, { status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(lines[k][0], lines[k][1], 'hát ' + k), sung: true }] });
+  }
   v.currentTime = 35; for (let i = 0; i < 4; i++) await e.tick();
   e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
   for (let i = 0; i < 3; i++) await e.tick();
-  const sends = e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':1');
-  assert.deepEqual(sends.map((m) => [m.payload.lyrics, m.payload.audioStart]), [[true, 18.5], [false, 18.5]]);
+  const sends = e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':' + kx);
+  assert.deepEqual(sends.map((m) => [m.payload.lyrics, m.payload.audioStart]), [[true, plan[kx][0] - 1.5], [false, plan[kx][0] - 1.5]]);
 });
 
 await t('Đổi chế độ lời bài hát khi một đoạn đang tải: không ngắt lượt tải, gửi với chế độ mới', async () => {
-  const e = makeEnv({ fetchHang: (a) => a === 18500 });   // đoạn [20,50) (gửi dư từ 18,5 s) tải lâu
+  // Đoạn 1 tải lâu: cách cũ [20,50) (gửi dư từ 18,5 s); cách 10 s [10,20) (gửi dư từ 5,5 s; phần đầu tới 16,4 s đã có trong
+  // lượt tải đầu video nên chỉ tải tiếp tới 26 s).
+  const g = await gridOf(100000), w1 = g.ten ? (f) => f.b === 25999 : (f) => f.a === 18500;
+  const e = makeEnv({ fetchHang: (a, b) => w1({ a, b }) });
   e.up('items', [e.item(A, 100000)]);
   e.activeId = A; const v = e.video(A, 2); v.paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
   await e.reply(A + ':0', { status: 'ok', label: 'speech', sung: 0, cues: [C(2, 4, 'Lời nói')] });
   for (let i = 0; i < 3; i++) await e.tick();
-  const slow = e.fetches.find((f) => f.a === 18500);
+  const slow = e.fetches.find(w1);
   assert.ok(slow && slow.release, 'đoạn 1 đang tải');
   e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
   await e.tick();
   assert.ok(!slow.aborted, 'lượt tải không bị ngắt');
+  await e.passGate(v);   // cách 10 s: đoạn [10,20) chỉ gửi khi đã xem 4 s
   slow.release(); await e.flush(); await e.tick();
   assert.deepEqual(e.sent.filter((m) => m.type === 'subtitles' && m.key === A + ':1').map((m) => m.payload.lyrics), [false]);
-  assert.equal(e.fetches.filter((f) => f.a === 18500).length, 1, 'tải một lần, không tải lại');
+  assert.equal(e.fetches.filter(w1).length, 1, 'tải một lần, không tải lại');
 });
 
 await t('Rê chuột vào nhãn: bảng thông tin đã dịch của video đang xem (tới đâu, từng đoạn, mẩu nhanh, xưng hô); rời nhãn thì ẩn', async () => {
@@ -468,25 +612,30 @@ await t('Rê chuột vào nhãn: bảng thông tin đã dịch của video đang
   e.up('items', [e.item(A, 100000)]);
   e.activeId = A; const v = e.video(A, 2); v.paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
+  await e.passGate(v);   // cách 10 s: đoạn 1 chỉ gửi khi đã xem 4 s
+  // Cách cũ: [0,20) [20,50) … (4 đoạn), có mẩu nhanh q2; cách 10 s: [0,10) [10,20) [20,50) … (5 đoạn), không có mẩu nhanh.
+  const plan = e.plan(), P = (k) => mmss(plan[k][0]) + '–' + mmss(plan[k][1]), quick = hasQuick(plan[0]);
   const PA = { pairs: [{ who: 'A → B', self: 'anh', other: 'em' }] };
   await e.reply(A + ':0', { status: 'ok', sung: 1, cues: [C(2, 4, 'Lời nói'), { ...C(5, 7, 'Lời hát'), sung: true }], pronouns: PA });
-  await e.reply(A + ':q2', { status: 'ok', cues: [C(2.2, 4, 'Q')] });
+  if (quick) await e.reply(A + ':q2', { status: 'ok', cues: [C(2.2, 4, 'Q')] });
   await e.tick();
   assert.equal(e.infoText(), null, 'chưa rê chuột thì không hiện');
   e.hover(50, 20); await e.tick();
   const txt = e.infoText() || '';
-  for (const want of ['Video 1:40 · đang xem 0:02', 'Đã xong tới 0:20 (trước chỗ đang xem 18 s)', 'Đã xong 1/4 đoạn · 2 dòng (1 dòng ♪)',
-    '▶ 0:00–0:20  ✓ 2 dòng, 1 dòng ♪', 'Mẩu nhanh 0:02–0:12  ✓ 1 dòng', 'Xưng hô: A → B: anh/em', 'Dịch trước 30 s · lời bài hát: dịch']) {
+  for (const want of ['Video 1:40 · đang xem 0:02', `Đã xong tới ${mmss(plan[0][1])} (trước chỗ đang xem ${plan[0][1] - 2} s)`,
+    `Đã xong 1/${plan.length} đoạn · 2 dòng (1 dòng ♪)`, `▶ ${P(0)}  ✓ 2 dòng, 1 dòng ♪`, ...(quick ? ['Mẩu nhanh 0:02–0:12  ✓ 1 dòng'] : []),
+    'Xưng hô: A → B: anh/em', 'Dịch trước 30 s · lời bài hát: dịch' + (e.ten ? ' · dịch sẵn 10 s đầu' : '')]) {
     assert.ok(txt.includes(want), 'thiếu "' + want + '" trong:\n' + txt);
   }
-  assert.match(txt, /\n {3}0:20–0:50 {2}(đang dịch ở server|đang tải|chờ tải)/, txt);
+  if (!quick) assert.ok(!txt.includes('Mẩu nhanh'), txt);
+  assert.match(txt, new RegExp('\\n {3}' + P(1) + ' {2}(đang dịch ở server|đang tải|chờ tải)'), txt);
   assert.ok(!txt.includes('0:50–1:20'), 'đoạn chưa cần, chưa làm thì không liệt kê');
   e.hover(500, 400); await e.tick();
   assert.equal(e.infoText(), null, 'rời nhãn thì ẩn');
   // Đoạn bị bỏ qua vì dịch lỗi không tính là xong (verifier 2/11).
   await e.reply(A + ':1', { status: 'skipped', label: 'untranslated', cues: [] });
   e.hover(50, 20); await e.tick();
-  assert.ok((e.infoText() || '').includes('Đã xong 1/4 đoạn') && (e.infoText() || '').includes('0:20–0:50  bỏ qua: dịch lỗi'), e.infoText());
+  assert.ok((e.infoText() || '').includes(`Đã xong 1/${plan.length} đoạn`) && (e.infoText() || '').includes(P(1) + '  bỏ qua: dịch lỗi'), e.infoText());
   // Lướt sang video khác lúc bảng đang mở: bảng theo video mới ngay; tắt sub thì ẩn.
   e.up('items', [e.item(B, 12000)]);
   e.activeId = B; e.videos.clear(); e.video(B, 1).paused = true;
@@ -495,6 +644,43 @@ await t('Rê chuột vào nhãn: bảng thông tin đã dịch của video đang
   e.onChanged({ settings: { newValue: { enabled: false } } }, 'local');
   await e.tick();
   assert.equal(e.infoText(), null, 'tắt sub thì ẩn');
+});
+
+await t('Bảng thông tin (dịch sẵn 10 s): đoạn [10,20) đã tải, đang chờ cửa (chưa xem đủ 4 s) mà đoạn 0 đã xong thì ghi "đã tải, gửi khi xem tiếp", không phải "chờ đoạn trước dịch xong"', async () => {
+  const e = makeEnv({ settings: TEN });
+  e.up('items', [e.item(A, 45000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':0', { status: 'ok', sung: 0, label: 'speech', cues: [C(2, 4, 'Lời nói')] });
+  for (let i = 0; i < 3; i++) await e.tick();
+  const c1 = e.vid(A).chunks.get(1);
+  assert.ok(c1 && c1.waiting && !c1.sent, 'đoạn 1 đã tải, chờ cửa (f10Hold)');
+  e.hover(50, 20); await e.tick();
+  const txt = e.infoText() || '';
+  assert.ok(txt.includes('▶ 0:00–0:10  ✓ 1 dòng'), txt);
+  // Trước đây pieceState trả "đã tải, chờ đoạn trước dịch xong" cho mọi đoạn đang chờ gửi, cả khi lý do là cửa chờ (f10Hold).
+  assert.ok(txt.split('\n').includes('   0:10–0:20  đã tải, gửi khi xem tiếp'), txt);
+});
+
+await t('Bảng thông tin (dịch sẵn 10 s): đoạn [20,50) đã tải mà đoạn 0 còn ở server (chờ lượt gửi: sendWait, chế độ video dài) thì vẫn ghi "đã tải, chờ đoạn trước dịch xong"', async () => {
+  // Trình phát kẹt ở giây 2 (đang phát, đang tải dở) quá 10 s: qua cửa chờ, và chế độ video dài (watching) cho tải đoạn kế trong
+  // lúc đoạn gấp còn ở server; đoạn [20,50) chưa gấp nên chờ đoạn 0 có kết quả rồi mới gửi.
+  const e = makeEnv({ settings: TEN });
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2);
+  for (let i = 0; i < 42; i++) await e.tick();
+  assert.deepEqual(e.subs(), [A + ':0', A + ':1']);
+  const c2 = e.vid(A).chunks.get(2);
+  assert.ok(c2 && c2.waiting && !c2.sent, 'đoạn 2 đã tải, chờ lượt gửi: ' + JSON.stringify(c2 && [c2.status, c2.sent, c2.waiting]));
+  e.hover(50, 20); await e.tick();
+  const txt = e.infoText() || '';
+  assert.ok(txt.split('\n').includes('   0:20–0:50  đã tải, chờ đoạn trước dịch xong'), txt);
+  assert.ok(!txt.includes('gửi khi xem tiếp'), txt);
+  // Đoạn 0 rồi đoạn [10,20) xong: đoạn [20,50) gửi ngay (wakeTurns).
+  await e.reply(A + ':0', { status: 'ok', cues: [] });
+  assert.ok(!e.subs().includes(e.key(25)), 'còn chờ đoạn [10,20): ' + JSON.stringify(e.subs()));
+  await e.reply(A + ':1', { status: 'ok', cues: [] });
+  assert.ok(e.subs().includes(e.key(25)), JSON.stringify(e.subs()));
 });
 
 await t('Service worker cũ (Chrome giữ background.js bản trước, đo 2/11): không đọc được NDJSON (không trả lời hello, hay không báo ndjson) thì gửi không stream (JSON một lần); bản cũ mà đọc được NDJSON thì vẫn stream; bản khác manifest thì bảng thông tin báo; chỉ hỏi một lần', async () => {
@@ -507,6 +693,7 @@ await t('Service worker cũ (Chrome giữ background.js bản trước, đo 2/11
     e.up('items', [e.item(A, 100000)]);
     e.activeId = A; const v = e.video(A, 2); v.paused = true;
     for (let i = 0; i < 3; i++) await e.tick();
+    await e.passGate(v);   // cách 10 s: không có mẩu nhanh q2, yêu cầu thứ hai là đoạn [10,20) (gửi khi đã xem 4 s)
     const sent = e.sent.filter((m) => m.type === 'subtitles');
     const tag = JSON.stringify(worker) + ': ';
     assert.ok(sent.length >= 2, tag + 'số yêu cầu dịch: ' + sent.length);
@@ -530,9 +717,14 @@ await t('hello không bao giờ trả lời (worker kẹt): chờ tối đa ~2 s
   e.up('items', [e.item(A, 100000)]);
   e.activeId = A; const v = e.video(A, 2); v.paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
+  await e.passGate(v);   // cách 10 s: không có mẩu nhanh q2, yêu cầu thứ hai là đoạn [10,20) (gửi khi đã xem 4 s)
   assert.equal(e.sent.filter((m) => m.type === 'subtitles').length, 0, 'chưa hết giờ chờ');
-  await new Promise((r) => setTimeout(r, 3000));   // WORKER_WAIT 2000 ms, chừa rộng khi máy bận
-  for (let i = 0; i < 3; i++) await e.tick();
+  // WORKER_WAIT 2000 ms, chừa rộng khi máy bận. Cách 10 s: đoạn [10,20) chỉ bắt đầu tải khi đoạn 0 đã gửi (hàng tải một chỗ),
+  // rồi hỏi worker lần nữa (worker vẫn chưa biết: lần gửi sau hỏi lại), chờ thêm một lượt.
+  for (let round = 0; round < (e.ten ? 2 : 1); round++) {
+    await new Promise((r) => setTimeout(r, 3000));
+    for (let i = 0; i < 3; i++) await e.tick();
+  }
   const sent = e.sent.filter((m) => m.type === 'subtitles');
   assert.ok(sent.length >= 2, 'số yêu cầu dịch sau khi hết giờ chờ: ' + sent.length);
   assert.ok(sent.every((m) => m.payload.stream === false), JSON.stringify(sent.map((m) => [m.key, m.payload.stream])));
@@ -570,7 +762,7 @@ await t('Dòng tạm (verifier 2/11): tua vào giữa đoạn, dòng tạm của
     for (let i = 0; i < 3; i++) await e.tick();
     await e.reply(A + ':q25', { status: 'ok', cues: [C(25.5, 27.6, 'Q1'), C(28.2, 31.0, 'Q2'), C(31.5, 34, 'Q3')] });
     v.currentTime = 26;
-    e.onMsg({ type: 'partial', key: A + ':1', cues: [C(20.5, 22, 'P0'), C(25.4, 27.7, 'P1'), C(28.3, 31, 'P2'), C(31.6, 34.1, 'P3'), C(36, 38, 'P4')] }, {}, () => {});
+    e.onMsg({ type: 'partial', key: e.key(25), cues: [C(20.5, 22, 'P0'), C(25.4, 27.7, 'P1'), C(28.3, 31, 'P2'), C(31.6, 34.1, 'P3'), C(36, 38, 'P4')] }, {}, () => {});
     await e.tick();
     assert.equal(e.subText(), 'Q1', 'S1: ' + vis(e));
     assert.equal(vis(e).join(','), 'P0,Q1,Q2,Q3,P4');
@@ -602,16 +794,18 @@ await t('Dòng tạm (verifier 2/11): tua vào giữa đoạn, dòng tạm của
     await e.tick();
     assert.ok(!(e.subText() || '').includes('Hát'), 'S3: ' + e.subText());
   }
-  // Nhãn: ở giây 12 mà dòng tạm mới tới 2,8 s thì vẫn "đang dịch".
+  // Nhãn: ở giây 12 mà dòng tạm mới tới 2,8 s thì vẫn "đang dịch". Đoạn chứa giây 12: cách cũ [0,20), cách 10 s [10,20)
+  // (dòng đầu 10,3–11,2 s).
   {
     const e = makeEnv();
     e.up('items', [e.item(A, 100000)]);
     e.activeId = A; const v = e.video(A, 12); v.paused = true;
     for (let i = 0; i < 3; i++) await e.tick();
-    e.onMsg({ type: 'partial', key: A + ':0', cues: [C(0.5, 2.8, 'Đầu')] }, {}, () => {});
+    const K = e.key(12), first = e.ten ? C(10.3, 11.2, 'Đầu') : C(0.5, 2.8, 'Đầu');
+    e.onMsg({ type: 'partial', key: K, cues: [first] }, {}, () => {});
     await e.tick();
     assert.match(e.badge(), /đang dịch/);
-    e.onMsg({ type: 'partial', key: A + ':0', cues: [C(0.5, 2.8, 'Đầu'), C(13, 15, 'Sau')] }, {}, () => {});
+    e.onMsg({ type: 'partial', key: K, cues: [first, C(13, 15, 'Sau')] }, {}, () => {});
     await e.tick();
     assert.equal(e.badge(), 'VI');
   }
@@ -678,17 +872,21 @@ await t('F13 máy chủ trả file khác cỡ: bỏ mục lục cũ, lần thử
 });
 
 await t('F15 tắt sub: huỷ đoạn đã gửi, mẩu nhanh, ngắt lượt tải dịch sẵn', async () => {
-  const e = makeEnv({ fetchHang: (a, b, url) => (a === 0 && b === 25999) || (b == null && url.includes(B)) });   // đoạn đầu của B (dịch sẵn) tải lâu
+  // Đoạn đầu của B (dịch sẵn) tải lâu. Cách 10 s: đoạn [0,10) của B (12 s âm thanh) nằm gọn trong 16 KB đầu của lượt tải đầu
+  // video, nên ở đây 2000 B/s (24 KB) để nó cũng phải chờ lượt tải đang treo.
+  const g = await gridOf(60000);
+  const e = makeEnv({ ...(g.ten ? { bps: 2000 } : {}), fetchHang: (a, b, url) => (a === 0 && b === 25999) || (b == null && url.includes(B)) });
   e.up('items', [e.item(A, 100000), e.item(B, 60000)]);
   e.activeId = A; e.video(A, 30).paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
-  assert.ok(e.subs().includes(A + ':1') && e.subs().includes(A + ':q30'));
+  const K = e.key(30);   // [20,50): cách cũ A:1, cách 10 s A:2
+  assert.ok(e.subs().includes(K) && e.subs().includes(A + ':q30'), JSON.stringify(e.subs()));
   const hanging = e.fetches.filter((f) => f.release && !f.aborted);
   assert.ok(hanging.length >= 1);
   e.onChanged({ settings: { newValue: { enabled: false } } }, 'local');
   await e.flush();
   assert.deepEqual(e.cancels().sort(), [...e.replies.keys()].sort());   // mọi yêu cầu đang chờ server
-  assert.deepEqual(e.cancels().sort(), [A + ':1', A + ':q30']);
+  assert.deepEqual(e.cancels().sort(), [K, A + ':q30']);
   assert.ok(hanging.every((f) => f.aborted));
 });
 
@@ -854,7 +1052,7 @@ await t('Trang tìm kiếm sau khi tìm từ feed: slide feed cũ (ẩn) vẫn m
   e.up('items', [e.item(A, 300000)]);
   e.activeId = A; const fv = e.video(A, 200); fv.paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
-  await e.reply(A + ':7', { status: 'ok', cues: [C(199, 211, 'Sub của video feed')] });
+  await e.reply(e.key(200), { status: 'ok', cues: [C(199, 211, 'Sub của video feed')] });   // [200,230): cách cũ A:7, cách 10 s A:8
   await e.tick();
   assert.equal(e.subText(), 'Sub của video feed');
   const nSent = e.subs().length;
@@ -915,16 +1113,20 @@ await t('Đóng modal (không còn video nào đang thấy): không gửi thêm,
 
 await t('Đóng modal lúc một đoạn của video đó đang tải: tải xong trong 1 s chờ thì không gửi', async () => {
   // Verifier 1/11: trong 1 s chờ, đoạn tải xong vẫn được gửi rồi mới bị huỷ (server có thể đã bắt đầu nhận dạng).
+  // Đoạn đang tải là đoạn 1. Cách cũ: [20,50) (gửi dư từ 18,5 s), mở ở giây 0. Cách 10 s: [10,20) (cửa sổ tới 26 s, phần đầu đã
+  // có trong lượt tải đầu video), mở ở giây 5 để đoạn đó còn ≤ 6 s là tới (F10_NEAR): không phải chờ cửa (f10Hold), tải xong
+  // là gửi nếu không có gì chặn.
   const M = '7600000000000000009';
-  const e = makeEnv({ fetchHang: (a, b) => b !== 65535 && a >= 18000 && a < 19000 });
+  const g = await gridOf(300000), hungOf = g.ten ? (a, b) => b === 25999 : (a, b) => b !== 65535 && a >= 18000 && a < 19000;
+  const e = makeEnv({ fetchHang: hungOf });
   e.href = 'https://www.douyin.com/search/abc?modal_id=' + M;
   e.up('items', [e.item(M, 300000, 'search')]);
-  e.video(M, 0);
+  e.video(M, g.ten ? 5 : 0);
   for (let i = 0; i < 3; i++) await e.tick();
-  await e.reply(M + ':0', { status: 'ok', cues: [] });   // đoạn [0,20) xong thì đoạn [20,50) mới tải (holdBack)
+  await e.reply(M + ':0', { status: 'ok', cues: [] });   // cách cũ: đoạn [0,20) xong thì đoạn [20,50) mới tải (holdBack)
   for (let i = 0; i < 2; i++) await e.tick();
-  const hung = e.fetches.find((f) => f.a >= 18000 && f.a < 19000 && f.release);
-  assert.ok(hung, 'đoạn [20,50) phải đang tải: ' + e.fetches.map((f) => f.a));
+  const hung = e.fetches.find((f) => hungOf(f.a, f.b) && f.release);
+  assert.ok(hung, 'đoạn 1 phải đang tải: ' + e.fetches.map((f) => f.a));
   e.href = 'https://www.douyin.com/search/abc'; e.videos.delete(M);
   await e.tick();
   hung.release(); await e.flush();
@@ -954,7 +1156,8 @@ await t('HTTP 429 khi tải video: không gọi lại ngay, mọi lượt tải 
   for (let i = 0; i < 4; i++) await e.tick();
   const next = e.fetches[n0];
   assert.ok(next && next.at - t429 >= 5000 && next.at - t429 <= 5300, 'tải lại sau ' + (next && next.at - t429) + ' ms');
-  for (const k of [A + ':q3', A + ':0', B + ':0']) assert.ok(e.subs().includes(k), k + ' chưa gửi: ' + JSON.stringify(e.subs()));
+  // Cách 10 s: đoạn [0,10) không có mẩu nhanh.
+  for (const k of [...(hasQuick(e.plan()[0]) ? [A + ':q3'] : []), A + ':0', B + ':0']) assert.ok(e.subs().includes(k), k + ' chưa gửi: ' + JSON.stringify(e.subs()));
 });
 
 await t('HTTP 429 lặp lại: nghỉ 5 s, 15 s, 45 s; tải được thì tính lại từ đầu; Retry-After dài hơn thì theo nó', async () => {
@@ -990,7 +1193,9 @@ const J = (x) => JSON.stringify(x);   // đối tượng trong vm khác realm: s
 const sentOf = (e, key) => e.sent.filter((m) => m.type === 'subtitles' && m.key === key).at(-1);
 
 await t('P2 xưng hô: mẩu nhanh về trước, đoạn 0 (gửi cùng lúc) về sau: đoạn sau theo bản của đoạn 0 (dòng đang hiện)', async () => {
-  const e = makeEnv();
+  // Cách cũ (mở video thì đoạn [0,20) và mẩu nhanh q2 cùng gửi); cách 10 s không có mẩu nhanh ở [0,20): ca "P2 xưng hô (dịch
+  // sẵn 10 s)".
+  const e = makeEnv({ settings: OLD });
   e.up('items', [{ ...e.item(A, 100000), author: '雨晴教你唱歌' }, e.item(B, 100000)]);
   e.activeId = A; const v = e.video(A, 2); v.paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
@@ -1022,7 +1227,7 @@ await t('P2 xưng hô: mỗi video một bản; video khác gửi sau khi A đã
   e.up('items', [e.item(A, 100000), e.item(B, 100000)]);
   e.activeId = A; const v = e.video(A, 2); v.paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
-  await e.reply(A + ':q2', { status: 'ok', cues: [], pronouns: PA });
+  if (hasQuick(e.plan()[0])) await e.reply(A + ':q2', { status: 'ok', cues: [], pronouns: PA });   // cách 10 s: không có q2
   await e.reply(A + ':0', { status: 'ok', cues: [C(3, 5, 'C0')], pronouns: PB });
   await e.reply(B + ':0', { status: 'ok', cues: [C(3, 5, 'B0')], pronouns: PC });
   assert.equal(J(e.vid(A).pron), J(PB)); assert.equal(J(e.vid(B).pron), J(PC));
@@ -1044,7 +1249,8 @@ await t('P2 xưng hô: mỗi video một bản; video khác gửi sau khi A đã
 });
 
 await t('P2 xưng hô: kết quả của yêu cầu gửi với bản đang giữ thì cập nhật; kết quả lỗi, rỗng, sai kiểu, quá lớn thì không', async () => {
-  const e = makeEnv();
+  // Cách cũ (bản đầu đến từ mẩu nhanh q2); cách 10 s: ca "P2 xưng hô (dịch sẵn 10 s)".
+  const e = makeEnv({ settings: OLD });
   e.up('items', [e.item(A, 100000)]);
   e.activeId = A; const v = e.video(A, 2); v.paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
@@ -1084,7 +1290,7 @@ await t('P2 xưng hô: xin lại sau khi đổi chế độ lời bài hát và 
   e.activeId = A; const v = e.video(A, 2); v.paused = true;
   for (let i = 0; i < 3; i++) await e.tick();
   await e.reply(A + ':0', { status: 'ok', sung: 2, label: 'singing', cues: [{ ...C(3, 5, '♪ C0'), sung: true }], pronouns: PA });
-  await e.reply(A + ':q2', { status: 'ok', cues: [] });
+  if (hasQuick(e.plan()[0])) await e.reply(A + ':q2', { status: 'ok', cues: [] });   // cách 10 s: không có q2
   const n0 = e.sent.length;
   e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
   for (let i = 0; i < 2; i++) await e.tick();
@@ -1103,7 +1309,7 @@ await t('P2 xưng hô: kết quả bị bỏ (đổi chế độ lời bài hát
   for (let i = 0; i < 3; i++) await e.tick();
   e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
   const sung = { status: 'ok', sung: 2, label: 'singing', cues: [{ ...C(3, 5, '♪ C0'), sung: true }], pronouns: PB };
-  await e.reply(A + ':q2', sung);
+  if (hasQuick(e.plan()[0])) await e.reply(A + ':q2', sung);   // cách 10 s: không có q2
   await e.reply(A + ':0', sung);
   assert.equal(e.vid(A).pron, null);
   for (let i = 0; i < 2; i++) await e.tick();
@@ -1122,6 +1328,285 @@ await t('P4 người đăng: gửi { nickname, gender } khi có giới tính; me
   assert.equal(J(sentOf(e, A + ':0').payload.author), J({ nickname: '饼仔piano🎹', gender: 'male' }));
   assert.ok(!('authorGender' in sentOf(e, A + ':0').payload));
   assert.equal(sentOf(e, B + ':0').payload.author, '小明');
+});
+
+// ---- Dịch sẵn 10 s đầu (mặc định từ 0.2.37; HANDOFF §6ab–§6ad): [0,10), [10,20), rồi 30 s; đoạn [10,20) gửi dư 4,5 s
+// (F10_PRE1), tải sớm nhưng chỉ gửi khi đã xem 4 s (f10Hold, f10Gate) hay còn ≤ 6 s là tới (F10_NEAR). Các ca dưới đây luôn
+// chạy cách 10 s (settings: {}), ở cả hai lượt chạy (có hay không FIRST10).
+const ofKey = (e, key) => e.sent.filter((m) => m.type === 'subtitles' && m.key === key);
+
+await t('Dịch sẵn 10 s, lời bài hát: đổi chế độ khi đang xem [10,20) (đoạn 0 đã phát qua, cũng có câu hát): xin lại [10,20) với đúng phần âm thanh cũ (từ 5,5 s, v.redo), không phải dư 8 s (PRE_SEEK, đoạn trước không còn); trả lời có câu hát của lần gửi theo chế độ cũ cũng xin lại từ 5,5 s', async () => {
+  const e = makeEnv({ settings: TEN });
+  e.up('items', [e.item(A, 45000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.passGate(v);
+  const sung = (a, vi) => ({ status: 'ok', label: 'speech', sung: 1, cues: [{ ...C(a, a + 2, vi), sung: true }] });
+  await e.reply(A + ':0', sung(3, 'hát 0'));
+  await e.reply(A + ':1', sung(13, 'hát 1'));
+  assert.deepEqual(ofKey(e, A + ':1').map((m) => [m.payload.lyrics, m.payload.audioStart]), [[true, 5.5]]);
+  v.currentTime = 12; for (let i = 0; i < 3; i++) await e.tick();
+  e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+  for (let i = 0; i < 3; i++) await e.tick();
+  assert.deepEqual(ofKey(e, A + ':1').map((m) => [m.payload.lyrics, m.payload.audioStart]), [[true, 5.5], [false, 5.5]]);
+  assert.equal(ofKey(e, A + ':0').length, 1, 'đoạn 0 đã phát qua: không xin lại');
+  // Bật lại lúc lần xin lại còn ở server; nó trả về có câu hát: bỏ, xin lại theo chế độ mới, vẫn từ 5,5 s.
+  e.onChanged({ settings: { newValue: { lyrics: true } } }, 'local');
+  await e.tick();
+  await e.reply(A + ':1', sung(13, 'hát 1 (cũ)'));
+  for (let i = 0; i < 3; i++) await e.tick();
+  assert.deepEqual(ofKey(e, A + ':1').map((m) => [m.payload.lyrics, m.payload.audioStart]), [[true, 5.5], [false, 5.5], [true, 5.5]]);
+  assert.notEqual(e.subText(), '♪ hát 1 (cũ)');
+});
+
+await t('Dịch sẵn 10 s, lời bài hát: đổi chế độ lúc đoạn [10,20) đã tải xong, đang chờ cửa (f10Hold): không ngắt, không tải lại; qua cửa thì gửi một lần theo chế độ mới, từ 5,5 s; chưa qua cửa thì không gửi', async () => {
+  const e = makeEnv({ settings: TEN });
+  e.up('items', [e.item(A, 45000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  const held = e.vid(A).chunks.get(1);
+  assert.ok(held && held.waiting && !held.sent, 'đoạn 1 đã tải, chờ cửa');
+  const w1 = (f) => f.b === 25999;   // cửa sổ [5,5; 26) s, phần đầu đã có trong lượt tải đầu video
+  assert.equal(e.fetches.filter(w1).length, 1);
+  e.onChanged({ settings: { newValue: { lyrics: false } } }, 'local');
+  for (let i = 0; i < 3; i++) await e.tick();
+  assert.equal(e.vid(A).chunks.get(1), held, 'vẫn đúng mục đang chờ');
+  assert.equal(held.ctl.signal.aborted, false, 'không ngắt');
+  // Đoạn 0 gửi theo chế độ cũ, trả về không có câu hát: như nhau ở hai chế độ, giữ (không xin lại).
+  // (Trả về có câu hát thì đoạn 0 bị bỏ để xin lại; trong lúc đó đoạn [10,20) hết là "đoạn kế của đoạn đã gửi" nên mục đang
+  // chờ bị bỏ và tải lại sau khi đoạn 0 gửi lại: chỉ tốn một lượt tải, không tốn tiền.)
+  await e.reply(A + ':0', { status: 'ok', label: 'speech', sung: 0, cues: [C(3, 5, 'Lời nói')] });
+  for (let i = 0; i < 6; i++) await e.tick();
+  assert.deepEqual(ofKey(e, A + ':0').map((m) => m.payload.lyrics), [true]);
+  assert.deepEqual(ofKey(e, A + ':1'), [], 'chưa xem đủ 4 s: chưa gửi đoạn [10,20)');
+  assert.equal(e.vid(A).chunks.get(1), held);
+  await e.passGate(v);
+  assert.deepEqual(ofKey(e, A + ':1').map((m) => [m.payload.lyrics, m.payload.audioStart]), [[false, 5.5]]);
+  assert.equal(e.fetches.filter(w1).length, 1, 'tải một lần');
+});
+
+await t('P2 xưng hô (dịch sẵn 10 s): đoạn [10,20) tải sớm, chờ cửa trong lúc đoạn 0 trả bản xưng hô: lúc gửi mang bản đó; kết quả của nó (gửi với bản đang giữ) thay bản; đoạn [20,46) mang bản mới; kết quả không có pronouns thì giữ; hai đoạn gửi cùng một bản (còn ≤ 6 s là tới) thì kết quả về sau không thay kết quả về trước', async () => {
+  const PA2 = { pairs: [...PA.pairs, { from: 'người hát', to: '大家', vi: 'mình-các bạn' }] };
+  {
+    const e = makeEnv({ settings: TEN });
+    e.up('items', [{ ...e.item(A, 45000), author: '雨晴教你唱歌' }]);
+    e.activeId = A; const v = e.video(A, 2); v.paused = true;
+    for (let i = 0; i < 3; i++) await e.tick();
+    assert.ok(!('pronouns' in sentOf(e, A + ':0').payload));
+    const held = e.vid(A).chunks.get(1);
+    assert.ok(held && held.waiting && !held.sent, 'đoạn 1 đã tải, chờ cửa');
+    await e.reply(A + ':0', { status: 'ok', sung: 0, label: 'speech', cues: [C(3, 5, 'C0')], pronouns: PA });
+    assert.equal(J(e.vid(A).pron), J(PA));
+    await e.passGate(v);
+    assert.equal(J(sentOf(e, A + ':1').payload.pronouns), J(PA), 'đoạn 1 tải trước khi có bản, gửi sau: mang bản của đoạn 0');
+    assert.equal(sentOf(e, A + ':1').payload.author, '雨晴教你唱歌');
+    await e.reply(A + ':1', { status: 'ok', sung: 0, label: 'speech', cues: [C(12, 14, 'C1')], pronouns: PA2 });
+    assert.equal(J(e.vid(A).pron), J(PA2));
+    for (let i = 0; i < 3; i++) await e.tick();
+    assert.equal(J(sentOf(e, A + ':2').payload.pronouns), J(PA2));
+    await e.reply(A + ':2', { status: 'ok', sung: 0, label: 'speech', cues: [C(22, 24, 'C2')] });
+    assert.equal(J(e.vid(A).pron), J(PA2), 'không có pronouns: giữ bản cũ');
+  }
+  {
+    // Mở ở giây 5: đoạn [10,20) còn 5 s là tới, gửi ngay sau đoạn 0, cả hai chưa có bản nào.
+    const e = makeEnv({ settings: TEN });
+    e.up('items', [e.item(A, 45000)]);
+    e.activeId = A; const v = e.video(A, 5); v.paused = true;
+    for (let i = 0; i < 3; i++) await e.tick();
+    assert.ok(e.replies.has(A + ':0') && e.replies.has(A + ':1'), JSON.stringify(e.subs()));
+    await e.reply(A + ':1', { status: 'ok', sung: 0, label: 'speech', cues: [C(12, 14, 'C1')], pronouns: PB });
+    await e.reply(A + ':0', { status: 'ok', sung: 0, label: 'speech', cues: [C(3, 5, 'C0')], pronouns: PA });
+    assert.equal(J(e.vid(A).pron), J(PB), 'không thay nhau qua lại');
+    await e.passGate(v);
+    for (let i = 0; i < 3; i++) await e.tick();
+    assert.equal(J(sentOf(e, A + ':2').payload.pronouns), J(PB));
+  }
+});
+
+await t('Dịch sẵn 10 s, dòng tạm và câu vắt qua giây 10: đoạn 0 có dòng bị cắt ở 12 s, đoạn [10,20) (dư 4,5 s) trả lại cả câu: dòng tạm và kết quả cuối, theo thứ tự nào cũng chỉ hiện câu đó một lần, bản đủ thay bản cắt', async () => {
+  const CUT = C(8.6, 11.9, 'Câu vắt (cắt)', 12), FULL = C(8.6, 13.2, 'Câu vắt (đủ)'), FULL2 = C(8.8, 13.2, 'Câu vắt (đủ)');
+  const open = async () => {
+    const e = makeEnv({ settings: TEN });
+    e.up('items', [e.item(A, 45000)]);
+    e.activeId = A; const v = e.video(A, 2); v.paused = true;
+    for (let i = 0; i < 3; i++) await e.tick();
+    await e.passGate(v);
+    assert.deepEqual(ofKey(e, A + ':1').map((m) => m.payload.audioStart), [5.5], 'đoạn 1 gửi dư 4,5 s (server giữ câu vắt qua 10 s)');
+    return { e, v };
+  };
+  const once = (e, tag) => assert.equal(texts(e.vid(A).cues).filter((x) => x.startsWith('Câu vắt')).length, 1, tag + ': ' + texts(e.vid(A).cues));
+  const at = async (e, v, sec) => { v.currentTime = sec; await e.tick(16); return e.subText(); };
+  // S1: đoạn 0 gửi dần rồi xong; đoạn 1 gửi dần (dòng vắt nằm trong đoạn 0 đã xong: chưa hiện bản đủ) rồi xong.
+  {
+    const { e, v } = await open();
+    e.onMsg({ type: 'partial', key: A + ':0', cues: [C(1, 3, 'Một'), CUT] }, {}, () => {});
+    await e.tick();
+    once(e, 'S1 dòng tạm đoạn 0');
+    assert.equal(await at(e, v, 9), 'Câu vắt (cắt)');
+    await e.reply(A + ':0', { status: 'ok', cues: [C(1, 3, 'Một'), CUT] });
+    e.onMsg({ type: 'partial', key: A + ':1', cues: [FULL, C(14, 16, 'Hai')] }, {}, () => {});
+    await e.tick();
+    once(e, 'S1 dòng tạm đoạn 1');
+    assert.equal(await at(e, v, 15), 'Hai');
+    await e.reply(A + ':1', { status: 'ok', cues: [FULL, C(14, 16, 'Hai')] });
+    assert.deepEqual(texts(e.vid(A).cues), ['Một', 'Câu vắt (đủ)', 'Hai']);
+    for (const sec of [9, 11.5, 12.5]) assert.equal(await at(e, v, sec), 'Câu vắt (đủ)', 'ở ' + sec + ' s');
+  }
+  // S2: đoạn 1 xong trước (ASR nghe câu bắt đầu muộn hơn 0,2 s), đoạn 0 gửi dần rồi xong sau.
+  {
+    const { e, v } = await open();
+    await e.reply(A + ':1', { status: 'ok', cues: [FULL2, C(14, 16, 'Hai')] });
+    e.onMsg({ type: 'partial', key: A + ':0', cues: [C(1, 3, 'Một'), CUT] }, {}, () => {});
+    await e.tick();
+    once(e, 'S2 dòng tạm đoạn 0');
+    await e.reply(A + ':0', { status: 'ok', cues: [C(1, 3, 'Một'), CUT] });
+    once(e, 'S2 kết quả cuối');
+    assert.deepEqual(texts(e.vid(A).cues), ['Một', 'Câu vắt (đủ)', 'Hai']);
+    assert.equal(await at(e, v, 9), 'Câu vắt (đủ)');
+  }
+  // S3: cả hai còn ở server, chỉ có dòng tạm, đoạn 1 tới trước.
+  {
+    const { e, v } = await open();
+    e.onMsg({ type: 'partial', key: A + ':1', cues: [FULL] }, {}, () => {});
+    e.onMsg({ type: 'partial', key: A + ':0', cues: [C(1, 3, 'Một'), CUT] }, {}, () => {});
+    await e.tick();
+    once(e, 'S3');
+    assert.equal(await at(e, v, 12.5), 'Câu vắt (đủ)');
+    assert.equal(e.badge(), 'VI');
+  }
+  // S4: câu dứt trước 12 s nên đoạn 0 đã có đủ; đoạn 1 trả lại đúng câu đó: giữ một dòng (của đoạn 0).
+  {
+    const { e, v } = await open();
+    const WHOLE = C(8.6, 11.4, 'Câu vắt (đủ, đoạn 0)');
+    await e.reply(A + ':0', { status: 'ok', cues: [C(1, 3, 'Một'), WHOLE] });
+    await e.reply(A + ':1', { status: 'ok', cues: [{ ...WHOLE, vi: 'Câu vắt (đủ, đoạn 1)' }, C(14, 16, 'Hai')] });
+    once(e, 'S4');
+    assert.deepEqual(texts(e.vid(A).cues), ['Một', 'Câu vắt (đủ, đoạn 0)', 'Hai']);
+    assert.equal(await at(e, v, 11), 'Câu vắt (đủ, đoạn 0)');
+  }
+});
+
+await t('Dịch sẵn 10 s, modal và trang tìm kiếm: mở modal thì đoạn 0 gửi, đoạn [10,20) tải sớm chờ cửa, kết quả kế dịch sẵn; đóng modal thì sau ~1 s huỷ đoạn 0, bỏ đoạn đang chờ (không gửi dù đã quá 4 s), giữ dịch sẵn; mở kết quả kế không gửi lại; tìm từ feed (slide feed ẩn) cũng bỏ đoạn đang chờ', async () => {
+  const M = '7600000000000000009', N = '7600000000000000010';
+  {
+    const e = makeEnv({ settings: TEN });
+    e.href = 'https://www.douyin.com/search/abc?modal_id=' + M;
+    e.up('items', [e.item(M, 300000, 'search'), e.item(N, 60000, 'search')]);
+    const v = e.video(M, 0);   // đang phát
+    for (let i = 0; i < 4; i++) { v.currentTime += 0.26; await e.tick(); }
+    assert.deepEqual(e.subs().sort(), [M + ':0', N + ':0'].sort());
+    const held = e.vid(M).chunks.get(1);
+    assert.ok(held && held.waiting && !held.sent, 'đoạn [10,20) đã tải, chờ cửa');
+    e.href = 'https://www.douyin.com/search/abc'; e.videos.delete(M);
+    await e.tick(); await e.tick();
+    assert.deepEqual(e.cancels(), [], '~0,5 s: chưa huỷ');
+    for (let i = 0; i < 20; i++) await e.tick();   // ~5 s: quá cửa 4 s nếu còn tính
+    await e.until(() => !e.vid(M).chunks.has(1));   // actBack chờ theo đồng hồ thật (100 ms một lần)
+    assert.deepEqual(e.cancels(), [M + ':0']);
+    assert.deepEqual(e.subs().filter((k) => k.startsWith(M)), [M + ':0'], 'không gửi đoạn đang chờ: ' + e.subs());
+    assert.ok(!e.vid(M).chunks.has(1) && held.ctl.signal.aborted, 'đóng modal: đoạn đang chờ bị bỏ');
+    e.href = 'https://www.douyin.com/search/abc?modal_id=' + N; e.video(N, 0).paused = true;
+    for (let i = 0; i < 4; i++) await e.tick();
+    assert.equal(e.subs().filter((k) => k === N + ':0').length, 1, String(e.subs()));
+    const n1 = e.vid(N).chunks.get(1);
+    assert.ok(n1 && n1.waiting && !n1.sent, 'N: đoạn [10,20) tải sớm, chờ cửa');
+  }
+  {
+    const e = makeEnv({ settings: TEN });
+    e.up('items', [e.item(A, 45000)]);
+    e.activeId = A; const fv = e.video(A, 2); fv.paused = true;
+    for (let i = 0; i < 3; i++) await e.tick();
+    await e.reply(A + ':0', { status: 'ok', cues: [C(1.5, 4, 'Sub của video feed')] });
+    for (let i = 0; i < 2; i++) await e.tick();
+    const held = e.vid(A).chunks.get(1);
+    assert.ok(held && held.waiting && !held.sent, 'đoạn [10,20) đã tải, chờ cửa');
+    e.href = 'https://www.douyin.com/root/search/x?aid=1';
+    fv.getBoundingClientRect = () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 });
+    const pv = e.video('preview', 5);
+    for (let i = 0; i < 20; i++) { pv.currentTime += 0.26; await e.tick(); }
+    await e.until(() => !e.vid(A).chunks.has(1));   // actBack chờ theo đồng hồ thật
+    assert.equal(e.subText(), null);
+    assert.equal(e.badge(), null);
+    assert.deepEqual(e.subs(), [A + ':0'], 'không gửi đoạn đang chờ');
+    assert.ok(!e.vid(A).chunks.has(1) && held.ctl.signal.aborted, 'trang tìm kiếm: đoạn đang chờ bị bỏ');
+  }
+});
+
+await t('Dịch sẵn 10 s, tắt sub lúc đoạn [10,20) đang chờ cửa: huỷ đoạn 0 đã gửi, bỏ đoạn đang chờ (không gửi, không huỷ gì thêm), phát tiếp khi tắt không tính vào cửa; bật lại thì gửi lại đoạn 0, đoạn [10,20) tải lại và vẫn chờ cửa', async () => {
+  const e = makeEnv({ settings: TEN });
+  e.up('items', [e.item(A, 45000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  const held = e.vid(A).chunks.get(1);
+  assert.ok(held && held.waiting && !held.sent, 'đoạn [10,20) đã tải, chờ cửa');
+  e.onChanged({ settings: { newValue: { enabled: false } } }, 'local');
+  await e.flush();
+  assert.deepEqual(e.cancels(), [A + ':0']);
+  await e.reply(A + ':0', { status: 'cancelled' });
+  assert.ok(held.ctl.signal.aborted && !e.vid(A).chunks.has(1), 'đoạn đang chờ bị bỏ');
+  const sends = e.subs().length, fetches = e.fetches.length;
+  v.paused = false;
+  for (let i = 0; i < 20; i++) { v.currentTime += 0.26; await e.tick(); }   // ~5 s phát khi đã tắt sub
+  assert.equal(e.subs().length, sends, 'tắt sub: không gửi gì');
+  assert.equal(e.fetches.length, fetches, 'tắt sub: không tải gì');
+  v.currentTime = 2; v.paused = true;
+  e.onChanged({ settings: { newValue: { enabled: true } } }, 'local');
+  await e.flush();
+  for (let i = 0; i < 4; i++) await e.tick();
+  assert.deepEqual(e.subs(), [A + ':0', A + ':0']);
+  const again = e.vid(A).chunks.get(1);
+  assert.ok(again && again !== held && again.waiting && !again.sent, 'đoạn [10,20) tải lại, vẫn chờ cửa (phát lúc tắt không tính)');
+});
+
+await t('Dịch sẵn 10 s, service worker cũ: không báo ndjson thì cả đoạn 0 lẫn đoạn [10,20) (gửi sau cửa) đều không stream, chỉ hỏi worker một lần; đúng bản thì stream', async () => {
+  for (const [worker, stream, note] of [['none', false, true], [{ build: '0.2.31' }, false, true], [{ build: VERSION, ndjson: true }, true, false]]) {
+    const tag = JSON.stringify(worker) + ': ';
+    const e = makeEnv({ settings: TEN, worker });
+    e.up('items', [e.item(A, 45000)]);
+    e.activeId = A; const v = e.video(A, 2); v.paused = true;
+    for (let i = 0; i < 3; i++) await e.tick();
+    assert.deepEqual(e.subs(), [A + ':0'], tag + 'trước cửa');
+    await e.passGate(v);
+    const sent = e.sent.filter((m) => m.type === 'subtitles');
+    assert.deepEqual(sent.map((m) => [m.key, m.payload.stream]), [[A + ':0', stream], [A + ':1', stream]], tag);
+    assert.equal(e.sent.filter((m) => m.type === 'hello').length, 1, tag + 'số lần hỏi worker');
+    await e.reply(A + ':0', { status: 'ok', cues: [C(1.5, 4, 'Xin chào')] });
+    await e.tick();
+    assert.equal(e.subText(), 'Xin chào', tag + 'sub');
+    e.hover(50, 20); await e.tick();
+    assert.equal(/service worker/i.test(e.infoText() || ''), note, tag + e.infoText());
+  }
+});
+
+await t('Dịch sẵn 10 s, HTTP 429 ở lượt tải sớm của đoạn [10,20): không gọi lại ngay, mọi lượt tải (cả dịch sẵn) nghỉ 5 s, nhãn của đoạn 0 không đổi; hết nghỉ thì tải lại, vẫn chờ cửa, qua cửa thì gửi một lần', async () => {
+  let block = true;
+  const w1 = (b) => b === 25999;   // cửa sổ [5,5; 26) s của đoạn [10,20), phần đầu đã có trong lượt tải đầu video
+  const e = makeEnv({ settings: TEN, status: (a, b) => (block && w1(b) ? 429 : 206) });
+  e.up('items', [e.item(A, 45000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  await e.tick(); await e.tick();
+  const tries = () => e.fetches.filter((f) => w1(f.b));
+  assert.equal(tries().length, 1, 'lượt tải sớm của đoạn [10,20)');
+  assert.equal(tries()[0].status, 429);
+  const t429 = tries()[0].at;
+  await e.reply(A + ':0', { status: 'ok', cues: [C(1.5, 4, 'Xin chào')] });
+  await e.tick();
+  assert.equal(e.badge(), 'VI', 'chỗ đang xem đã có sub');
+  assert.equal(e.subText(), 'Xin chào');
+  e.up('items', [e.item(B, 60000)]);   // video kế tiếp tới trong lúc nghỉ
+  block = false;
+  const n0 = e.fetches.length;
+  while (e.now < t429 + 4900) await e.tick();
+  assert.equal(e.fetches.length, n0, 'không tải gì trong lúc nghỉ (cả dịch sẵn)');
+  for (let i = 0; i < 4; i++) await e.tick();
+  assert.equal(tries().length, 2, 'tải lại một lần sau khi hết nghỉ');
+  assert.ok(tries()[1].at - t429 >= 5000 && tries()[1].at - t429 <= 5300, 'tải lại sau ' + (tries()[1].at - t429) + ' ms');
+  assert.ok(e.subs().includes(B + ':0'), 'dịch sẵn B sau khi hết nghỉ: ' + e.subs());
+  const c1 = e.vid(A).chunks.get(1);
+  assert.ok(c1 && c1.waiting && !c1.sent, 'đoạn [10,20) chờ cửa: ' + JSON.stringify(c1 && [c1.status, c1.sent, c1.waiting]));
+  await e.passGate(v);
+  assert.deepEqual(ofKey(e, A + ':1').map((m) => m.payload.audioStart), [5.5]);
+  assert.equal(tries().length, 2);
 });
 
 // ---- tap.main.js trong vm: đọc __pace_f, đồng hồ trình phát.

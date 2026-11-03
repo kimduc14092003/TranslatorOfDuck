@@ -4,6 +4,9 @@
 // Cần: Node 18+, playwright (có Chromium), ffmpeg, openssl.   Chạy: node alpha/dev/e2e.mjs
 // E2E_MT=openai: dịch bằng OpenAI giả trả SSE (stream), server gửi dòng tạm (NDJSON nhiều dòng) như với key OpenAI thật;
 // mặc định Gemini giả (không stream, NDJSON chỉ có dòng cuối).
+// E2E_FIRST10=1: extension chạy cách "dịch sẵn 10 s đầu" (mặc định của extension từ 0.2.37); không đặt thì cách cũ (dịch sẵn
+// 20–30 s). Ở cách 10 s: ca video 100 s phát thật ≥ 5 s trước khi dừng để tua (qua cửa chờ 4 s), các kiểm tra theo lưới đoạn
+// 10 s; thêm ca phát liên tục trên trang /jingxuan (lướt nhanh 4 video, xem một video 23 s không dừng, cửa chờ 1,5 s).
 import { createRequire } from 'node:module';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -26,8 +29,11 @@ const video = (sec, freq) => ff(['-f', 'lavfi', '-i', 'testsrc=size=320x240:rate
 const MEDIA = { speech12: video(12, 440), song6: video(6, 300), long100: video(100, 500) };
 
 // ---- dịch vụ AI giả. Fun-ASR trả lời theo độ dài âm thanh nhận được:
-//   < 8 s: lời hát (chữ kéo dài) · 8–20 s: 2 câu ở 1,0 s và 5,0 s · ≥ 20 s (một đoạn của video dài): 2 câu ở 2,0 s và 6,0 s
+//   < 8 s: lời hát (chữ kéo dài) · 8–20 s: 2 câu ở 1,0 s và 5,0 s · ≥ 20 s (một đoạn của video dài): 3 câu ở 2,0 s, 6,0 s
+//   và 9,0 s. Câu thứ ba cho đoạn [10,20) của cách 10 s (gửi dư 4,5 s phía trước: câu ở 2,0 s rơi trước giây 10, chỉ còn
+//   "走吧" 2 chữ thì server bỏ cả đoạn là "quá ít lời"); ở cách cũ nó không trùng chỗ nào các kiểm tra đọc sub.
 const MT = process.env.E2E_MT === 'openai' ? 'openai' : 'gemini';
+const F10 = process.env.E2E_FIRST10 === '1';
 const providerHits = { funasr: 0, gemini: 0, withContext: 0, longChunks: [], rateLimited: 0, pronIn: 0, authorIn: 0, streamed: 0 };
 // Bảng xưng hô model giả trả trong mọi lần dịch (không có trong lượt rút gọn): extension phải gửi lại ở yêu cầu sau.
 const PRON = { pairs: [{ who: 'người kể → người xem', self: 'mình', other: 'các bạn' }] };
@@ -50,7 +56,7 @@ const providers = http.createServer((req, res) => {
         providerHits.longChunks.push(Math.round(seconds));
         // Đoạn 30 s chậm hơn mẩu nhanh như trên Douyin thật (6–8 s so với 3,3–3,7 s, HANDOFF §6e): extension chỉ gửi mẩu
         // nhanh sau khi chỗ tua tới đứng yên ~0,5 s, nên đoạn xong ngay thì không còn gì để gửi mẩu nhanh.
-        const out = { output: { sentences: [sentence('大家好，今天我们去吃火锅。', 2000, 4100), sentence('走吧！', 6000, 6600)] } };
+        const out = { output: { sentences: [sentence('大家好，今天我们去吃火锅。', 2000, 4100), sentence('走吧！', 6000, 6600), sentence('我们出发了。', 9000, 10200)] } };
         return setTimeout(() => json(out), 1500);
       }
       if (seconds < 8) {
@@ -72,7 +78,7 @@ const providers = http.createServer((req, res) => {
       if (text.includes('Bảng xưng hô đã dùng') && text.includes(JSON.stringify(PRON.pairs))) providerHits.pronIn++;
       if (text.includes('小李旅行')) providerHits.authorIn++;
       const lines = JSON.parse(text.match(/Các dòng: (.*)$/m)[1]);
-      const vi = { '大家好，今天我们去吃火锅。': 'Chào cả nhà, hôm nay đi ăn lẩu.', '走吧！': 'Đi thôi!' };
+      const vi = { '大家好，今天我们去吃火锅。': 'Chào cả nhà, hôm nay đi ăn lẩu.', '走吧！': 'Đi thôi!', '我们出发了。': 'Mình xuất phát nào.' };
       const out = JSON.stringify({ ...(/^Rút gọn/.test(text) ? {} : { pronouns: PRON }), cues: lines.map(l => ({ id: l.id, vi: vi[l.zh] || 'Dòng ' + l.id })) });
       if (gem) return json({ candidates: [{ content: { parts: [{ text: out }] } }] });
       if (!b.stream) return json({ choices: [{ message: { role: 'assistant', content: out } }] });
@@ -98,9 +104,20 @@ const alpha = spawn(process.execPath, [path.join(ROOT, 'server', 'server.mjs')],
     OPENAI_BASE: PROV + '/v1', OPENAI_MODEL: 'test-model', OPENAI_REASONING_EFFORT: 'none' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
-let alphaLog = '';
-alpha.stdout.on('data', d => { alphaLog += d; });
-alpha.stderr.on('data', d => { alphaLog += d; });
+let alphaLog = '', logTail = '';
+const logLines = [];   // { at: lúc dòng log tới (Date.now()), line }: server ghi một dòng khi xong (hay huỷ) một yêu cầu
+const onLog = (d) => {
+  alphaLog += d; logTail += d;
+  for (let i; (i = logTail.indexOf('\n')) >= 0; logTail = logTail.slice(i + 1)) logLines.push({ at: Date.now(), line: logTail.slice(0, i) });
+};
+alpha.stdout.on('data', onLog);
+alpha.stderr.on('data', onLog);
+// Các yêu cầu đã xong (hay huỷ, lỗi) của một video theo log server: { at, quick, range: '0:10–0:20', status, seconds }.
+const reqsOf = (id) => logLines.map(({ at, line }) => {
+  const m = new RegExp(`^\\S+ \\S+ ${id} \\[(nhanh )?([^\\]]+?)( ♪)?\\] (\\S+)`).exec(line);
+  const s = / · ([\d.]+) s âm thanh/.exec(line);
+  return m && { at, quick: !!m[1], range: m[2], status: m[4], seconds: s ? Number(s[1]) : null };
+}).filter(Boolean);
 for (let i = 0; i < 50 && !alphaLog.includes('Alpha server'); i++) await new Promise(r => setTimeout(r, 100));
 
 // ---- Douyin giả
@@ -109,7 +126,13 @@ execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days
 const ids = ['7500000000000000001', '7500000000000000002', '7500000000000000003', '7500000000000000004'];
 const FAV = '7500000000000000009';   // video đã thích ở cột bên, không nằm trong feed
 const SIDS = ['7500000000000000011', '7500000000000000012'];   // kết quả tìm kiếm, chỉ có trong search/stream
-const fileFor = { [ids[0]]: 'speech12', [ids[1]]: 'speech12', [ids[2]]: 'song6', [ids[3]]: 'long100', [FAV]: 'speech12', [SIDS[0]]: 'speech12', [SIDS[1]]: 'speech12' };
+// Feed /jingxuan của ca phát liên tục (chỉ E2E_FIRST10=1): 4 video lướt nhanh, video xem 23 s, video kế (xem ~4 s sau khi
+// đã xem lâu: cửa 1,5 s), video kế nữa (chỉ được dịch sẵn). Đều 100 s (dùng chung file long100, kết quả server theo id).
+const PIDS = ['7500000000000000021', '7500000000000000022', '7500000000000000023', '7500000000000000024', '7500000000000000025',
+  '7500000000000000026', '7500000000000000027'];
+const [PA, PP, PN, PN2] = [PIDS.slice(0, 4), PIDS[4], PIDS[5], PIDS[6]];
+const fileFor = { [ids[0]]: 'speech12', [ids[1]]: 'speech12', [ids[2]]: 'song6', [ids[3]]: 'long100', [FAV]: 'speech12', [SIDS[0]]: 'speech12', [SIDS[1]]: 'speech12',
+  ...Object.fromEntries(PIDS.map(id => [id, 'long100'])) };
 const DUR = { speech12: 12000, song6: 6000, long100: 100000 };
 const aweme = (id, desc) => ({ aweme_id: id, desc, duration: DUR[fileFor[id]], text_extra: [], ...(fileFor[id] === 'long100' ? { author: { nickname: '小李旅行' } } : {}),
   video: { play_addr: { uri: 'v0d00f' + id, url_list: [`https://v3-web.douyinvod.com/x/${fileFor[id]}.mp4`] }, bit_rate: [] } });
@@ -127,6 +150,25 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"></head><body styl
     slides.forEach((s, j) => { if (j === i) s.setAttribute('data-e2e', 'feed-active-video'); else s.removeAttribute('data-e2e'); s.style.display = j === i ? 'block' : 'none'; });
     const v = slides[i].querySelector('video');
     if (!v.src) v.src = '/media/' + i + '.mp4';
+    return v;
+  };
+  window.activate(0);
+</script></body></html>`;
+// Feed /jingxuan (cũng là feed với extension): mọi video nằm trong dữ liệu nhúng (__pace_f), không có feed API.
+// activate(i): dừng mọi video, hiện slide i, phát từ 0.
+const PAGE2 = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">
+<div id="feed">${PIDS.map((id, i) => `<div class="slide" ${i === 0 ? 'data-e2e="feed-active-video"' : ''} data-e2e-vid="${id}"><video muted playsinline style="width:640px;height:480px;display:block"></video></div>`).join('')}</div>
+<script>
+  (self.__pace_f = self.__pace_f || []).push([1, '8:' + JSON.stringify(['$', '$La', null, { awemeList: ${JSON.stringify(PIDS.map(id => aweme(id, '旅游vlog')))} }]) + '\\n']);
+</script>
+<script>
+  const slides = [...document.querySelectorAll('.slide')];
+  window.activate = (i) => {
+    for (const v of document.querySelectorAll('video')) v.pause();
+    slides.forEach((s, j) => { if (j === i) s.setAttribute('data-e2e', 'feed-active-video'); else s.removeAttribute('data-e2e'); s.style.display = j === i ? 'block' : 'none'; });
+    const v = slides[i].querySelector('video');
+    if (!v.src) v.src = '/media/' + slides[i].getAttribute('data-e2e-vid') + '.mp4';
+    v.currentTime = 0;
     return v;
   };
   window.activate(0);
@@ -155,6 +197,7 @@ const douyin = https.createServer({ key: fs.readFileSync(path.join(TMP, 'k.pem')
   const send = (s, h, b) => { res.writeHead(s, h); res.end(b); };
   if (req.headers.host.startsWith('www.douyin.com')) {
     if (u.pathname === '/') return send(200, { 'content-type': 'text/html; charset=utf-8' }, PAGE);
+    if (u.pathname === '/jingxuan') return send(200, { 'content-type': 'text/html; charset=utf-8' }, PAGE2);
     if (u.pathname.startsWith('/search/')) return send(200, { 'content-type': 'text/html; charset=utf-8' }, SEARCH_PAGE);
     if (u.pathname.startsWith('/aweme/v1/web/general/search/stream')) return send(200, { 'content-type': 'application/json' }, searchStream);
     if (u.pathname.startsWith('/aweme/v1/web/tab/feed')) { feedServedAt = feedServedAt || Date.now(); return send(200, { 'content-type': 'application/json' }, JSON.stringify(feed)); }
@@ -199,9 +242,9 @@ const ctx = await chromium.launchPersistentContext(path.join(TMP, 'profile'), {
 });
 const pop = await ctx.newPage();
 await pop.goto(`chrome-extension://${extId}/popup.html`);
-// first10: các kiểm tra ở đây đo cách dịch sẵn 20–30 s; E2E_FIRST10=1 chạy cách dịch sẵn 10 s (mặc định từ 0.2.37), một số
-// kiểm tra số đoạn, độ dài âm thanh, mẩu nhanh sẽ khác theo thiết kế.
-await pop.evaluate(([p, f10]) => chrome.storage.local.set({ settings: { enabled: true, server: `http://127.0.0.1:${p}`, position: 'bottom', size: 'm', first10: f10, first10Set: true } }), [alphaPort, process.env.E2E_FIRST10 === '1']);
+// first10: mặc định chạy cách dịch sẵn 20–30 s; E2E_FIRST10=1 chạy cách dịch sẵn 10 s (mặc định của extension từ 0.2.37):
+// lưới đoạn, độ dài âm thanh khác theo thiết kế, kiểm tra ghi kỳ vọng theo từng cách.
+await pop.evaluate(([p, f10]) => chrome.storage.local.set({ settings: { enabled: true, server: `http://127.0.0.1:${p}`, position: 'bottom', size: 'm', first10: f10, first10Set: true } }), [alphaPort, F10]);
 await pop.click('#check');
 await pop.waitForFunction(() => !/Đang kiểm tra/.test(document.getElementById('health').textContent));
 const health = await pop.evaluate(() => document.getElementById('health').textContent);
@@ -264,16 +307,39 @@ await setLyrics(true);
 await page.waitForTimeout(500);
 
 // Video dài 100 s: chia đoạn [0,20) [20,50) [50,80) [80,101); dịch trước 30 s so với chỗ đang xem.
+// Cách 10 s: [0,10) [10,20) [20,50) [50,80) [80,101). Đoạn sau đoạn ở chỗ đang xem chỉ gửi khi đã phát 4 s (cửa chờ), mà
+// subAt dừng video trước mỗi lần đọc: phát thật từ 0 tới ≥ 5 s rồi mới dừng để tua, chờ [10,20) và [20,50) xong (gửi dư
+// 4,5 s và 1,5 s phía trước như khi xem liền mạch). Không phát thì tua tới 21 s gửi [20,50) dư 8 s (đoạn trước chưa dịch),
+// câu của ASR giả rơi trước giây 20, đoạn không còn câu nào (HANDOFF §6ad).
 await page.evaluate(() => window.activate(3));
 const waitSub = async (t, want) => { let r; for (let i = 0; i < 60; i++) { r = await subAt(t); if (r.sub === want) break; await page.waitForTimeout(250); } return r; };
+const waitReq = async (id, range, ms = 10000) => { for (let i = 0; i * 250 < ms && !reqsOf(id).some(x => !x.quick && x.range === range); i++) await page.waitForTimeout(250); };
 const long = {};
-long.at2 = await waitSub(2.2, 'Chào cả nhà, hôm nay đi ăn lẩu.');      // đoạn 1: câu ở 2,0 s
+if (F10) {
+  long.playedTo = await page.evaluate(async () => {
+    const v = document.querySelector('[data-e2e="feed-active-video"] video');
+    v.currentTime = 0;
+    await v.play();
+    const t0 = Date.now();
+    while (v.currentTime < 5 && Date.now() - t0 < 15000) await new Promise(r => setTimeout(r, 50));
+    v.pause();
+    return v.currentTime;
+  });
+  await waitReq(ids[3], '0:10–0:20');
+  await waitReq(ids[3], '0:20–0:50');
+}
+long.at2 = await waitSub(2.2, 'Chào cả nhà, hôm nay đi ăn lẩu.');      // đoạn 1: câu ở 2,0 s (cách 10 s: [0,10) dư 2 s, câu ở 1,0 s)
 long.at21 = await waitSub(21.0, 'Chào cả nhà, hôm nay đi ăn lẩu.');    // đoạn 2: âm thanh từ 18,5 s → câu ở 20,5 s
 await page.waitForTimeout(2500);                                      // đoạn 3 (gửi sau đoạn 2, ASR giả 1,5 s) xong
 long.chunksBeforeSeek = providerHits.longChunks.length;               // đoạn 1, 2, 3 (21 + 30 = 51 chạm đoạn 3), chưa đến đoạn 4
+// Đoạn đã xong trước khi tua tới 85 s (theo log server, không tính mẩu nhanh). Cách 10 s: [0,10) 12 s âm thanh không vào
+// longChunks (< 20 s), nên longChunks là [10,20) [20,50) [50,80), cũng 3 như cách cũ: kiểm thêm theo tên đoạn.
+long.doneBeforeSeek = reqsOf(ids[3]).filter(x => !x.quick && x.status === 'ok').map(x => x.range);
 long.at85 = await waitSub(85.0, 'Đi thôi!');                          // tua tới 85 s: đoạn 4, âm thanh từ 78,5 s → "走吧" ở 84,5 s
 long.at83 = await subAt(83.5);                                        // giữa 2 câu (câu 1 hết lúc 83,1 s): trống
 long.chunks = [...providerHits.longChunks];
+const longReqs = reqsOf(ids[3]).filter(x => !x.quick);
+long.reqs = longReqs.map(({ range, status, seconds }) => `${range} ${status} ${seconds} s`);
 // Rê chuột thật vào nhãn: bảng thông tin đã dịch hiện ra (chỗ đang xem 85 s, đoạn [80,101) đã dịch), rời nhãn thì ẩn.
 const info = () => page.evaluate(() => {
   const host = [...document.querySelectorAll('div')].find(d => d.shadowRoot && d.shadowRoot.querySelector('.sub'));
@@ -316,9 +382,87 @@ for (let i = 0; i < 60 && search.sub !== 'Chào cả nhà, hôm nay đi ăn lẩ
 }
 for (let i = 0; i < 20 && !playRequested.has(SIDS[1]); i++) await spage.waitForTimeout(250);
 search.prefetchedNext = playRequested.has(SIDS[1]);
+// Số đếm của dịch vụ AI giả tới hết các ca trên: kiểm tra của các ca đó đọc ở đây (ca phát liên tục bên dưới gọi thêm).
+const hits0 = { ...providerHits, longChunks: [...providerHits.longChunks] };
 
-console.log({ health, first, atGap, atSecond, delayed, savedDelay, status, song, songOff, long, search, providerHits, cdnSongGapsMs: cdnSong.map(t => t - cdnSong[0]) });
+// ---- Cách dịch sẵn 10 s, phát liên tục như người xem (chỉ E2E_FIRST10=1). Tab mới ở feed /jingxuan; không bao giờ dừng video
+// để đọc: đọc sub và nhãn trong shadow DOM mỗi 250 ms lúc đang phát. Lúc server xong một đoạn: lúc dòng log của nó tới.
+//   1. Lướt nhanh: PA[0..3], mỗi video phát ~2 s (cửa chờ 4 s vì video trước chỉ xem ~2 s).
+//   2. PP: phát từ 0 tới 23,5 s.
+//   3. PN: phát ~4,5 s ngay sau PP (đã xem ≥ 8 s nên cửa chờ 1,5 s). PN2: chỉ được dịch sẵn.
+const CHAO = 'Chào cả nhà, hôm nay đi ăn lẩu.', DI = 'Đi thôi!', MINH = 'Mình xuất phát nào.';
+// Sub của PP theo giờ phim. [0,10) gửi 12 s âm thanh (ASR giả 8–20 s: câu ở 1,0 s, 5,0 s); [10,20) gửi từ 5,5 s (câu ở 7,5 s
+// rơi trước giây 10, bị bỏ; còn 11,5 s và 14,5 s); [20,50) từ 18,5 s (20,5 s). Hết dòng = hết lời + 0,5 s (segmentCues).
+const P_LINES = [[1.0, 3.6, CHAO], [5.0, 6.1, DI], [11.5, 12.6, DI], [14.5, 16.2, MINH], [20.5, 23.1, CHAO]];
+let play = null;
+if (F10) {
+  await spage.close(); await page.close();   // hai tab trước đã xong việc; khỏi chia CPU với tab đang phát
+  const p2 = await ctx.newPage();
+  p2.on('pageerror', e => errors.push(String(e)));
+  await p2.goto('https://www.douyin.com/jingxuan');
+  await p2.waitForTimeout(500);
+  // Hiện video i, phát từ 0 trong ms (pause: dừng ở cuối). Mỗi 250 ms: wall (Date.now()), t (currentTime), sub, badge.
+  const watch = (i, ms, pause) => p2.evaluate(async ({ i, ms, pause }) => {
+    const v = window.activate(i);
+    await v.play();
+    const out = [], t0 = Date.now();
+    while (Date.now() - t0 < ms) {
+      const host = [...document.querySelectorAll('div')].find(d => d.shadowRoot && d.shadowRoot.querySelector('.sub'));
+      const sub = host && host.shadowRoot.querySelector('.sub'), badge = host && host.shadowRoot.querySelector('.badge');
+      out.push({ wall: Date.now(), t: Math.round(v.currentTime * 1000) / 1000, paused: v.paused,
+        sub: sub && sub.style.display === 'block' ? sub.textContent : null, badge: badge && badge.style.display === 'block' ? badge.textContent : null });
+      await new Promise(r => setTimeout(r, 250));
+    }
+    if (pause) v.pause();
+    return out;
+  }, { i, ms, pause });
+  play = { swipe: [] };
+  for (let i = 0; i < 4; i++) play.swipe.push(await watch(i, 2000, false));
+  play.p = await watch(4, 23500, true);
+  play.n = await watch(5, 4500, true);
+  await p2.waitForTimeout(2000);   // việc đã gửi (đoạn [20,50) của PN) xong
+  play.reqs = Object.fromEntries(PIDS.map(id => [id, reqsOf(id)]));
+}
+// Giờ phim của một lượt phát (các mẫu đọc) lúc wall = T; null: trước mẫu đầu.
+const headAt = (samples, T) => { let s = null; for (const x of samples) if (x.wall <= T) s = x; return s && Math.round((s.t + (s.paused ? 0 : (T - s.wall) / 1000)) * 100) / 100; };
+// So sub đọc được lúc phát với bảng dòng (bỏ mẫu cách đầu/cuối dòng < 0,2 s): mẫu sai, và dòng nào đã thấy.
+const timeline = (samples, lines, from, to) => {
+  const lineAt = (t) => (lines.find(([a, b]) => t >= a && t < b) || [])[2] || null;
+  const use = samples.filter(s => !s.paused && s.t >= from && s.t < to && !lines.some(([a, b]) => Math.abs(s.t - a) < 0.2 || Math.abs(s.t - b) < 0.2));
+  return { n: use.length, wrong: use.filter(s => s.sub !== lineAt(s.t)).map(s => `${s.t} s: ${s.sub}`),
+    seen: lines.filter(([a, b]) => a < to && b > from).map(([a, b, text]) => use.some(s => s.t >= a && s.t < b && s.sub === text)) };
+};
+// Mẫu đọc rút gọn để in: chỉ lúc sub hay nhãn đổi.
+const changes = (samples) => samples.filter((s, i) => !i || s.sub !== samples[i - 1].sub || s.badge !== samples[i - 1].badge).map(s => `${s.t} ${s.sub} | ${s.badge}`);
+
+// Kết quả ca phát liên tục: c1At, c2At, n1At là giờ phim lúc server xong đoạn [10,20) của PP, [20,50) của PP, [10,20) của PN.
+let f10 = null;
+if (play) {
+  const r = play.reqs, get = (id, range) => r[id].find(x => !x.quick && x.range === range);
+  const okAt = (x, samples) => (x && x.status === 'ok' ? headAt(samples, x.at) : null);
+  f10 = { p: changes(play.p), n: changes(play.n), swipe: play.swipe.map(changes), swipeEnd: play.swipe.map(s => s.length ? s[s.length - 1].t : null),
+    // Mọi mẫu đọc lúc video đang phát (ca này không được dừng video để đọc).
+    neverPaused: [play.p, play.n, ...play.swipe].every(s => s.length && s.every(x => !x.paused)),
+    lines01: timeline(play.p, P_LINES, 0.3, 19.5), lines2: timeline(play.p, P_LINES, 19.5, 23.5),
+    badge816: play.p.filter(s => !s.paused && s.t >= 8 && s.t < 16).map(s => s.badge),
+    c1At: okAt(get(PP, '0:10–0:20'), play.p), c2At: okAt(get(PP, '0:20–0:50'), play.p), n1At: okAt(get(PN, '0:10–0:20'), play.n),
+    // Video được dịch sẵn: yêu cầu đầu tiên của nó; PP, PN xong trước lúc được lướt tới (đúng là dịch sẵn).
+    pre: [...PA.slice(1), PP, PN, PN2].map(id => r[id][0] || null),
+    preEarly: [[PP, play.p], [PN, play.n]].every(([id, s]) => { const x = get(id, '0:00–0:10'); return !!x && !!s.length && x.at < s[0].wall; }),
+    reqs: Object.fromEntries(PIDS.map(id => [id, r[id].map(x => `${x.quick ? 'nhanh ' : ''}${x.range} ${x.status} ${x.seconds} s`)])) };
+}
+console.log({ health, first, atGap, atSecond, delayed, savedDelay, status, song, songOff, long, search, providerHits, hits0, cdnSongGapsMs: cdnSong.map(t => t - cdnSong[0]) });
+if (f10) console.log('first10 play scenario:', JSON.stringify(f10, null, 1));
 console.log('server log:\n' + alphaLog.trim());
+// Yêu cầu ~12 s âm thanh: đoạn [0,10) gửi dư 2 s phía sau (F10_POST).
+const s12 = (x) => !!x && !x.quick && x.range === '0:00–0:10' && x.status === 'ok' && x.seconds >= 11.5 && x.seconds <= 12.7;
+// Cách 10 s, video 100 s: âm thanh từng đoạn (log server): [0,10) dư 2 s sau; [10,20) dư 4,5 s trước (F10_PRE1), 6 s sau;
+// [20,50) [50,80) [80,101) dư 1,5 s trước (đoạn trước đã dịch), 6 s sau (hết file ở 100 s).
+const AUDIO10 = { '0:00–0:10': 12, '0:10–0:20': 20.5, '0:20–0:50': 37.5, '0:50–1:20': 37.5, '1:20–1:41': 21.5 };
+const audio10 = (() => {
+  const got = Object.fromEntries(longReqs.filter(x => x.status === 'ok').map(x => [x.range, x.seconds]));
+  return JSON.stringify(Object.keys(got).sort()) === JSON.stringify(Object.keys(AUDIO10).sort()) && Object.entries(AUDIO10).every(([k, s]) => Math.abs(got[k] - s) <= 0.7);
+})();
 const checks = {
   'popup sees the server': /Server chạy/.test(health),
   'first video subtitle shows Vietnamese at 1.2 s': first.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
@@ -341,21 +485,47 @@ const checks = {
   'seek: quick 10 s piece sent at the seek point': /\[nhanh 1:25–1:3\d( ♪)?\]/.test(alphaLog),
   'short videos (12 s, 6 s) send no quick piece': !ids.slice(0, 3).some(id => new RegExp(id + ' \\[nhanh ').test(alphaLog)),
   'long video: chunk 1 line at 2.2 s': long.at2.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
-  'long video: chunk 2 line lands at 20.5 s (video time)': long.at21.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
-  'long video: only chunks within 30 s of playhead processed': long.chunksBeforeSeek === 3,
+  // Cách 10 s: chỉ đúng nghĩa khi bước phát thật đã tới 5 s (qua cửa 4 s) trước khi dừng để tua.
+  'long video: chunk 2 line lands at 20.5 s (video time)': long.at21.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.' && (!F10 || long.playedTo >= 5),
+  // Cách 10 s: longChunks (≥ 20 s âm thanh) là [10,20) [20,50) [50,80); kiểm thêm đúng các đoạn đã xong, chưa có [80,101).
+  'long video: only chunks within 30 s of playhead processed': long.chunksBeforeSeek === 3
+    && (!F10 || JSON.stringify([...long.doneBeforeSeek].sort()) === JSON.stringify(['0:00–0:10', '0:10–0:20', '0:20–0:50', '0:50–1:20'])),
   'long video: seek to 85 s translates that chunk': long.at85.sub === 'Đi thôi!' && long.at83.sub === null && long.chunks.length === 4,
   'hover on the badge shows what has been translated (playhead chunk ✓), hidden after leaving': /▶ 1:20–1:40 {2}✓ \d+ dòng/.test(long.info || '') && /Đã xong tới/.test(long.info || '') && long.infoAfter === null,
   // Đoạn 2 được gửi cùng lúc với đoạn 1 (cả hai nằm trong 30 s đầu): server chờ đoạn 1 dịch xong để lấy ngữ cảnh.
-  'later chunks translated with previous lines as context (chunks 2–4)': providerHits.withContext >= 3,
+  // Cách 10 s: 4 đoạn sau đoạn đầu ([10,20) tới [80,101)). Số đếm tới trước ca phát liên tục (hits0).
+  ...(F10 ? { 'later chunks translated with previous lines as context ([10,20) to [80,101), 10 s plan)': hits0.withContext >= 4 }
+    : { 'later chunks translated with previous lines as context (chunks 2–4)': hits0.withContext >= 3 }),
   'first translation got HTTP 429, server retried (first video still has subs)': providerHits.rateLimited > 1 && first.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
   'player clock 50 s ahead of <video> (feed seek): sub follows the player': long.clock85.sub === 'Đi thôi!',
-  'audio-only upload: chunk audio ≈ 26/38/38/22 s': JSON.stringify([...long.chunks].sort((a, b) => a - b)) === '[22,26,38,38]',
+  ...(F10 ? { 'audio-only upload: chunk audio ≈ 12/20.5/37.5/37.5/21.5 s (10 s plan, server log per chunk)': audio10 }
+    : { 'audio-only upload: chunk audio ≈ 26/38/38/22 s': JSON.stringify([...long.chunks].sort((a, b) => a - b)) === '[22,26,38,38]' }),
   'search page: video opened from chunked search/stream results is translated (request sent, badge shown, sub at 1.2 s)':
     new RegExp(SIDS[0] + '( \\[[^\\]]+\\])? ok').test(alphaLog) && !!search.badge && search.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
   'search page: next search result (later JSON block of search/stream) prefetched': search.prefetchedNext,
   // Bảng xưng hô (P2): model trả, server trả về, extension gửi lại ở đoạn sau của cùng video, server đưa vào câu lệnh.
-  'pronoun table round trip: later chunks of the long video carry the table back into the prompt': providerHits.pronIn >= 2,
-  'uploader nickname (author.nickname) reaches the translation prompt': providerHits.authorIn >= 1,
+  'pronoun table round trip: later chunks of the long video carry the table back into the prompt': hits0.pronIn >= 2,
+  'uploader nickname (author.nickname) reaches the translation prompt': hits0.authorIn >= 1,
+  // Ca phát liên tục, cách 10 s (chỉ E2E_FIRST10=1; mẫu đọc mỗi 250 ms trong lúc phát, video không dừng).
+  ...(f10 ? {
+    'first10 play: chunk [0,10) and [10,20) lines shown at the right video times (read every 250 ms while playing, never paused)':
+      f10.neverPaused && f10.lines01.n >= 50 && !f10.lines01.wrong.length && f10.lines01.seen.every(Boolean),
+    'first10 play: no "đang dịch" from 8 s to 16 s while playing (server fast)': f10.neverPaused && f10.badge816.length >= 20 && f10.badge816.every(b => b === 'VI'),
+    // Cửa 4 s (F10_GATE) và F10_NEAR = 6 cùng mở [10,20) ở giây phim 4 (video phát từ 0), cộng 1,5 s ASR giả (âm thanh ≥ 20 s):
+    // xong sớm nhất ~5,5 s; cửa ngắn hơn (3 s: 4,8 s) thì sớm hơn 5,2 s. [20,50) thì cửa chặn tới khi qua cửa hay tới F10_NEAR
+    // (giây 14): cửa 4 s thì tải ngay sau khi [10,20) xong, xong ~7–8 s; cửa dài (9,5 s: 11,4 s) thì không trước 10 s.
+    'first10 play: gate 4 s / F10_NEAR: chunk [10,20) done at playhead 5.2–10 s (sent at 4 s, not earlier), chunk [20,50) done before 10 s (sent right after the 4 s gate)':
+      f10.c1At != null && f10.c1At >= 5.2 && f10.c1At < 10 && f10.c2At != null && f10.c2At < 10,
+    'first10 play: chunk [20,50) done (so sent) before playhead 20 s; its line shown at 20.5 s': f10.c2At != null && f10.c2At < 20
+      && f10.lines2.n >= 5 && !f10.lines2.wrong.length && f10.lines2.seen.every(Boolean),
+    'first10 prefetch: next videos send only [0,10) + 2 s (~12 s audio), done before they are reached; unwatched next video nothing more':
+      f10.pre.every(s12) && f10.preEarly && play.reqs[PN2].length === 1,
+    'first10 swipe (4 videos, ~2 s each): only chunk [0,10) sent (~12 s audio), no chunk [10,20) before the 4 s gate':
+      f10.neverPaused && PA.every(id => play.reqs[id].length === 1 && s12(play.reqs[id][0])) && f10.swipeEnd.every(t => t >= 1 && t <= 3.5),
+    // Cửa 1,5 s (F10_GATE_W) + 1,5 s ASR giả: xong sớm nhất ~3,0 s; cửa 4 s thì ≥ 5,5 s.
+    'first10 gate after a video watched ≥ 8 s: next video sends chunk [10,20) after 1.5 s of play (done at playhead 2.9–5 s)':
+      f10.n1At != null && f10.n1At >= 2.9 && f10.n1At < 5,
+  } : {}),
   'no page errors': errors.length === 0,
   // Content script hỏi service worker bản nào ('hello'): đúng bản này thì gửi stream (§6y).
   'extension service worker is this build (hello → ok)': !!status && status.worker === 'ok',
