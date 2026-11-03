@@ -103,7 +103,7 @@ Tới khi chọn model nhận dạng cuối (giai đoạn 3), bảng điểm dù
 | **Nghe đủ** | Liệt kê quãng dài hơn 4 s không có câu nào mà vẫn có tiếng nói, theo năng lượng âm thanh hoặc theo một model nhận dạng thứ hai. Bạn chỉ nghe lại đúng các quãng đó | Mọi quãng bị nghi đều được nghe lại; ngưỡng chốt ở giai đoạn 3 |
 | **Hiện đúng dòng** | Chụp mỗi 0,25 s khi phát ở 1×: số lần hiện đúng dòng, trên số lần lẽ ra phải có sub. Luôn báo kèm độ phủ | ≥ 98% |
 | **Đúng nhịp** | Độ lệch giữa lúc sub hiện và lúc người nói bắt đầu (Δin, PLAN §2), đo như ngày 30/10 (HANDOFF §5) | trung vị ≤ 80 ms, P90 ≤ 200 ms (mốc M1 của PLAN §2) |
-| **Tốc độ đọc** | Số dòng không vượt số ký tự/giây của ngôn ngữ đích (đếm theo ký tự hiển thị); số dòng phải rút gọn | tiếng Việt ≥ 85% dòng ≤ 17 ký tự/giây (mốc M1 của PLAN §2), nhưng không đổi lấy sub ra chậm hơn (§6, chốt 4/11); ngôn ngữ khác theo chuẩn của ngôn ngữ đó |
+| **Tốc độ đọc** | Số dòng không vượt số ký tự/giây của ngôn ngữ đích (đếm theo ký tự hiển thị); số dòng phải rút gọn | tiếng Việt: chỉ theo dõi; sub đầy đủ và ra sớm xếp trước (§6, chốt 4/11). Mốc cũ: ≥ 85% dòng ≤ 17 ký tự/giây (M1 của PLAN §2); ngôn ngữ khác theo chuẩn của ngôn ngữ đó |
 | **Không chờ khi đang xem** | Số lần hiện "đang dịch" khi phát liên tục, không tính 5 s đầu | 0 ở mạng thường; mạng chậm (~450 KB/s) ghi lại để so (§6t) |
 | **Sẵn sàng khi lướt** | Số video có lời đã có sub khi vuốt tới, nếu dừng ≥ 3 s mỗi video (FRR, PLAN §2) | ≥ 85% (mốc M1) |
 | **Sub đầu tiên** | Lúc có kết quả, trừ lúc bắt đầu phát (TTFS, PLAN §2); tách mở lạnh và video đã dịch sẵn | mở lạnh: trung vị ≤ 2,5 s, p95 ≤ 5 s. Đo được 3,0–4,2 s ngày 2/11 (§6ac) |
@@ -146,7 +146,7 @@ Tới khi chọn model nhận dạng cuối (giai đoạn 3), bảng điểm dù
    - tải thừa khi tua lúc lượt tải đầu video còn chạy, ở video 25–26 s (R2, §6af);
    - phép kiểm "file đã đổi" bị bỏ khi không biết cỡ file (F3, §6af; mới là suy luận);
    - trang video dài có chương, và video xem trước khi rê chuột lên thanh tiến trình, chưa thử (HANDOFF §5 điểm 4).
-   - tốc độ đọc thấp: trung vị 64,9% dòng ≤ 17 ký tự/giây trên cả bộ ngày 4/11 (mốc 85%), vì server bỏ lượt rút gọn ở đoạn gấp và đoạn dịch sẵn (HANDOFF §6al, §6am). Bạn chọn ngày 4/11: giữ sub ra sớm (§6). Chỉ làm cách nào nâng tốc độ đọc mà sub không ra chậm hơn. Đã làm "rút gọn sau" (HANDOFF §6an, extension 0.2.42): +5–6 điểm ở 2/3 video; phần còn lại chủ yếu là dòng quá ngắn so với lời.
+   - tốc độ đọc thấp: trung vị 64,9% dòng ≤ 17 ký tự/giây trên cả bộ ngày 4/11 (mốc 85%), vì server bỏ lượt rút gọn ở đoạn gấp và đoạn dịch sẵn (HANDOFF §6al, §6am). Bạn chọn ngày 4/11: giữ sub ra sớm (§6). Chỉ làm cách nào nâng tốc độ đọc mà sub không ra chậm hơn. Đã làm "rút gọn sau" (HANDOFF §6an, extension 0.2.42): +5–6 điểm ở 2/3 video; kéo dài dòng vào quãng lặng (§6ao, 0.2.43): +1,9 điểm trên cache. Ngày 4/11 bạn chọn ưu tiên sub đầy đủ: dừng ở đây (§6).
 6. **Thử tải riêng luồng âm thanh của Douyin**, như trình phát của trang (§6t), thay vì tải 5–6 MB cho 0,6 MB âm thanh mỗi đoạn 30 s. Giúp mạng chậm và video dài, và là bước chuẩn bị cho nền tảng dùng DASH (Bilibili, YouTube). Thử chỉ đọc, ít video. Trước đây luồng `bit_rate_audio` trả 403 (S1), chưa thử lại.
 7. **Máy Windows:** hướng dẫn cài đã có ([alpha/README.md](../alpha/README.md)). Còn thiếu: chạy test và bộ công cụ đo trên Windows, và nói rõ key nhận dạng bắt buộc (chỉ có key Gemini thì mất mốc từng chữ).
 
@@ -300,6 +300,7 @@ Một ngoại lệ có thể kéo sớm: cho vài người ngoài dùng thử mi
 
 **Đã chốt ngày 4/11:**
 4. Tốc độ đọc: giữ sub ra sớm. Không bật lại lượt rút gọn ở đoạn gấp và đoạn dịch sẵn, vì nó làm sub ra chậm hơn khoảng 2 s. Mốc 85% vẫn là đích, nhưng chỉ theo đuổi bằng cách không làm sub ra chậm hơn (ví dụ: lượt dịch đầu tự viết ngắn; hay rút gọn chạy sau, rồi thay những dòng chưa hiện).
+5. Tốc độ đọc xếp sau sub đầy đủ: không rút gọn thêm (không hạ ngưỡng rút gọn), không ghép dòng kề. Mốc 85% dòng ≤ 17 ký tự/giây chỉ còn để theo dõi.
 
 **Còn mở:**
 1. Nền tảng thử ở giai đoạn 2 (đề xuất: YouTube với phụ đề sẵn, và Bilibili), và có thử TikTok không.

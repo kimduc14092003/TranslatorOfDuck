@@ -1435,7 +1435,7 @@ Chủ dự án chọn làm cả 4 hướng.
 - **Kết luận:** kéo dài chỉ giúp khoảng 2 điểm. Dòng khó đọc phần lớn nằm sát dòng kế. Trong cache có 1.588 dòng khó đọc trên 4.455 dòng; trung vị 6 chữ Hán mỗi giây.
   - 507 dòng chỉ vượt mức tới 10%: luật rút gọn (trên 1,1 lần) không bao giờ đụng tới.
   - Khoảng 384 dòng ghép được với dòng kề thành một dòng hai hàng mà vẫn đọc kịp; nhưng câu sau hiện trước khi người nói tới (lệch nhịp).
-  - Chờ chủ dự án chọn: hạ ngưỡng rút gọn về 1,0 (thêm lượt gọi dịch), hay ghép dòng kề (lệch nhịp), hay dừng ở đây.
+  - Ngày 4/11 chủ dự án chọn ưu tiên sub đầy đủ (ROADMAP §6): không hạ ngưỡng rút gọn, không ghép dòng kề; tốc độ đọc chỉ còn để theo dõi. Lượt rút gọn đang có (dòng vượt 1,1 lần mức, cả "rút gọn sau") giữ nguyên.
 
 ## 7. Việc tiếp theo trên Mac
 
