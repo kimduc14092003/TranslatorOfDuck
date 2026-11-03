@@ -268,6 +268,9 @@ async function handleSubtitles(req, res) {
       `${out.cues ? ' ' + out.cues.length + ' dòng' : ''}${chunked && meta.from > 0 && out.status === 'ok' && !out.cached ? ` (ngữ cảnh ${out.context || 0} dòng${out.contextFar ? ' ở đoạn xa' : ''}${out.before ? `, lời ngay trước ${out.before} câu` : ''})` : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu${!lyrics ? (out.song && out.status === 'ok' ? ', cả đoạn là bài hát: chỉ giữ câu nói' : `, ${out.sung ?? 0} câu hát bị bỏ`) : out.status === 'ok' ? `, ${out.cues.filter(c => c.sung).length} dòng hát được dịch` : ''}` +
       ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${out.asrCached ? 'dùng lại' : (t.asrMs ?? '-') + ' ms'}${out.asrModel ? ' (' + out.asrModel + ')' : ''}${out.cached ? '' : netInfo(out.debug?.net?.asr)}` +
       `, dịch ${t.mtMs ?? '-'} ms${out.cached ? ' · (cache)' : netInfo(out.debug?.net?.mt)}` +
+      // Dòng lượt dịch đầu bỏ trống hay còn chữ Hán: đã dịch lại; dòng vẫn phải bỏ thì in ra (lý do, chữ gốc).
+      (out.debug?.mtFix && !out.cached ? ` · dịch lại ${out.debug.mtFix.retried} dòng` + (out.debug.mtFix.ok ? ` (sửa được ${out.debug.mtFix.fixed})` : ' (lượt dịch lại lỗi)') + (out.debug.mtFix.keptHan ? `, ${out.debug.mtFix.keptHan} dòng còn chữ Hán vẫn hiện` : '')
+        + out.debug.mtFix.dropped.map(d => `\n    bỏ dòng (${d.why === 'han' ? 'còn chữ Hán' : 'dịch trống'}): ${d.zh}`).join('') : '') +
       (job.startedAt - job.at > 300 ? ` · xếp hàng ${job.startedAt - job.at} ms` : '') +
       (out.heard ? `\n    nghe được: ${out.heard}` : '') +
       // Bảng xưng hô (để đo trên Douyin thật xem cặp có giữ qua các đoạn không): số cặp nhận từ extension và lấy từ file
