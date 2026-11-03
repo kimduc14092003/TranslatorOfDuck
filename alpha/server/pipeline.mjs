@@ -612,7 +612,18 @@ export function splitSung(r) {
 export function windowAsr(r, offset, from, to, keepCrossing = false) {
   const sh = (x) => ({ ...x, start: round(x.start + offset, 3), end: round(x.end + offset, 3) });
   const crossing = (x) => keepCrossing && x.start < from && x.start >= offset + 0.5 && x.end > from + 0.3;
-  const segments = (r.segments || []).map(sh).filter(x => (x.start >= from && x.start < to) || crossing(x));
+  // Câu bắt đầu trước đoạn mà kéo dài quá 2,5 s vào đoạn: giữ các từ từ đầu đoạn. Đo 3/11 (video BLG): model nhận dạng dự
+  // phòng có lúc trả cả đoạn không một dấu câu, câu chia lại thành 5,6–17,6 s mà đoạn trước chỉ có âm thanh tới 12 s: lời
+  // 12–17,6 s không thuộc đoạn nào. Luật này cũng chạy khi hai lượt nhận dạng chia câu ở ranh giới khác nhau (verifier, 112
+  // đoạn có from > 0 trong cache: 38 đoạn đổi; chữ không có dòng nào 160 → 72, chữ lặp giữa hai dòng liền nhau 11 → 18).
+  // Phần trùng với dòng cuối đoạn trước: cues.js giữ dòng kết thúc muộn hơn. Đã thử bắt đầu phần giữ ở dấu phẩy đầu tiên:
+  // không bớt chữ mất (lời trước dấu phẩy có lúc đoạn trước không có), thêm chữ lặp (verifier 3/11).
+  const tail = (x) => {
+    const ws = (r.words || []).map(sh).filter(w => w.start >= from && w.start < to && w.start >= x.start - 0.05 && w.end <= x.end + 0.05);
+    return ws.length ? { start: ws[0].start, end: ws[ws.length - 1].end, text: ws.map(w => w.text).join('') } : null;
+  };
+  const segments = (r.segments || []).map(sh).map(x => ((x.start >= from && x.start < to) || crossing(x) ? x
+    : x.start < from && x.end > from + 2.5 ? tail(x) : null)).filter(Boolean);
   const words = (r.words || []).map(sh).filter(w => segments.some(x => w.start >= x.start - 0.05 && w.end <= x.end + 0.05));
   return { ...r, segments, words, text: segments.map(x => x.text).join('') };
 }

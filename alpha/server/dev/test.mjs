@@ -158,7 +158,8 @@ t('Fun-ASR trả cả đoạn thành một câu: chia lại theo từ, đoạn s
     W('到了', 9.4, 9.7), W('发生活费', 9.8, 10.7), W('的时间', 10.7, 11.3), W('了哈！', 11.3, 11.7),
     ...Array.from('我分三轮拍卖每一轮付钱最多的得到生活费其他人付过的钱不退回').map((c, i) => W(c, 12 + i * 0.2, 12.18 + i * 0.2))];
   const r = { provider: 'funasr', text: words.map(w => w.text).join(''), segments: [{ start: 0.1, end: 17.6, text: words.map(w => w.text).join('') }], words };
-  assert.equal(windowAsr(r, 18.5, 20, 50).segments.length, 0);          // trước khi sửa: mất cả đoạn
+  // Trước khi chia lại theo từ: mất cả đoạn. Từ 3/11 windowAsr giữ phần từ đầu đoạn của câu vắt qua quá 2,5 s.
+  assert.ok(windowAsr(r, 18.5, 20, 50).segments[0].start >= 20);
   const s = resplitSentences(r);
   assert.deepEqual(s.segments.map(x => x.text).slice(0, 3), ['还剩五块。', '早啊，朋友们！', '到了发生活费的时间了哈！']);
   assert.ok(s.segments.every(x => x.end - x.start <= 12));
@@ -168,6 +169,22 @@ t('Fun-ASR trả cả đoạn thành một câu: chia lại theo từ, đoạn s
   const sp = splitSung(w);
   assert.equal(sp.sung, 0);
   assert.equal(classifySpeech({}, w).label, 'speech');
+});
+// Đo 3/11 trên Douyin thật (video BLG, đoạn [10, 20) gửi âm thanh từ 5,5 s): model nhận dạng dự phòng có lúc trả cả đoạn
+// không một dấu câu. resplitSentences chỉ cắt được theo khoảng lặng và mốc 12 s, nên câu đầu thành 5,6–17,6 s: bắt đầu trước
+// đoạn nên bị bỏ, mà đoạn trước chỉ có âm thanh tới 12 s. Lời 12–17,6 s không thuộc đoạn nào: đoạn chỉ còn 1 câu.
+t('câu không dấu câu vắt qua đầu đoạn quá phần đoạn trước nghe được: giữ phần từ đầu đoạn', () => {
+  const text = '哇这玩意儿太大了吧我现在正好就在标记基地门口必须带大家检查一下他们赛的备战情况如何走哇好可爱的布鲁鲁芝麻开门哦这还是我第一次来标记基地呢呀参观一下我们去寻找一下';
+  const words = Array.from(text).map((c, i) => W(c, 0.1 + i * 0.3, 0.38 + i * 0.3));
+  const r = resplitSentences({ provider: 'funasr', text, segments: [{ start: 0.1, end: 20.5, text }], words });
+  const w = windowAsr(r, 5.503, 10, 20, true);
+  const want = words.map(x => ({ ...x, start: x.start + 5.503 })).filter(x => x.start >= 10).length;   // câu sau bắt đầu trong đoạn: giữ cả câu
+  assert.ok(w.segments[0].start >= 10 && w.segments[0].start < 10.4, JSON.stringify(w.segments.map(x => [x.start, x.end])));
+  assert.equal(w.words.length, want);
+  // Câu có dấu câu vắt qua đầu đoạn ít (đoạn trước đã nghe gần hết): như cũ, thuộc đoạn trước.
+  const r2 = { text: '甲乙丙丁戊己。', segments: [{ start: 0.5, end: 3, text: '甲乙丙丁戊己。' }],
+    words: [W('甲乙丙', 0.5, 1.5), W('丁戊己。', 1.5, 3)] };
+  assert.equal(windowAsr(r2, 18.5, 20, 50).segments.length, 0);
 });
 t('số và tiếng cười không bị coi là lời hát lặp', () => {
   const speech = (text) => ({ text, words: [], segments: [{ start: 0, end: 3, text }] });
