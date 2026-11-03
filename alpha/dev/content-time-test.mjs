@@ -310,9 +310,11 @@ await t('Đường truyền chậm đều lúc vào trang (2 video dịch sẵn,
   // nối tiếp phần lượt đó đã có, rồi mỗi đoạn 30 s một lượt, không lượt nào bị ngắt hay tải lại (restartSlow không chạy: mọi lượt
   // cùng chậm). Không có [0,20) 26000 byte chặn đầu hàng nên có sub nhiều hơn (đo: 22 / 40,75 / 51,75 s); ở 2500 B/s đoạn 0 và
   // [10,20) về khi chỗ đang xem đã qua chúng, sub đầu ở giây 36,75 (đoạn [20,50)).
+  // Cách cũ, 2500 B/s, từ 0.2.39 (headReuse, §6af): lượt tải đầu video bị ngắt (đoạn 0 bỏ vì chậm) mà đã có phần đầu cửa sổ
+  // [20,50): đoạn đó chỉ tải phần còn thiếu, gửi lúc 43,3 s thay vì 46,9 s, rồi [50,80) gửi lúc 55,3 s; có sub 8,5 s thay vì 1,75 s.
   const ALL5 = ['0', '1', '2', '3', '4'];
   const table = FIRST10 ? [[2500, ALL5, 20, 40], [3500, ALL5, 39, 8], [4500, ALL5, 50, 6]]
-    : [[2500, ['q0', '1'], 1.75, 60], [3500, ['q0', '0', '1', '2', '3'], 30, 8], [4500, ['q0', '0', '1', '2', '3'], 44.5, 6]];
+    : [[2500, ['q0', '1', '2'], 8.5, 60], [3500, ['q0', '0', '1', '2', '3'], 30, 8], [4500, ['q0', '0', '1', '2', '3'], 44.5, 6]];
   for (const [bw, keys, cover, early] of table) {
     const e = makeEnv(EXT, { bw, autoReplyMs: 1500 });
     e.up('items', [e.item(A, 87100), e.item(B, 60000), e.item(C3, 90000)]);
@@ -1325,22 +1327,78 @@ await t('Dịch sẵn 10 s (ứng với ca "lượt tải đầu video chậm h�
   }
 });
 
-await t('Dịch sẵn 10 s (ứng với ca "tua tới gần cuối đoạn 0 lúc đang tải đầu video"): tua tới giây 16 ([10,20)) lúc lượt tải đầu video còn chạy: đoạn đó gửi đúng âm thanh, không mẩu nhanh, không lượt song song, gửi trong 3,3 s', async () => {
+await t('Dịch sẵn 10 s (ứng với ca "tua tới gần cuối đoạn 0 lúc đang tải đầu video"): tua tới giây 16 ([10,20)) lúc lượt tải đầu video còn chạy: đoạn đó dùng lại phần lượt đó đã nhận, không byte nào tải hai lần, không mẩu nhanh, không lượt song song, gửi trong 2,9 s', async () => {
   // Cách cũ: q17 đọc tiếp chính lượt tải đầu video (runQuick kéo dài h.end), một lượt, gửi lúc 2800 ms. Ở đây [10,20) ≤ 16 s nên
   // không có mẩu nhanh; chính đoạn đó (gửi dư 8 s vì đoạn 0 chưa dịch: cửa sổ [2,26) s) thay vai q17. Tua lúc 0,7 s (lượt đầu đã có
-  // ~4 s âm thanh) và 0,5 s (~1,6 s âm thanh, chưa tới đầu cửa sổ). Đo: ngắt lượt đầu rồi tải lại, thừa 1,26 / 0,36 MB, gửi
-  // 3100 / 2800 ms. Đọc tiếp lượt đầu (headKeep, 2550 ms, không thừa) đã thử và bỏ: lượt đầu bị máy chủ cho chậm riêng thì đoạn
-  // đó chờ lượt chậm, hụt sub nhiều hơn (§6ae, B3). Nên ca này không kiểm số byte.
+  // ~4 s âm thanh) và 0,5 s (~1,6 s âm thanh, chưa tới đầu cửa sổ). Bản 0.2.38: ngắt lượt đầu, bỏ phần đã nhận rồi tải lại, thừa
+  // 1,26 / 0,36 MB, gửi 3100 / 2800 ms. Đọc tiếp lượt đầu (headKeep) đã thử và bỏ: lượt đầu bị máy chủ cho chậm riêng thì đoạn
+  // đó chờ lượt chậm (ca kế, §6ae B3). Nay ngắt như cũ nhưng giữ phần đã nhận (headReuse), đoạn đó chỉ tải phần còn thiếu bằng
+  // lượt mới. Đo: gửi lúc 2700 / 2700 ms, không thừa; [20,46) lúc 5050 ms thay vì 6050 (dùng lại đuôi của [10,20)). Phần giữ lại
+  // bỏ ngay sau khi [10,20) gửi (một bước 50 ms), hay khi lướt đi.
   for (const at of [700, 500]) {
-    const r = await openVideo({ feed: true, ms: 6000, env: { settings: F10S }, during: (e, t) => { if (t === at) e.videos.get(A).currentTime = 16; } });
+    let sent1 = null, gone = null;
+    const r = await openVideo({ feed: true, ms: 6000, env: { settings: F10S }, during: (e, t) => {
+      if (t === at) e.videos.get(A).currentTime = 16;
+      if (sent1 == null && e.subs().some((m) => m.key === A + ':1')) sent1 = e.perf;
+      if (sent1 != null && gone == null && !e.vid(A).head) gone = e.perf;
+    } });
     const tag = 'tua lúc ' + at + ' ms: ', list = r.own.map((f) => urlTag(f) + r.e.fmt(f)).join(' | ');
+    const c2 = r.e.subs().find((m) => m.key === A + ':2');
+    assert.ok(c2, tag + 'đoạn [20,46) chưa gửi: ' + keysAt(r.e));
+    assert.equal(c2.payload.audioStart, 18.5, tag + 'đoạn [20,46) gửi dư 1,5 s');
+    assert.equal(c2.payload.aacSum, sumOf(H + 18.5 * BPS, H + 52 * BPS), tag + 'âm thanh đoạn [20,46) (ghép từ đuôi của [10,20)) cắt sai');
+    assert.ok(r.own.some((f) => !f.open && f.a === W0), tag + 'đoạn [20,46) không tải tiếp từ cuối [10,20): ' + list);
+    assert.ok(gone != null && gone - sent1 <= 300, tag + 'phần lượt đầu vẫn giữ sau khi [10,20) gửi (' + sent1 + ' → ' + gone + ')');
     const c = r.e.subs().find((m) => m.key === A + ':1');
     assert.ok(c, tag + 'đoạn [10,20) chưa gửi: ' + keysAt(r.e));
     assert.ok(!r.e.subs().some((m) => m.key.includes(':q')), tag + 'mẩu nhanh: ' + keysAt(r.e));
     assert.equal(c.payload.audioStart, 2, tag + 'đoạn [10,20) gửi dư 8 s (PRE_SEEK)');
     assert.equal(c.payload.aacSum, sumOf(H + 2 * BPS, W0), tag + 'âm thanh đoạn [10,20) cắt sai');
     assert.deepEqual(overlaps(r.own).map(r.e.fmt), [], tag + 'tải song song');
-    assert.ok(c.perf <= 3300, tag + 'đoạn [10,20) gửi lúc ' + c.perf + ': ' + list);
+    const bytes = r.own.filter((f) => f.open || f.b <= W0 - 1).reduce((s, f) => s + Math.floor(f.got), 0);
+    assert.ok(bytes <= W0 + 150000, tag + 'tải ' + bytes + ' byte cho [0,26) s (cần ≤ ' + (W0 + 150000) + '): ' + list);
+    assert.ok(c.perf <= 2900, tag + 'đoạn [10,20) gửi lúc ' + c.perf + ': ' + list);
+  }
+});
+
+await t('Dịch sẵn 10 s: tua tới giây 16 lúc lượt tải đầu video còn chạy rồi lướt đi trước khi [10,20) tải xong: bỏ phần lượt đầu đã giữ (headReuse) trong 300 ms', async () => {
+  // Phần giữ lại chỉ để [10,20) của video đang xem dùng; lướt đi thì đoạn đó hết cần, headCheck (mỗi lượt schedule) bỏ nó.
+  const B2 = '7500000000000000005';
+  let kept = false, gone = null;
+  const r = await openVideo({ feed: true, ids: [A, B2], ms: 4000, env: { settings: F10S }, during: (e, t) => {
+    if (t === 700) e.videos.get(A).currentTime = 16;
+    if (t === 1650) kept = !!e.vid(A).head && e.vid(A).head.closed;
+    if (t === 1700) { e.videos.get(A).paused = true; e.activeId = B2; e.video(B2, 0); }
+    if (t >= 1700 && gone == null && !e.vid(A).head) gone = t;
+  } });
+  assert.ok(kept, 'lúc 1650 ms không có phần lượt đầu nào được giữ (đã ngắt): ' + r.own.map(r.e.fmt).join(' | '));
+  assert.ok(gone != null && gone - 1700 <= 300, 'phần lượt đầu vẫn giữ sau khi lướt đi (bỏ lúc ' + gone + ')');
+});
+
+await t('Dịch sẵn 10 s: lượt tải đầu video bị máy chủ cho chậm riêng (1 / 1,5 MB/s, đường truyền 3 MB/s), tua vào [10,20) lúc nó còn chạy: đoạn đó không chờ lượt chậm, [10,20) và [20,46) gửi không muộn hơn bản 0.2.38, sub không ít hơn', async () => {
+  // Kịch bản của verifier (R1, §6ae): video 45 s, tua tới giây 12 hay 16 lúc 0,7 / 1,5 s. Bản 0.2.38 (ngắt lượt đầu, tải lại cả
+  // cửa sổ bằng lượt mới, nhanh): [10,20) gửi lúc T + 2400, [20,46) lúc T + 5350 ms; trong 14 s sau khi tua có sub 9,05–9,25 s (tua
+  // tới 12) và 6,1–6,3 s (tua tới 16). Đọc tiếp lượt đầu (headKeep) thì 2,3–3,8 s (1 MB/s), 4,45–7,4 s (1,5 MB/s). Giữ phần
+  // đã nhận (headReuse): [10,20) gửi sớm hơn 0–400 ms, [20,46) sớm hơn 50–1000 ms, sub 9,05–9,65 / 6,7–7,3 s.
+  for (const cap of [1000000, 1500000]) for (const T of [700, 1500]) for (const S of [12, 16]) {
+    const e = makeEnv(EXT, { bw: 3e6, rtt: 150, realProbe: true, head: H, base: H, bps: BPS, autoReplyMs: 2600, settings: F10S,
+      cap: (a, b) => (b == null ? cap : 0) });
+    e.activeId = A; const v = e.video(A, 0);
+    let cov = 0, seekAt = null;
+    for (let t = 0; t < T + 14000; t += 50) {
+      if (t === 0) e.up('items', [e.item(A, 45000, true)]);
+      if (t === T) { v.currentTime = S; seekAt = e.perf; }
+      await e.tick(50);
+      if (seekAt == null) continue;
+      const cv = e.vid(A), ph = e.dbg.playhead, k = cv.plan ? chunkAtOf(cv.plan, ph) : -1;
+      if (k >= 0 && (cv.chunks.get(k) || {}).status === 'ok') cov += 50;
+    }
+    const tag = cap / 1e6 + ' MB/s, tua tới ' + S + ' lúc ' + T + ' ms: ', at = (k) => { const m = e.subs().find((x) => x.key === A + ':' + k); return m ? m.perf : null; };
+    const list = e.fetches.filter((f) => f.vid === A).map((f) => urlTag(f) + e.fmt(f)).join(' | ');
+    assert.equal(JSON.stringify(e.vid(A).plan.slice(0, 3)), '[[0,10],[10,20],[20,46]]', tag + 'lưới');
+    assert.ok(at(1) != null && at(1) <= T + 2500, tag + 'đoạn [10,20) gửi lúc ' + at(1) + ': ' + list);
+    assert.ok(at(2) != null && at(2) <= T + 5450, tag + 'đoạn [20,46) gửi lúc ' + at(2) + ': ' + list);
+    assert.ok(cov >= (S === 12 ? 8900 : 5950), tag + 'chỉ có sub ' + cov + ' ms trong 14 s sau khi tua: ' + list);
   }
 });
 

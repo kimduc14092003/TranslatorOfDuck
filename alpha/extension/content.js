@@ -683,14 +683,27 @@
   }
   // Lượt tải đầu video còn phục vụ được khoảng byte [.., b] (cùng mục lục; đã có tới đó, hay đang tải tới đó).
   const headServes = (v, media, b) => { const h = v.head; return !!h && h.media === media && b < h.end && (h.got > b || !h.closed); };
+  // Lượt tải đầu video bị ngắt giữa chừng (tua đi lúc nó còn chạy, vd. vào [10,20) ở chế độ first10), hay đã xong mà đoạn 0 hết
+  // cần (tua đi ngay sau đó), mà phần chính nó đã nhận (h.own) là phần đầu cửa sổ của một đoạn sau đang cần, chưa tải: giữ phần
+  // đó, đoạn đó chỉ tải phần còn thiếu bằng lượt mới (fetchBytes, part). Trước đây bỏ ngay, đoạn đó tải lại cả phần đã nhận (mô
+  // phỏng 3/11, 3 MB/s, tua tới giây 16 lúc 0,7 s: thừa 1,26 MB, gửi lúc 3,1 s). Không đọc tiếp chính lượt đó (đã thử, §6ae B3):
+  // lượt đầu bị máy chủ cho chậm riêng thì đoạn đó phải chờ nó. Lượt đã xong mà đoạn 0 còn cần thì như cũ (phát bình thường).
+  // Cửa sổ tính rộng nhất (gửi dư PRE_SEEK): giữ thừa chỉ tốn bộ nhớ tới khi đoạn đó tải xong.
+  const headReuse = (id, v, h) => !!h.media && (h.own < h.end || !wanted.has(id + ':0')) && !!v.plan && v.plan.some(([a, b], k) => {
+    if (k === 0 || !wanted.has(id + ':' + k)) return false;
+    const c = v.chunks.get(k);
+    if (c && c.status !== 'error' && !(c.status === 'pending' && !c.sent && !c.waiting)) return false;
+    const w = TodMp4.window(h.media, Math.max(0, a - PRE_SEEK), b);
+    return !!w && w.start < h.own;
+  });
   // Xét lại lượt tải đầu video: không còn ai cần thì ngắt; xong rồi mà đoạn 0 hết cần hay đã có kết quả thì bỏ phần đã
-  // nhận (giữ lại trong lúc đoạn 0 còn chờ: mẩu nhanh có thể tới sau, lấy từ đây khỏi tải lại).
+  // nhận (giữ lại trong lúc đoạn 0 còn chờ: mẩu nhanh có thể tới sau, lấy từ đây khỏi tải lại; hay headReuse).
   function headCheck(id, v) {
     const h = v.head;
     if (!h) return;
     if (!h.closed) { if (h.media && !(h.got < h.end && (h.waiters.size || headWanted(id)))) { h.stopped = true; h.ctl.abort(); } return; }
     const c = v.chunks.get(0);
-    if (!h.waiters.size && (!wanted.has(id + ':0') || (c && c.status !== 'pending'))) v.head = null;
+    if (!h.waiters.size && (!wanted.has(id + ':0') || (c && c.status !== 'pending')) && !headReuse(id, v, h)) v.head = null;
   }
   // Lượt tải đầu video chậm hẳn ngay từ đầu: q0 nay đi chung lượt đó nên cũng chậm, và dropSlow không còn lượt tải nhanh nào
   // để so (bản 0.2.25 tải q0 bằng lượt riêng; đo 1/11: q0 về nhanh mà lượt tải đoạn 0 mất ~25 s, cả hai tới cùng link CDN,
@@ -731,7 +744,7 @@
       const kick = () => { clearTimeout(idle); idle = setTimeout(stop, idleNow); };
       const whole = setTimeout(stop, 60000);
       const close = (e) => {
-        h.closed = true;
+        h.closed = true; h.own = h.got;
         // Đoạn và mẩu nhanh cùng chờ: đoạn tải sau khi mẩu nhanh tải xong phần của nó (tối đa QUICK_GATE_MAX), không song
         // song. Cổng quickGate của runQuick không dùng được: mẩu nhanh đã chờ trên lượt này quá 3 s thì nó đã tự mở.
         if ([...h.waiters].some((w) => !w.prog)) h.qGate = new Promise((r) => { h.qOpen = r; setTimeout(r, QUICK_GATE_MAX); });
