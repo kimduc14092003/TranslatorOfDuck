@@ -1288,6 +1288,16 @@ Chủ dự án chọn làm cả 4 hướng.
 - **Kiểm:** verifier soát (accept). Dựng lại mọi dạng `/health` mà `config()` trả về, chạy bản mới và bản cũ: chỉ ca `asr` null + `mt` openai đổi. Trường `asr` có từ commit đầu, nên server cũ không làm dòng mới báo sai. 6 bản đột biến đều bị test bắt. Đã theo góp ý: chữ nói rõ "sẽ không có sub", thêm ca chỉ có `DASHSCOPE_API_KEY`.
 - **Chưa làm (verifier, minor):** dán key OpenAI vào dòng `GEMINI_API_KEY` thì server dời nó sang OpenAI và xoá khỏi Gemini, popup lại báo "thiếu GEMINI_API_KEY" dù file có dòng đó; lời nhắc đổi tên dòng chỉ in ở cửa sổ server. e2e chỉ kiểm chữ `Server chạy`, nên không bắt được loại lỗi này (luôn có `DASHSCOPE_API_KEY`).
 
+## 6ah. Đo state khi lướt rất lâu (3/11, extension 0.2.40, mô phỏng, chưa sửa)
+
+- **Câu hỏi (rà soát ngoài, điểm B):** `items`, `orders`, `watched`, `vids` (`content.js:115-120`) không bao giờ bị xoá. Lướt lâu thì tốn bộ nhớ và làm chậm bước xếp lịch tải bao nhiêu?
+- **Cách đo:** content.js thật trong vm (môi trường của `content-sim-test`), lướt tới 8.000 video feed giả, cách 10 s, mỗi video xem 3 s hay 15 s, mọi đoạn có sub. Không mạng, không Douyin thật. Script để trong scratchpad, không vào repo.
+- **Đo được:**
+  - Bộ nhớ tăng đều theo số video, không có chỗ nào tăng vọt. Item cỡ thật (12 gear, có audio; dữ liệu S1: hầu hết item có 12 gear) tốn khoảng 26–35 KB mỗi video, trong đó URL của item chiếm hơn một nửa; sub chỉ khoảng 3 KB. Lướt 300–600 video/giờ trong một tab: khoảng 8–21 MB/giờ; tải lại tab thì mất hết. Mục lục video (`media`) giữ tối đa 20 video, không tăng theo số video.
+  - CPU: `schedule()` 0,58 ms ở 8.000 video (gần hết là `cancelUnwanted`), chạy mỗi ~250 ms. Khung hình thường 0,002 ms, không đổi. Nhận một trang API 10 video ≤ 5 ms.
+  - Verifier tìm thêm: `headLate` gọi `othersLoading` (quét mọi video, 0,45 ms ở 8.000) ở mỗi lượt đọc mạng của lượt tải đầu video sau giây đầu; ước tính 10–50 ms mỗi lần mở video ở 8.000 video (số lượt đọc chỉ suy luận).
+- **Kết luận:** chưa cần sửa. Nếu thêm giới hạn, phải giữ: video đang xem, các video `upcoming()` (cần `items` để tải), video có đoạn đang chờ hay đã gửi, `v.head` đang dùng lại, `watched` đi cùng `orders.feed`; và chấp nhận lướt ngược về video cũ thì tải âm thanh lại (server vẫn có cache). Cách rẻ nhất nếu cần: bỏ URL của item khi video đã xa (phần nặng nhất).
+
 ## 7. Việc tiếp theo trên Mac
 
 1. **Kiểm tra môi trường:** `node -v` (cần 18+), `git status`, đang ở nhánh `claude/busy-newton-1y8nzr`. Có `alpha/server/.env` chưa (chỉ kiểm có file, không đọc nội dung). File này không theo git: máy mới (kể cả máy Windows) cần tự tạo, chép từ `.env.example` rồi điền key. Popup ghi rõ dịch vụ nhận dạng và dịch đang dùng, hoặc key nào còn thiếu.
