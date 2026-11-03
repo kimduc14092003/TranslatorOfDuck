@@ -30,7 +30,7 @@ Extension Chromium (Chrome, Cốc Cốc) hiện **sub tiếng Việt cho video D
   - Test trên Douyin thật thì **chỉ vài video, lướt chậm như người thật**.
 - **Quyết định đã chốt** (PLAN §15):
   - Chỉ dịch **lời nói**, bỏ qua tiếng hát. Từ 31/10 chủ dự án muốn dịch cả lời bài hát: có nút trong popup, mặc định bật, dòng hát hiện "♪" (§6j).
-  - Khi không chắc thì nghiêng về bỏ qua. Nhưng chủ dự án đã phàn nàn vlog nói nhiều bị bỏ, xem mục 6.
+  - Khi không chắc thì nghiêng về bỏ qua. Nhưng chủ dự án đã phàn nàn vlog nói nhiều bị bỏ, xem mục 6. Từ 3/11: không mất câu. Không bỏ đoạn vì ít lời, không bỏ dòng vì còn chữ Hán; thà hiện dòng còn vài chữ gốc (§6ai, §6aj).
 
 ## 3. Đã đo được trên Douyin thật (S1, S3)
 
@@ -1345,6 +1345,8 @@ Chủ dự án chọn làm cả 4 hướng.
 - **Test:** `test.mjs` 23 (ca mới trượt trước khi sửa; một assert cũ ghi "mất cả đoạn" đổi theo hành vi mới); lyrics, mtfix, errors, queue, openai đạt. Verifier soát hai lượt (accept_with_fixes; sửa chú thích, bỏ luật dấu phẩy).
 
 ## 7. Việc tiếp theo trên Mac
+
+Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).
 
 1. **Kiểm tra môi trường:** `node -v` (cần 18+), `git status`, đang ở nhánh `claude/busy-newton-1y8nzr`. Có `alpha/server/.env` chưa (chỉ kiểm có file, không đọc nội dung). File này không theo git: máy mới (kể cả máy Windows) cần tự tạo, chép từ `.env.example` rồi điền key. Popup ghi rõ dịch vụ nhận dạng và dịch đang dùng, hoặc key nào còn thiếu.
 2. **Cài đặt:**

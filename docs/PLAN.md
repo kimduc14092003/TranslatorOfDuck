@@ -1,6 +1,7 @@
 # TranslatorOfDuck: Kế hoạch lõi (bản cuối)
 
 > **Ngày lập:** 2026-10-29. **Phạm vi v1:** feed Douyin web, Trung → Việt, extension Chromium MV3 (Chrome, Cốc Cốc), bán gói thuê bao, khóa ASR/LLM chỉ ở server.
+> **Từ 3/11/2026:** lộ trình và phạm vi phát triển xem [`ROADMAP.md`](ROADMAP.md); các quyết định của tài liệu này đã bị thay (bỏ qua tiếng hát, chọn nhà cung cấp rẻ nhất, bán thuê bao sớm) ghi ở đầu tài liệu đó.
 > **Quy ước:** **(giả định)** = số của nhóm, phải đo lại; **(cần kiểm chứng)** = nguồn thứ cấp, mâu thuẫn hoặc chưa đo. Chi phí quy đổi 27.000 đ/USD (giá bán Vietcombank ~26.490 đ + phí thẻ; giả định). Mô hình chi phí và mô phỏng: [`cost_model.py`](cost_model.py) (chạy `python3 docs/cost_model.py`). Đã sửa theo phản biện kỹ thuật (K) và kinh doanh (B), xem cuối bài.
 
 ## Tóm tắt nhanh (đọc trong 3 phút)
