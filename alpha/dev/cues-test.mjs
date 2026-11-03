@@ -48,4 +48,18 @@ t('tua tới trước (mới có đoạn sau), rồi đoạn trước xong: gộ
   assert.equal(onlyB[0].start, 655.271);          // không sửa vào cues gốc của đoạn
   assert.equal(b.cues[0].end, 659.091);
 });
+t('dòng nhiều chữ hơn đọc kịp (17 ký tự/giây): hiện lâu hơn vào quãng lặng, tối đa 1,5 s sau lúc dứt lời, không đè dòng kế; dòng đọc kịp giữ nguyên; đầu dòng không đổi; dòng chưa biết dòng kế thì không kéo dài', () => {
+  const long = 'x'.repeat(68);   // cần 4 s
+  // 'a\u0301': chữ á viết tách dấu (NFD), hai mã một ký tự hiển thị: đếm theo mã thì ra 68 (verifier 4/11).
+  const src = { cues: [C(10, 11.5, long), C(20, 21, 'ngắn'), C(30, 31, long), C(32, 33, 'B'), C(40, 41.2, 'a\u0301'.repeat(34)), C(50, 51, long)] };
+  const out = merge([src]);
+  assert.equal(out[5].end, 51.5, 'dòng cuối (chưa biết dòng kế) giữ nguyên');
+  assert.ok(Math.abs(out[0].end - 13) < 1e-6, 'tới se + 1,5 s: ' + out[0].end);   // cần tới 14 s
+  assert.equal(out[1].end, 21.5, 'dòng đọc kịp giữ nguyên');
+  assert.ok(Math.abs(out[2].end - (32 - 2 / 30)) < 1e-6, 'dừng trước dòng kế: ' + out[2].end);
+  assert.ok(Math.abs(out[4].end - 42) < 1e-6, 'đếm theo ký tự hiển thị (chữ có dấu là một ký tự): ' + out[4].end);
+  assert.deepEqual(Array.from(out, c => c.start), [10, 20, 30, 32, 40, 50]);
+  assert.equal(src.cues[0].end, 12, 'không sửa vào cues gốc của đoạn');
+  assert.equal(at(out, 12.8).vi, long);
+});
 console.log(`\n${n} kiểm tra đều đạt.`);

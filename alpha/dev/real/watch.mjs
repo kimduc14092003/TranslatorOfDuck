@@ -33,7 +33,9 @@ export async function watchVideo({ id, out, server = null, rate = 1, from = 0, t
       log('mạng giả lập', throttle, 'KB/s');
     }
     const t0 = Date.now();
-    await page.goto('https://www.douyin.com/jingxuan?modal_id=' + id, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch((e) => log('goto', e.message));
+    // waitUntil 'commit': bắt đầu chụp ngay khi trang bắt đầu tải. Đo 4/11: có lần trang mất ~30 s mới tới domcontentloaded
+    // trong khi video đã phát tới 28 s, nên mất 28 s đầu và số "sub đầu tiên" sai.
+    await page.goto('https://www.douyin.com/jingxuan?modal_id=' + id, { waitUntil: 'commit', timeout: 45000 }).catch((e) => log('goto', e.message));
     // seekAt: lúc ra lệnh tua; seeked: đã thấy chỗ đang xem ở gần from (trong 2 s).
     let seekAt = 0, seekTries = 0, seeked = !from, maxT = 0, lastT = -1, movedAt = Date.now(), dur = null, durSince = 0;
     while (Date.now() - t0 < maxMin * 60000) {

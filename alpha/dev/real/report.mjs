@@ -51,6 +51,8 @@ export function samplesScore(samples, cues, { from = 0 } = {}) {
   }
   const ready = startIdx >= 0 ? all.slice(startIdx).find((s) => ['ok', 'skipped'].includes(stateOf(s))) : null;
   r.ttfsMs = playAt != null && ready ? Math.max(0, Math.round(ready.at - playAt)) : null;
+  // Lần chụp đầu tiên đã ở quá 3 s (trang tải chậm, chưa kịp chụp thì video đã phát): không biết sub đầu ra lúc nào.
+  if (!from && all.length && all[0].t > 3) { r.lateStart = all[0].t; r.ttfsMs = null; }
   r.rate = S.length ? S[Math.floor(S.length / 2)].rate : null;
   return r;
 }
@@ -130,7 +132,7 @@ export function print(r) {
     `  Hiện đúng dòng: ${r.correct ?? '-'}% (${r.same}/${r.expected} lần chụp mỗi 0,25 s; trống ${r.blank}, khác dòng ${r.other}, sub thừa ${r.extra}), tốc độ ${r.rate ?? '-'}×${r.throttle ? `, mạng ${r.throttle} KB/s` : ''}`,
     `  Chờ dịch khi đang xem (sau 5 s đầu): ${r.waitRuns} lần (${r.waitSamples} lần chụp)`,
     `  Lỗi của ta: ${r.errorRuns} lần; lỗi phía Douyin: ${r.platformErrorRuns} lần`,
-    `  Sub đầu tiên${r.from ? ' sau khi tua' : ''}: ${r.ttfsMs == null ? '-' : (r.ttfsMs / 1000).toFixed(1) + ' s'}${r.watched ? `; đã xem ${mmss(r.watched[0])}–${mmss(r.watched[1])}` : ''}`,
+    `  Sub đầu tiên${r.from ? ' sau khi tua' : ''}: ${r.ttfsMs == null ? (r.lateStart ? `không đo được (bắt đầu chụp ở ${r.lateStart} s)` : '-') : (r.ttfsMs / 1000).toFixed(1) + ' s'}${r.watched ? `; đã xem ${mmss(r.watched[0])}–${mmss(r.watched[1])}` : ''}`,
     `  Tốc độ đọc: ${r.readingSpeed.within ?? '-'}% dòng ≤ ${r.readingSpeed.limit} ký tự/giây (${r.readingSpeed.cues} dòng, ${r.sung} dòng ♪)` +
       (r.condensedLater && r.condensedLater.lines ? `; rút gọn sau ${r.condensedLater.lines} dòng: hiện bản ngắn ${r.condensedLater.shownShort}, bản đầy đủ ${r.condensedLater.shownFull}` : ''),
     `  Yêu cầu dịch của video này bị huỷ: ${r.cancelled.length}${r.cancelled.length ? ' (' + r.cancelled.map((x) => `${x.span} sau ${(x.after / 1000).toFixed(1)} s`).join('; ') + ')' : ''}; của video dịch sẵn: ${r.cancelledOther}`,

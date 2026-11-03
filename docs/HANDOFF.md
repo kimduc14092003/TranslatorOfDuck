@@ -1422,6 +1422,21 @@ Chủ dự án chọn làm cả 4 hướng.
   - dòng vượt 1,0–1,1 lần mức không bao giờ được rút gọn (luật `too_long` là trên 1,1 lần), ví dụ 14 dòng ở video trên.
   - Hướng có thể thử (chưa làm): kéo dài thời gian hiện của dòng vào quãng lặng sau nó; gộp hai dòng ngắn liền nhau; hạ ngưỡng rút gọn về 1,0.
 
+## 6ao. Dòng khó đọc hiện lâu hơn vào quãng lặng sau lời (4/11, extension 0.2.43)
+
+- **Cách làm** (`cues.js`, cuối `merge`): dòng có nhiều chữ hơn đọc kịp (ký tự hiển thị / 17) được hiện lâu hơn, tối đa tới 1,5 s sau lúc dứt lời, và dừng 2 khung hình trước dòng kế. Đầu dòng không đổi, nên nhịp sub như cũ. Dòng chưa biết dòng kế (dòng cuối đã có: đoạn sau chưa dịch xong, dòng tạm đang tới) thì không kéo dài.
+- **Ước lượng trên cache hằng ngày** (307 video có kết quả, 4.411 dòng, chỉ đoạn 30 s): dòng đọc kịp từ 64,5% lên 66,4%. Có ích ở 51 video; 741 dòng được kéo dài. Số chỗ hai dòng chồng nhau không đổi (có từ trước).
+- **Đo trên Douyin thật** (lượt `linger-0411`, 2 video, 1×): 0 vế cần duyệt, 0 chờ, 0 lỗi; hiện đúng dòng 95,5% và 99,8%. So cùng bản dịch, bước ghép cũ và mới: 77,4% → 77,4% và 59,6% → 59,6% (bản đầy đủ), 83,9% → 83,9% và 66,7% → 66,7% (bản rút gọn). Hai video này không có dòng khó đọc nào có quãng lặng phía sau. Lượt đo chạy bằng bản trước khi bỏ kéo dài dòng chưa biết dòng kế; chấm lại bằng bản đã sửa.
+- **Soát:** verifier (accept_with_fixes). Đã sửa:
+  - dòng chưa biết dòng kế bị kéo dài đè lên lời mới, tới 1,5 s. Mô phỏng dòng tới dần: 32,6% dòng như vậy;
+  - test đếm ký tự dùng chữ á viết tách dấu (NFD), để phân biệt đếm theo ký tự hiển thị với đếm theo mã.
+- **Công cụ đo:** chấm lượt đo cũ (trước 0.2.43) bằng `cues.js` mới thì quãng kéo dài bị tính là "lẽ ra có sub", nên "hiện đúng dòng" của lượt cũ có thể thấp đi. Muốn so lượt cũ thì chấm bằng `cues.js` của bản đó.
+- **Công cụ đo, sửa thêm:** có lần trang Douyin mất ~30 s mới tải xong (domcontentloaded) trong khi video đã phát tới 28 s; số "sub đầu tiên" (28,3 s) là sai. `watch.mjs` nay bắt đầu chụp từ lúc trang bắt đầu tải (`waitUntil: 'commit'`, chưa chạy thật). `report.mjs` báo "không đo được" khi lần chụp đầu đã quá 3 s.
+- **Kết luận:** kéo dài chỉ giúp khoảng 2 điểm. Dòng khó đọc phần lớn nằm sát dòng kế. Trong cache có 1.588 dòng khó đọc trên 4.455 dòng; trung vị 6 chữ Hán mỗi giây.
+  - 507 dòng chỉ vượt mức tới 10%: luật rút gọn (trên 1,1 lần) không bao giờ đụng tới.
+  - Khoảng 384 dòng ghép được với dòng kề thành một dòng hai hàng mà vẫn đọc kịp; nhưng câu sau hiện trước khi người nói tới (lệch nhịp).
+  - Chờ chủ dự án chọn: hạ ngưỡng rút gọn về 1,0 (thêm lượt gọi dịch), hay ghép dòng kề (lệch nhịp), hay dừng ở đây.
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).
