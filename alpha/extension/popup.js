@@ -24,10 +24,12 @@ async function checkServer() {
     const asrDown = h.asr === 'funasr' && h.asrModels && !h.asrModel;
     const asr = h.asr !== 'funasr' ? 'Gemini' : asrDown ? 'hết hạn mức' + (h.asrModels.length > 1 ? ' (cả model dự phòng)' : '')
       : h.asrFallback ? `${h.asrModel} (Fun-ASR hết hạn mức)` : 'Fun-ASR';
-    $('health').className = ok && !asrDown ? 'ok' : 'bad';
-    $('health').textContent = ok
-      ? `Server chạy. Nhận dạng: ${asr}, dịch: ${h.mt === 'openai' ? 'OpenAI' : 'Gemini'}.`
-      : 'Server chạy nhưng thiếu OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env.';
+    const mt = h.mt === 'openai' ? 'OpenAI' : 'Gemini';
+    // Không có DASHSCOPE_API_KEY lẫn GEMINI_API_KEY thì asr là null (chỉ có OPENAI_API_KEY): trước đây vẫn ghi "Gemini".
+    $('health').className = ok && h.asr && !asrDown ? 'ok' : 'bad';
+    $('health').textContent = !ok ? 'Server chạy nhưng thiếu OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env.'
+      : !h.asr ? `Server chạy nhưng chưa nhận dạng được giọng nói (sẽ không có sub): thiếu DASHSCOPE_API_KEY (Fun-ASR) hoặc GEMINI_API_KEY trong alpha/server/.env. Dịch: ${mt}.`
+      : `Server chạy. Nhận dạng: ${asr}, dịch: ${mt}.`;
   } catch (_) {
     $('health').className = 'bad';
     // Server chạy cả trên Mac lẫn Windows (đang dùng trên Mac, HANDOFF §7): không chỉ nói PowerShell.

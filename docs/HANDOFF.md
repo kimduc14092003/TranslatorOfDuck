@@ -91,6 +91,7 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 | `node alpha/dev/mp4audio-test.mjs` | Cắt âm thanh từ mp4 thật do ffmpeg tạo, đúng mốc trong khoảng 15 ms; `headerEnd` trên phần đầu file đang tải dở (5 kiểm tra) |
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
 | `node alpha/dev/background-test.mjs` | background.js gửi `POST /v1/warm` (kiểu JSON) tới server trên máy, bỏ qua lỗi, chặn địa chỉ ngoài máy; trả lời NDJSON: dòng { partial } chuyển cho tab, dòng cuối là câu trả lời; `hello` trả bản, bằng version trong manifest; NDJSON thiếu dòng cuối thì báo lỗi rõ (5 kiểm tra) |
+| `node alpha/dev/popup-test.mjs` | Dòng trạng thái server trong popup với `/health` giả: dịch vụ nhận dạng và dịch đang dùng, model dự phòng, hết hạn mức, thiếu key nhận dạng khi chỉ có `OPENAI_API_KEY`, thiếu key dịch, chỉ có `DASHSCOPE_API_KEY`, không kết nối được (9 kiểm tra, §6ag) |
 | `node alpha/dev/tap-test.mjs` | tap.main.js đọc response API với Response thật (fetch, XHR): thân chia khúc của search/stream, thân hỏng, giữ thứ tự danh sách tìm kiếm khi search/single đọc xong trước (3 kiểm tra) |
 | `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua, đồng hồ trình phát lệch 50 s, CDN treo một lần, lời bài hát ♪, bấm ô tắt lời bài hát trong popup, video mở từ trang tìm kiếm, video đầu tải một lượt từ byte 0 , bảng xưng hô gửi lại cho đoạn sau, rê chuột thật vào nhãn thì hiện bảng thông tin, service worker đúng bản (31 kiểm tra). `E2E_MT=openai`: dịch bằng OpenAI giả trả SSE, có dòng tạm (32 kiểm tra). Mặc định chạy cách dịch sẵn 20–30 s; `E2E_FIRST10=1`: cách dịch sẵn 10 s, thêm ca phát liên tục (dòng đúng mốc, không "đang dịch" ở giây 8–16, cửa 4 s, dịch sẵn 12 s, lướt nhanh, cửa 1,5 s) (38 kiểm tra; 39 với `E2E_MT=openai`) (§6ae) |
 
@@ -1279,9 +1280,17 @@ Chủ dự án chọn làm cả 4 hướng.
 - **Kiểm:** verifier soát (accept). Mô phỏng 24 kịch bản (hai cách, tua 12–45 s, 503 ở lượt nối tiếp, lướt đi, tắt sub, file bị thay trên server): âm thanh gửi đi luôn đúng byte của file. Cách cũ không ca nào kém hơn 0.2.38. Phần giữ lại lớn nhất 6,5 MB (cách 10 s), 14 MB (cách cũ, một bước 50 ms).
   - Chỉ suy luận (verifier, F3): phép kiểm "file đã đổi" (`r.total !== media.total`) bị bỏ qua khi không biết cỡ file. Điều này có từ trước; giữ phần đã nhận lâu hơn làm khoảng hở này rộng hơn một chút.
 
+## 6ag. Popup ghi "Nhận dạng: Gemini" khi không có key nhận dạng (3/11, extension 0.2.40)
+
+- **Vấn đề:** chủ dự án chuyển sang máy Windows. `alpha/server/.env` không theo git, và file trên máy đó chỉ có `OPENAI_API_KEY`. Không có `DASHSCOPE_API_KEY` lẫn `GEMINI_API_KEY` thì `/health` trả `asr: null`, nhưng popup vẫn ghi "Nhận dạng: Gemini" (mọi giá trị khác `funasr` đều thành Gemini), màu xanh. Thật ra không đoạn nào nhận dạng được: mọi đoạn báo lỗi thiếu key.
+- **Sửa (`popup.js`):** `asr` null thì ghi "Server chạy nhưng chưa nhận dạng được giọng nói (sẽ không có sub): thiếu DASHSCOPE_API_KEY (Fun-ASR) hoặc GEMINI_API_KEY trong alpha/server/.env. Dịch: OpenAI.", màu lỗi. Các trường hợp khác giữ nguyên chữ.
+- **Test:** `alpha/dev/popup-test.mjs` (mới): chạy popup.js trong vm với `/health` giả theo các dạng `config()` trả về (9 kiểm tra). Trước khi sửa trượt đúng ca chỉ có `OPENAI_API_KEY`.
+- **Kiểm:** verifier soát (accept). Dựng lại mọi dạng `/health` mà `config()` trả về, chạy bản mới và bản cũ: chỉ ca `asr` null + `mt` openai đổi. Trường `asr` có từ commit đầu, nên server cũ không làm dòng mới báo sai. 6 bản đột biến đều bị test bắt. Đã theo góp ý: chữ nói rõ "sẽ không có sub", thêm ca chỉ có `DASHSCOPE_API_KEY`.
+- **Chưa làm (verifier, minor):** dán key OpenAI vào dòng `GEMINI_API_KEY` thì server dời nó sang OpenAI và xoá khỏi Gemini, popup lại báo "thiếu GEMINI_API_KEY" dù file có dòng đó; lời nhắc đổi tên dòng chỉ in ở cửa sổ server. e2e chỉ kiểm chữ `Server chạy`, nên không bắt được loại lỗi này (luôn có `DASHSCOPE_API_KEY`).
+
 ## 7. Việc tiếp theo trên Mac
 
-1. **Kiểm tra môi trường:** `node -v` (cần 18+), `git status`, đang ở nhánh `claude/busy-newton-1y8nzr`. Có `alpha/server/.env` chưa (chỉ kiểm có file, không đọc nội dung).
+1. **Kiểm tra môi trường:** `node -v` (cần 18+), `git status`, đang ở nhánh `claude/busy-newton-1y8nzr`. Có `alpha/server/.env` chưa (chỉ kiểm có file, không đọc nội dung). File này không theo git: máy mới (kể cả máy Windows) cần tự tạo, chép từ `.env.example` rồi điền key. Popup ghi rõ dịch vụ nhận dạng và dịch đang dùng, hoặc key nào còn thiếu.
 2. **Cài đặt:**
    ```bash
    cd alpha/server && npm install
