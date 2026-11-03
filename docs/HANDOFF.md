@@ -1365,7 +1365,7 @@ Chủ dự án chọn làm cả 4 hướng.
   | 7703023641964907827, tua tới 8:10–9:00 | 100% | 98% | 3,3 s sau khi tua | 100% |
 
   Cả bốn lượt: không chờ dịch, không lỗi, không vế nào cần duyệt.
-- **Phát hiện: tốc độ đọc thấp** (67–75% dòng ≤ 17 ký tự/giây; mốc M1 của PLAN §2 là 85%). Server chỉ rút gọn dòng dài khi đoạn không gấp, không dịch sẵn, không phải mẩu nhanh (`server.mjs`, `condense`), mà ở cách dịch sẵn 10 s gần như mọi đoạn đều gấp hay dịch sẵn (`content.js`, `urgentChunk`). Bỏ rút gọn ở các đoạn đó là quyết định ngày 2/11 để sub ra sớm hơn khoảng 2 s. Chờ chủ dự án chọn hướng.
+- **Phát hiện: tốc độ đọc thấp** (67–75% dòng ≤ 17 ký tự/giây; mốc M1 của PLAN §2 là 85%). Server chỉ rút gọn dòng dài khi đoạn không gấp, không dịch sẵn, không phải mẩu nhanh (`server.mjs`, `condense`), mà ở cách dịch sẵn 10 s gần như mọi đoạn đều gấp hay dịch sẵn (`content.js`, `urgentChunk`). Bỏ rút gọn ở các đoạn đó là quyết định ngày 2/11 để sub ra sớm hơn khoảng 2 s. Ngày 4/11 chủ dự án chọn giữ sub ra sớm (ROADMAP §6): không bật lại rút gọn ở các đoạn đó; chỉ làm cách nâng tốc độ đọc mà sub không ra chậm hơn.
 - **Quét cache hằng ngày** (`cache-scan.mjs`, 388 video bản alpha-8; bỏ qua 2 video có cả cách chia đoạn cũ): 54 chỗ cần duyệt.
   - 30 đoạn tiếng Anh bị bỏ "không phải tiếng Trung" (để giai đoạn 3); có ca đoạn tiếng Trung xen tiếng Anh bị bỏ cả đoạn (7669364984706649350, 170–200 s).
   - 17 vế mất ở bước chia câu hay cắt đoạn; 5 vế bỏ khi ghép sub (có thể chỉ do hai lượt nhận dạng nghe khác nhau, cần nghe lại).
