@@ -131,7 +131,10 @@ async function handleSubtitles(req, res) {
   const file = cacheFile(fileSpan, MT);
   const key = file;
   const otherFile = cacheFile(fileSpan, lyrics ? 'vi' : 'vi.lyr');
-  const ready = () => { const other = readCache(otherFile); return readCache(file) || (noSinging(other) ? other : null); };
+  // Kết quả bản cũ bỏ cả đoạn vì "quá ít lời" (dưới 4 chữ Hán), hay coi câu toàn kana, chữ Hàn là không có lời: làm lại.
+  const stale = (x) => x && x.status === 'skipped' && (x.label === 'too_short' || (x.label === 'no_speech' && /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(x.heard || '')));
+  const fresh = (f) => { const x = readCache(f); return stale(x) ? null : x; };
+  const ready = () => { const other = fresh(otherFile); return fresh(file) || (noSinging(other) ? other : null); };
   const fromCache = (x) => { const { debug: _d, ...c } = x; return { ...c, cached: true }; };
   // Bảng xưng hô trả cho request này (cả request nhập vào việc đang chạy của request khác, việc đó dịch với bảng của
   // request kia). Kết quả lấy từ cache mang bảng lúc nó được dịch, có thể cũ hơn bảng extension vừa gửi (tua lại đoạn đã
@@ -260,7 +263,7 @@ async function handleSubtitles(req, res) {
   try {
     const out = withPronouns(await job.promise);
     const t = out.timings || {};
-    const why = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch không ra dòng nào' };
+    const why = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', filler: 'chỉ có tiếng đệm', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch không ra dòng nào' };
     console.log(`${new Date().toLocaleTimeString()} ${id}${where} ${out.status}${out.label && out.status !== 'ok' ? ' (' + (why[out.label] || out.label) + ')' : ''}` +
       `${out.cues ? ' ' + out.cues.length + ' dòng' : ''}${chunked && meta.from > 0 && out.status === 'ok' && !out.cached ? ` (ngữ cảnh ${out.context || 0} dòng${out.contextFar ? ' ở đoạn xa' : ''}${out.before ? `, lời ngay trước ${out.before} câu` : ''})` : ''} · ${out.seconds ?? '-'} s âm thanh · ${out.sentences ?? 0} câu${!lyrics ? (out.song && out.status === 'ok' ? ', cả đoạn là bài hát: chỉ giữ câu nói' : `, ${out.sung ?? 0} câu hát bị bỏ`) : out.status === 'ok' ? `, ${out.cues.filter(c => c.sung).length} dòng hát được dịch` : ''}` +
       ` · âm thanh ${t.audioMs ?? '-'} ms, ASR ${out.asrCached ? 'dùng lại' : (t.asrMs ?? '-') + ' ms'}${out.asrModel ? ' (' + out.asrModel + ')' : ''}${out.cached ? '' : netInfo(out.debug?.net?.asr)}` +

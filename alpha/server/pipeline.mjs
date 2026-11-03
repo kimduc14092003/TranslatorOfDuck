@@ -68,6 +68,9 @@ function pct(arr, p) {
   return s[lo] + (s[Math.min(lo + 1, s.length - 1)] - s[lo]) * (i - lo);
 }
 const HAN = /\p{Script=Han}/gu;
+// Chữ của lời nói ngoài chữ Hán và chữ Latin: kana (thoại tiếng Nhật trong phim), chữ Hàn.
+const SPEECH_LETTER = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+const SPEECH_LETTERS = new RegExp(SPEECH_LETTER.source, 'gu');
 const normalize = (t) => Array.from(String(t).normalize('NFKC').toLowerCase().replace(/[\p{P}\p{S}\s]/gu, ''));
 
 // ---------------------------------------------------------------- tách âm thanh
@@ -548,6 +551,7 @@ export function classifySpeech(meta, r) {
   const text = (r && r.text) || '';
   const han = (text.match(HAN) || []).length;
   const latin = (text.match(/[A-Za-z]/g) || []).length;
+  const other = (text.match(SPEECH_LETTERS) || []).length;
   const words = (r && r.words) || [];
   const perChar = [];
   for (const w of words) {
@@ -556,15 +560,18 @@ export function classifySpeech(meta, r) {
   }
   const span = words.length ? words[words.length - 1].end - words[0].start : 0;
   const f = {
-    han, latinShare: han + latin ? round(latin / (han + latin), 2) : 0, medCharDur: round(pct(perChar, 0.5), 3),
+    // Kana, chữ Hàn tính cùng chữ Hán: câu tiếng Nhật ngắn có một từ tiếng Anh ("OKだ、行くぞ。") không phải lời tiếng Anh.
+    han, latinShare: han + other + latin ? round(latin / (han + other + latin), 2) : 0, medCharDur: round(pct(perChar, 0.5), 3),
     cps: span > 0 ? round(han / span, 1) : null,
     tagMusic: MUSIC_TAGS.test((meta.desc || '') + ' ' + (meta.hashtags || []).join(' ')),
     repeat: repeated(text, 4),
   };
+  // Không còn nhãn "quá ít lời" (dưới 4 chữ Hán thì bỏ cả đoạn): lời ngắn có thể là lời quan trọng (đo 3/11 trên Douyin
+  // thật: thoại tiếng Nhật 断る。帰れ。てめえ死にてえのか。 có 3 chữ Hán, mất cả ba câu). Không có lời chỉ khi không có chữ nào
+  // (Hán, kana, Hàn, Latin): trước đây câu toàn kana cũng bị coi là không có lời.
   let label;
-  if (!f.han && f.latinShare === 0) label = 'no_speech';
+  if (!f.han && f.latinShare === 0 && !SPEECH_LETTER.test(text)) label = 'no_speech';
   else if (f.latinShare > 0.5) label = 'not_zh';
-  else if (f.han < 4) label = 'too_short';
   else if (f.repeat && slowChars(f.medCharDur)) label = 'singing';
   else {
     const score = (f.medCharDur != null && f.medCharDur > 0.33 ? 2 : 0) + (f.tagMusic ? 1 : 0) + (f.cps != null && f.cps < 2.5 ? 1 : 0);
@@ -660,6 +667,7 @@ export function segmentCues(r) {
   const textOf = (ws) => ws.map(w => w.text).join('');
   const emit = (ws) => { if (ws.length && textOf(ws).trim()) cues.push({ start: ws[0].start, speechEnd: ws[ws.length - 1].end, zh: textOf(ws) }); };
   const cutPoint = (ws) => {
+    if (ws.length < 2) return ws.length;   // một từ: trước đây đọc ws[-1] và báo lỗi (verifier 3/11)
     for (let k = ws.length - 2; k >= 1; k--) if (/[，、,：:]$/.test(ws[k].text)) return k + 1;
     let best = -1, gap = -1;
     for (let k = Math.floor(ws.length / 2); k < ws.length; k++) {
@@ -684,6 +692,14 @@ export function segmentCues(r) {
     else if (/[，、,：:]$/.test(w.text) && (dur >= 3.5 || hanOf(textOf(cur)) >= 12)) { emit(cur); cur = []; }
   }
   emit(cur);
+  // Dòng ít chữ mà ASR cho kéo dài rất lâu (một từ そう。 tới hết 25 s âm thanh, verifier 3/11): trước đây đứng trên màn
+  // hình cả 25 s. Cắt theo số chữ (~0,8 s mỗi chữ + 1 s, ít nhất 2,5 s), chỉ khi dài quá 7,5 s (độ dài tối đa của dòng
+  // chia được) và quá mức đó; câu dài nhiều chữ chỉ có mốc cả câu (Gemini) giữ nguyên. Cắt trước bước gộp dòng ngắn:
+  // "爱" + "你。" kéo dài 9 s được gộp lại thành một dòng (verifier 3/11).
+  for (const c of cues) {
+    const fit = Math.max(2.5, 0.8 * (c.zh.match(/\p{L}/gu) || []).length + 1);
+    if (c.speechEnd - c.start > Math.max(7.5, fit)) c.speechEnd = c.start + fit;
+  }
   for (let i = 0; i < cues.length - 1; i++) {
     const a = cues[i], b = cues[i + 1];
     if (a.speechEnd - a.start < 0.833 && b.start - a.speechEnd < 0.5 && b.speechEnd - a.start <= 7 && hanOf(a.zh + b.zh) <= 16) {
@@ -912,17 +928,23 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   if (opts.lyrics) {
     // Chế độ lời bài hát: không bỏ câu hát, đánh dấu để hiện "♪".
     cues = lyricCues(asr, { ...cls, label: song ? 'singing' : 'speech' }, split);
-    if (!cues.length) return skip(song ? 'singing' : 'too_short');
+    // Không còn dòng nào: chỉ có tiếng đệm (yeah yeah), hay dòng hát chỉ có tiếng đệm (啦啦啦).
+    if (!cues.length) return skip(song || split.sung ? 'singing' : 'no_speech');
   } else if (song) {
     // Đoạn cả bài bị bỏ, trừ đúng các dòng chế độ lời bài hát hiện không có ♪ (câu nói nhanh), để hai chế độ khớp nhau.
     cues = lyricCues(asr, { ...cls, label: 'singing' }, split).filter(c => !c.sung).map(({ sung: _s, ...c }) => c);
     if ((cues.map(c => c.zh).join('').match(HAN) || []).length < 4) return skip('singing');
   } else {
-    if (((split.r.text || '').match(HAN) || []).length < 4) return skip('singing');
     // Dòng chỉ có tiếng đệm chữ Latin ("yeah yeah") bỏ như ở chế độ lời bài hát: đoạn không có câu hát thì hai chế độ
     // dùng chung một kết quả (noSinging ở server.mjs), nên phải ra cùng các dòng.
     cues = segmentCues(split.r).filter(c => /\p{Script=Han}/u.test(c.zh) || !isFiller(c.zh));
+    // Bỏ câu hát rồi không còn dòng lời nói nào. Trước đây phần lời nói dưới 4 chữ Hán cũng bỏ cả đoạn: mất câu nói ngắn.
+    if (!cues.length) return skip(split.sung ? 'singing' : 'no_speech');
   }
+  // Đoạn chỉ có tiếng đệm (嗯。, 啊。; verifier 3/11: 12 trên 20 đoạn "quá ít lời" cũ trong cache, ASR nghe ~0,6 s, thường lúc
+  // đầu video có nhạc): không dịch thành "Ừm.". Đoạn có lời thật thì giữ cả dòng tiếng đệm như trước. Nhãn riêng, không phải
+  // no_speech: server.mjs làm lại kết quả no_speech có chữ Hán.
+  if (!song && cues.every(c => isFiller(c.zh))) return skip('filler');
   // opts.context có thể là hàm: server chờ đoạn trước (đang chạy) dịch xong rồi mới lấy ngữ cảnh. Trả về mảng dòng,
   // hoặc { lines, far, pronouns } (far: lấy từ đoạn đã dịch gần nhất phía trước, không phải đoạn liền trước; pronouns:
   // bảng xưng hô trong file cache của đoạn đó).

@@ -3,7 +3,8 @@
 // 14 s là điệp khúc câu ngắn "我爱你。" ×4 (cả đoạn là bài hát mà không câu nào đủ 4 chữ để tự tính là câu hát), 30 s là
 // lời nói kèm một câu "yeah yeah" nói nhanh, 18 s là bài hát mở đầu bằng một câu nói nhanh (người hát rong hỏi người qua
 // đường), 34 s là câu nói nhanh rồi điệp khúc câu ngắn "我爱你。" ×4, 38 s là bài hát có câu nói ngắn bị gộp vào dòng hát và
-// một câu nói dài, 42 s là bài hát chỉ có câu nói 3 chữ. Dòng hát "我爱你" được dịch rất dài để có lượt rút gọn.
+// một câu nói dài, 42 s là bài hát chỉ có câu nói 3 chữ, 46 s là thoại tiếng Nhật chỉ có 3 chữ Hán, 50 s là một câu toàn
+// kana, 54 s là một câu một chữ Hán, 58 s chỉ có tiếng đệm 嗯。. Dòng hát "我爱你" được dịch rất dài để có lượt rút gọn.
 //   Chạy: node dev/lyrics-test.mjs
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
@@ -44,6 +45,11 @@ const MERGE_TALK = [...chars('大家好吗。', 0.5, 0.18), ...chars('月亮代�
   ...chars('轻轻的一个吻。', 9.5, 0.5), ...chars('深深的一段情。', 13.5, 0.5)];
 // Câu nói nhanh duy nhất chỉ có 3 chữ: chế độ lời bài hát hiện nó không có ♪, chế độ thường bỏ cả đoạn (dưới 4 chữ Hán).
 const SHORT_TALK = [...chars('你好吗。', 0.5, 0.18), ...chars('月亮代表我的心。', 2.5, 0.5), ...chars('轻轻的一个吻。', 7, 0.5)];
+// Lời nói ngắn (đo 3/11 trên Douyin thật: thoại tiếng Nhật trong phim bị bỏ cả đoạn vì dưới 4 chữ Hán, nhãn "quá ít lời").
+const JA_SHORT = [...chars('断る。', 1.8, 0.4), ...chars('帰れ。', 4, 0.3), ...chars('てめえ死にてえのか。', 5.4, 0.2)];
+const KANA_ONLY = chars('そうだね。', 2, 0.25);
+const ONE_HAN = chars('好。', 3, 0.4);
+const FILLER_ONLY = chars('嗯。', 1, 0.6);
 const sentence = (words) => ({ begin_time: words[0].begin_time, end_time: words.at(-1).end_time, text: words.map(w => w.text + w.punctuation).join(''), words });
 
 let asrCalls = 0, asrDelay = 0;
@@ -58,7 +64,7 @@ const providers = http.createServer((req, res) => {
       if (asrDelay) await new Promise(r => setTimeout(r, asrDelay));
       const b64 = JSON.parse(body).input.messages[0].content[0].input_audio.data;
       const seconds = Math.round((Buffer.from(b64.split(',')[1], 'base64').length * 8) / 48000);
-      const words = seconds < 17 ? CHORUS : seconds < 20 ? SONG_TALK : seconds < 24 ? SONG : seconds < 28 ? SPEECH : seconds < 32 ? SPEECH_YEAH : seconds < 36 ? CHORUS_TALK : seconds < 40 ? MERGE_TALK : SHORT_TALK;
+      const words = seconds < 17 ? CHORUS : seconds < 20 ? SONG_TALK : seconds < 24 ? SONG : seconds < 28 ? SPEECH : seconds < 32 ? SPEECH_YEAH : seconds < 36 ? CHORUS_TALK : seconds < 40 ? MERGE_TALK : seconds < 44 ? SHORT_TALK : seconds < 48 ? JA_SHORT : seconds < 52 ? KANA_ONLY : seconds < 56 ? ONE_HAN : FILLER_ONLY;
       return json({ output: { sentence: sentence(words), text: sentence(words).text } });
     }
     if (req.url.endsWith('/v1/chat/completions')) {
@@ -86,9 +92,11 @@ server.stdout.on('data', d => { log += d; });
 server.stderr.on('data', d => { log += d; });
 while (!/Alpha server/.test(log)) await new Promise(r => setTimeout(r, 50));
 
-const song = aac(22), speech = aac(26), chorus = aac(14), yeah = aac(30), songTalk = aac(18), chorusTalk = aac(34), mergeTalk = aac(38), shortTalk = aac(42);
+const song = aac(22), speech = aac(26), chorus = aac(14), yeah = aac(30), songTalk = aac(18), chorusTalk = aac(34), mergeTalk = aac(38), shortTalk = aac(42), jaShort = aac(46), kanaOnly = aac(50), oneHan = aac(54), fillerOnly = aac(58);
 const ID = new Map([[song, '7500000000000000081'], [speech, '7500000000000000082'], [chorus, '7500000000000000083'], [yeah, '7500000000000000086'],
-  [songTalk, '7500000000000000089'], [chorusTalk, '7500000000000000090'], [mergeTalk, '7500000000000000091'], [shortTalk, '7500000000000000092']]);
+  [songTalk, '7500000000000000089'], [chorusTalk, '7500000000000000090'], [mergeTalk, '7500000000000000091'], [shortTalk, '7500000000000000092'],
+  [jaShort, '7500000000000000093'], [kanaOnly, '7500000000000000094'], [oneHan, '7500000000000000095'],
+  [fillerOnly, '7500000000000000097']]);
 const post = (audio, lyrics, extra = {}) => fetch(`http://127.0.0.1:${port}/v1/subtitles`, { method: 'POST', headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ id: ID.get(audio), from: 0, to: 30, audioStart: 0, urgent: true, lyrics, aac: audio, ...extra }) }).then(r => r.json());
 const files = () => fs.readdirSync(path.join(WORK, 'cache')).sort();
@@ -224,6 +232,39 @@ try {
   t('đoạn cả bài chỉ có câu nói 3 chữ: chế độ lời bài hát hiện câu đó không có ♪, chế độ thường bỏ cả đoạn', () => {
     assert.deepEqual(sh1.cues.map(c => [c.zh, !!c.sung]), [['你好吗。', false], ['月亮代表我的心。', true], ['轻轻的一个吻。', true]]);
     assert.equal(sh2.status, 'skipped', JSON.stringify(sh2)); assert.equal(sh2.label, 'singing');
+  });
+  // Lời nói ngắn: không bỏ đoạn vì "quá ít lời", ở cả hai chế độ (không có câu hát nên hai chế độ dùng chung kết quả).
+  const ja1 = await post(jaShort, true), ja2 = await post(jaShort, false);
+  t('thoại tiếng Nhật chỉ có 3 chữ Hán: dịch cả ba câu ở cả hai chế độ', () => {
+    assert.equal(ja1.status, 'ok', JSON.stringify(ja1));
+    assert.deepEqual(ja1.cues.map(c => c.zh).join(''), '断る。帰れ。てめえ死にてえのか。');
+    assert.equal(ja2.status, 'ok', JSON.stringify(ja2)); assert.deepEqual(ja2.cues, ja1.cues);
+  });
+  const ka = await post(kanaOnly, true), ka2 = await post(kanaOnly, false), one = await post(oneHan, false), one2 = await post(oneHan, true);
+  t('câu toàn kana và câu một chữ Hán vẫn có sub, ở cả hai chế độ', () => {
+    assert.equal(ka.status, 'ok', JSON.stringify(ka)); assert.deepEqual(ka.cues.map(c => c.zh), ['そうだね。']);
+    assert.equal(ka2.status, 'ok', JSON.stringify(ka2));
+    assert.equal(one.status, 'ok', JSON.stringify(one)); assert.deepEqual(one.cues.map(c => c.zh), ['好。']);
+    assert.equal(one2.status, 'ok', JSON.stringify(one2));
+  });
+  // Đoạn chỉ có tiếng đệm (verifier 3/11: 12 trên 20 đoạn "quá ít lời" cũ trong cache chỉ có 嗯/啊): không dịch, không hiện
+  // "Ừm."; lần sau lấy từ cache, không làm lại.
+  const mtF = mtBodies.length;
+  const f1 = await post(fillerOnly, true), f2 = await post(fillerOnly, false), f3 = await post(fillerOnly, true);
+  t('đoạn chỉ có tiếng đệm 嗯: bỏ qua ở cả hai chế độ, không gọi dịch, lần sau lấy từ cache', () => {
+    assert.equal(f1.status, 'skipped', JSON.stringify(f1)); assert.equal(f1.label, 'filler');
+    assert.equal(f2.status, 'skipped'); assert.equal(f2.label, 'filler');
+    assert.equal(f3.cached, true); assert.equal(mtBodies.length, mtF);
+  });
+  // Kết quả "quá ít lời" của bản cũ đã nằm trong cache (vd. đoạn 8:20 của video đo 3/11): làm lại, không trả kết quả cũ.
+  const OLD = '7500000000000000096';
+  for (const mt of ['vi', 'vi.lyr']) fs.writeFileSync(path.join(WORK, 'cache', `${OLD}.0-30.${mt}.alpha-8.json`),
+    JSON.stringify({ id: OLD, from: 0, to: 30, status: 'skipped', label: 'too_short', asr: 'funasr', seconds: 46, heard: '断る。帰れ。', sung: 0, sentences: 3 }));
+  const asrOld = asrCalls;
+  const redo = await post(jaShort, true, { id: OLD });
+  t('cache cũ ghi "quá ít lời": làm lại đoạn đó, có sub', () => {
+    assert.equal(redo.status, 'ok', JSON.stringify(redo)); assert.ok(!redo.cached);
+    assert.equal(asrCalls, asrOld + 1);
   });
 } finally {
   server.kill(); providers.close();

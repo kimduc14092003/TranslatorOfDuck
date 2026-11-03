@@ -1365,7 +1365,7 @@
     ok: ['#2ecc71', 'VI'],
   };
   const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, '0')}`;
-  const SKIP_WHY = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch lỗi' };
+  const SKIP_WHY = { no_speech: 'không nghe thấy lời', too_short: 'quá ít lời', filler: 'chỉ có tiếng đệm', not_zh: 'không phải tiếng Trung', singing: 'bài hát', untranslated: 'dịch lỗi' };
   // ---- Rê chuột vào nhãn: bảng thông tin đã dịch của video đang xem (infoText), cập nhật 4 lần/giây. Lớp phủ vẫn không
   // nhận chuột (pointer-events: none), chỉ đọc vị trí chuột: click vẫn tới trang Douyin bên dưới nhãn.
   let infoOpen = false, infoAt = 0, infoId = null, mouseX = -1, mouseY = -1;

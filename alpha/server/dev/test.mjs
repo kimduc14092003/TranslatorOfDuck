@@ -42,6 +42,30 @@ t('nhận ra lời nói / tiếng hát / không có lời', () => {
   assert.equal(classifySpeech({ desc: '#翻唱' }, song).label, 'singing');
   assert.equal(classifySpeech({}, { text: '', words: [] }).label, 'no_speech');
 });
+// Trước đây dưới 4 chữ Hán là "quá ít lời", bỏ cả đoạn (đo 3/11 trên Douyin thật: thoại tiếng Nhật 断る。帰れ。てめえ死にてえのか。
+// chỉ có 3 chữ Hán, mất cả ba câu). Lời ngắn có thể là lời quan trọng: vẫn dịch. Chỉ không có chữ nào mới là không có lời.
+t('lời rất ngắn, lời toàn kana hay chữ Hàn vẫn là lời nói; chỉ dấu câu là không có lời', () => {
+  const w = (text, per = 0.2) => ({ text, words: Array.from(text.replace(/[。，！？]/g, '')).map((c, i) => W(c, i * per, i * per + per - 0.02)) });
+  assert.equal(classifySpeech({}, w('好。')).label, 'speech');
+  assert.equal(classifySpeech({}, w('断る。帰れ。てめえ死にてえのか。')).label, 'speech');
+  assert.equal(classifySpeech({}, w('そう。')).label, 'speech');
+  assert.equal(classifySpeech({}, w('사랑해요.')).label, 'speech');
+  assert.equal(classifySpeech({}, { text: '。', words: [] }).label, 'no_speech');
+  // Một từ tiếng Anh trong câu tiếng Nhật, tiếng Hàn ngắn: vẫn là lời nói, không phải "không phải tiếng Trung".
+  assert.equal(classifySpeech({}, w('OKだ、行くぞ。')).label, 'speech');
+  assert.equal(classifySpeech({}, w('사랑해요, 진짜 baby.')).label, 'speech');
+});
+// Lời ngắn tới được segmentCues nhiều hơn (verifier 3/11): một chữ mà ASR cho kéo dài tới cuối âm thanh (そう。 25 s), và
+// dòng một từ rồi một từ dài quá 7 s (cutPoint đọc ws[-1], đoạn báo lỗi mãi).
+t('dòng ít chữ mà ASR cho kéo dài quá lâu: không đứng trên màn hình hàng chục giây; dòng một từ không làm lỗi', () => {
+  const [c] = segmentCues({ words: [W('そう。', 510.9, 536.0)] });
+  assert.ok(c.end - c.start <= 3.5 && c.se - c.start <= 3, JSON.stringify(c));
+  assert.doesNotThrow(() => segmentCues({ words: [W('そ', 0, 1), W('う', 1.1, 9)] }));
+  assert.deepEqual(segmentCues({ words: [W('爱', 0, 0.5), W('你。', 0.55, 9)] }).map(c => c.zh), ['爱你。']);
+  // Câu dài nhiều chữ mà ASR chỉ có mốc cả câu (Gemini): giữ nguyên.
+  const [g] = segmentCues({ segments: [{ start: 0, end: 10, text: '我们今天一起去那个很远的地方看看风景然后再回来吃饭睡觉。' }] });
+  assert.ok(g.se >= 10, JSON.stringify(g));
+});
 t('vlog có một câu hát: chỉ bỏ câu hát, giữ câu nói', () => {
   const talk1 = Array.from('今天我们来到了稻城亚丁').map((c, i) => W(c, 0.2 + i * 0.2, 0.38 + i * 0.2));
   const sing = Array.from('自由是逃离这全世界').map((c, i) => W(c, 5 + i * 0.6, 5.55 + i * 0.6));
