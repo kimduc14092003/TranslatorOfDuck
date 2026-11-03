@@ -1,0 +1,18 @@
+{
+  "note": "Bộ video thử của giai đoạn 0 (docs/ROADMAP.md §4). Chỉ ghi id và thể loại, không ghi nội dung. from/to: tua tới và xem tới giây đó. Chờ chủ dự án duyệt. Còn thiếu một video ngắn dưới 15 s.",
+  "videos": [
+    { "id": "7703023641964907827", "kind": "phim ngắn dài 21:42, hội thoại", "to": 180 },
+    { "id": "7703023641964907827", "kind": "cùng phim, tua tới đoạn thoại tiếng Nhật 8:20", "from": 490, "to": 540 },
+    { "id": "7701192992614370560", "kind": "vlog nói nhanh, tên riêng, 4:42", "to": 180 },
+    { "id": "7696833663460553073", "kind": "tiểu phẩm gia đình nói nhanh, chơi chữ, 1:38" },
+    { "id": "7677880211542740230", "kind": "bình luận game nói liên tục, 11:52", "to": 180 },
+    { "id": "7675802139846823177", "kind": "livestream game, 3:13" },
+    { "id": "7679435904670256419", "kind": "giới thiệu bài hát, xen đoạn hát, 4:49", "to": 180 },
+    { "id": "7518362235144998203", "kind": "hát rong xen nói chuyện, 1:22" },
+    { "id": "7546253226339028284", "kind": "gần như toàn bài hát, 1:03" },
+    { "id": "7675579923955846410", "kind": "vlog 9:09", "to": 120 },
+    { "id": "7672279659249290548", "kind": "kể chuyện, 2:44" },
+    { "id": "7699966439993675034", "kind": "tiếng Trung xen tiếng Anh, thời lượng chưa đo", "to": 120 },
+    { "id": "7681279162377061563", "kind": "tiếng Anh, thời lượng chưa đo (hiện bị bỏ: không phải tiếng Trung)", "to": 120 }
+  ]
+}

@@ -16,6 +16,8 @@ const CACHE = path.join(process.env.TOD_WORK || path.join(HERE, 'work'), 'cache'
 const MAX_BODY = 40 * 1024 * 1024;
 // Lướt nhanh: video đang xem + 4 video dịch sẵn + đoạn kế cùng chờ; 2 việc một lúc thì video thứ 3 trở đi không kịp.
 const MAX_PARALLEL = Number(process.env.MAX_PARALLEL) || 4;
+// Server đo của alpha/dev/real: giữ file nhận dạng (kèm vị trí âm thanh, mô tả) để chạy lại offline; server hằng ngày thì không.
+const KEEP_ASR = process.env.TOD_KEEP_ASR === '1';
 fs.mkdirSync(CACHE, { recursive: true });
 
 // Tối đa MAX_PARALLEL đoạn xử lý cùng lúc; cùng một đoạn thì dùng chung một lần xử lý (inflight).
@@ -205,10 +207,13 @@ async function handleSubtitles(req, res) {
     // Kết quả nhận dạng giọng nói giữ theo mã băm âm thanh (cùng đoạn mà gửi dư khác nhau thì âm thanh, mốc thời gian
     // khác nhau): dịch lỗi rồi extension gửi lại thì không trả tiền ASR lần nữa. Có kết quả cuối thì xoá, trừ đoạn có câu
     // hát (cùng điều kiện noSinging): đổi chế độ lời bài hát thì đoạn đó phải làm lại, giữ ASR để khỏi trả tiền lần nữa.
+    // TOD_KEEP_ASR=1 (chỉ server đo của alpha/dev/real): giữ lại cả file này để chạy lại offline bước chia câu, chia đoạn, ghép sub;
+    // công cụ đo xoá cả thư mục khi xong lượt đo. window: vị trí âm thanh trong video và mô tả, hashtag (classifySpeech
+    // dùng hashtag nhạc), để chạy lại đúng như lúc đó.
     const asrFile = cacheFile(fileSpan, 'asr.' + crypto.createHash('sha1').update(buf).digest('hex').slice(0, 16));
     const asrCache = {
       load: () => { const x = readCache(asrFile); return x && typeof x.seconds === 'number' && x.asr && Array.isArray(x.asr.segments) ? x : null; },
-      save: (x) => writeCache(asrFile, x),
+      save: (x) => writeCache(asrFile, KEEP_ASR && chunked ? { ...x, window: { audioStart: meta.audioStart, from: meta.from, to: meta.to, quick, desc: meta.desc || '', hashtags: meta.hashtags || [] } } : x),
     };
     job = submit(key, meta.urgent, meta.rank, async (signal) => {
       // Lúc tới lượt chạy, đoạn này có thể đã có kết quả: việc của chế độ kia cho cùng đoạn vừa xong mà không có câu hát
@@ -227,7 +232,7 @@ async function handleSubtitles(req, res) {
       // Lỗi (kể cả không chạy được ffmpeg) thì báo 'error' qua catch bên dưới, không bao giờ cache.
       if (r.status !== 'error' && r.label !== 'untranslated') {
         writeCache(file, out);
-        if (noSinging(out)) try { fs.rmSync(asrFile, { force: true }); } catch (_) { /* file nhỏ, để lại cũng được */ }
+        if (noSinging(out) && !KEEP_ASR) try { fs.rmSync(asrFile, { force: true }); } catch (_) { /* file nhỏ, để lại cũng được */ }
       }
       return out;
     });
@@ -336,7 +341,7 @@ server.listen(PORT, HOST, () => {
   // Báo tên biến (không bao giờ in giá trị) để tìm lỗi gõ sai tên trong .env.
   const KNOWN = ['OPENAI_API_KEY', 'OPENAI_MODEL', 'OPENAI_BASE', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_BASE', 'DASHSCOPE_API_KEY',
     'DASHSCOPE_BASE', 'FUNASR_MODEL', 'ASR_FALLBACK_MODEL', 'ASR_QUOTA_RETRY_MS', 'OPENAI_REASONING_EFFORT', 'MAX_PARALLEL', 'FFMPEG',
-    'HOST', 'PORT', 'MAX_SECONDS', 'TOD_DUMP', 'TOD_WORK', 'MT_TIMEOUT_MS'];
+    'HOST', 'PORT', 'MAX_SECONDS', 'TOD_DUMP', 'TOD_WORK', 'TOD_KEEP_ASR', 'MT_TIMEOUT_MS'];
   const odd = dotEnvInfo.names.filter(n => !KNOWN.includes(n));
   if (odd.length) console.log(`  → .env có biến server không dùng: ${odd.join(', ')}. Tên key đúng: OPENAI_API_KEY, GEMINI_API_KEY, DASHSCOPE_API_KEY.`);
   if (misplacedOpenAIKey) console.log(`  → ${misplacedOpenAIKey} có dạng key OpenAI: đang dùng nó để dịch bằng OpenAI. Nên đổi tên dòng đó thành OPENAI_API_KEY.`);

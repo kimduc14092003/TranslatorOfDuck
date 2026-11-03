@@ -954,6 +954,46 @@ export async function translate(meta, cues, context = [], signal, { far = false,
 }
 
 // ---------------------------------------------------------------- toàn bộ
+// Từ kết quả nhận dạng của một đoạn tới các dòng gốc chưa dịch: cắt theo đoạn, nói hay hát, chia dòng, bỏ đoạn chỉ có
+// tiếng đệm. Tách khỏi makeSubtitles để alpha/dev/real/replay.mjs chạy lại offline đúng như server, khỏi gọi dịch.
+// Trả { asr (đã cắt theo đoạn), before, cls, split, song, cues }, hoặc { ..., skip: nhãn } khi bỏ qua cả đoạn.
+export function cuesFromAsr(meta, asr, opts = {}) {
+  // Âm thanh gửi dư trước đoạn ≥ 4 s: extension báo đoạn trước chưa dịch (vừa tua tới). Lấy lời nói phần đó làm
+  // mạch câu cho bước dịch, và giữ câu vắt qua đầu đoạn.
+  const preRoll = opts.from != null && opts.from - (opts.offset || 0) >= 4;
+  const before = preRoll ? speechBefore(asr, opts.offset || 0, opts.from) : [];
+  if (opts.from != null) asr = windowAsr(asr, opts.offset || 0, opts.from, opts.to, preRoll);
+  const cls = classifySpeech(meta, asr);
+  const split = splitSung(asr);
+  // Cả đoạn là bài hát khi: lặp lời, hoặc quá nửa số câu là câu hát, hoặc chữ kéo dài kèm hashtag nhạc.
+  // Hashtag nhạc cộng nói thưa (vlog có nhạc nền, nhiều khoảng lặng) thì không đủ: chỉ lọc từng câu.
+  const song = cls.label === 'singing' && ((cls.repeat && slowChars(cls.medCharDur)) || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33));
+  const out = { asr, before, cls, split, song };
+  if (cls.label !== 'speech' && cls.label !== 'singing') return { ...out, skip: cls.label };
+  let cues;
+  if (opts.lyrics) {
+    // Chế độ lời bài hát: không bỏ câu hát, đánh dấu để hiện "♪".
+    cues = lyricCues(asr, { ...cls, label: song ? 'singing' : 'speech' }, split);
+    // Không còn dòng nào: chỉ có tiếng đệm (yeah yeah), hay dòng hát chỉ có tiếng đệm (啦啦啦).
+    if (!cues.length) return { ...out, skip: song || split.sung ? 'singing' : 'no_speech' };
+  } else if (song) {
+    // Đoạn cả bài bị bỏ, trừ đúng các dòng chế độ lời bài hát hiện không có ♪ (câu nói nhanh), để hai chế độ khớp nhau.
+    cues = lyricCues(asr, { ...cls, label: 'singing' }, split).filter(c => !c.sung).map(({ sung: _s, ...c }) => c);
+    if ((cues.map(c => c.zh).join('').match(HAN) || []).length < 4) return { ...out, skip: 'singing' };
+  } else {
+    // Dòng chỉ có tiếng đệm chữ Latin ("yeah yeah") bỏ như ở chế độ lời bài hát: đoạn không có câu hát thì hai chế độ
+    // dùng chung một kết quả (noSinging ở server.mjs), nên phải ra cùng các dòng.
+    cues = segmentCues(split.r).filter(c => /\p{Script=Han}/u.test(c.zh) || !isFiller(c.zh));
+    // Bỏ câu hát rồi không còn dòng lời nói nào. Trước đây phần lời nói dưới 4 chữ Hán cũng bỏ cả đoạn: mất câu nói ngắn.
+    if (!cues.length) return { ...out, skip: split.sung ? 'singing' : 'no_speech' };
+  }
+  // Đoạn chỉ có tiếng đệm (嗯。, 啊。; verifier 3/11: 12 trên 20 đoạn "quá ít lời" cũ trong cache, ASR nghe ~0,6 s, thường lúc
+  // đầu video có nhạc): không dịch thành "Ừm.". Đoạn có lời thật thì giữ cả dòng tiếng đệm như trước. Nhãn riêng, không phải
+  // no_speech: server.mjs làm lại kết quả no_speech có chữ Hán.
+  if (!song && cues.every(c => isFiller(c.zh))) return { ...out, skip: 'filler' };
+  return { ...out, cues };
+}
+
 // opts (video dài, từng đoạn): { kind: 'aac', offset: giây bắt đầu của âm thanh, from, to, context }; signal: huỷ giữa chừng.
 // opts.asrCache { load(), save(x) }: kết quả nhận dạng giọng nói của đúng âm thanh này (server giữ theo mã băm). Lần
 // trước dịch lỗi (sau khi đã trả tiền ASR) thì lần gửi lại chỉ còn bước dịch.
@@ -971,43 +1011,16 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   let asr = saved ? saved.asr : resplitSentences(await netCtx.run({ calls: net.asr }, () => transcribe(audio.mp3, opts.signal)));
   if (!saved) opts.asrCache?.save({ seconds: audio.seconds, asr });
   const tAsr = Date.now();
-  // Âm thanh gửi dư trước đoạn ≥ 4 s: extension báo đoạn trước chưa dịch (vừa tua tới). Lấy lời nói phần đó làm
-  // mạch câu cho bước dịch, và giữ câu vắt qua đầu đoạn.
-  const preRoll = opts.from != null && opts.from - (opts.offset || 0) >= 4;
-  const before = preRoll ? speechBefore(asr, opts.offset || 0, opts.from) : [];
-  if (opts.from != null) asr = windowAsr(asr, opts.offset || 0, opts.from, opts.to, preRoll);
-  const cls = classifySpeech(meta, asr);
-  const split = splitSung(asr);
-  // Cả đoạn là bài hát khi: lặp lời, hoặc quá nửa số câu là câu hát, hoặc chữ kéo dài kèm hashtag nhạc.
-  // Hashtag nhạc cộng nói thưa (vlog có nhạc nền, nhiều khoảng lặng) thì không đủ: chỉ lọc từng câu.
-  const song = cls.label === 'singing' && ((cls.repeat && slowChars(cls.medCharDur)) || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33));
+  const prep = cuesFromAsr(meta, asr, opts);
+  asr = prep.asr;
+  const { before, cls, split, song } = prep;
+  const cues = prep.cues;
   // song: kết quả của đoạn cả bài khác nhau ở hai chế độ kể cả khi sung = 0 (điệp khúc câu 3 chữ), nên server và
   // extension không dùng chung nó giữa hai chế độ (noSinging, modeFree).
   const base = { asr: asr.provider, ...(asr.model && asr.model !== FUNASR_MODEL ? { asrModel: asr.model } : {}), ...(saved ? { asrCached: true } : {}), seconds: audio.seconds, heard: (asr.text || '').slice(0, 40), sung: split.sung, sentences: split.total,
     ...(song ? { song: true } : {}), debug: { features: cls, sentences: split.sentences, net } };
   const skip = (label) => ({ status: 'skipped', label, ...base, timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio } });
-  if (cls.label !== 'speech' && cls.label !== 'singing') return skip(cls.label);
-  let cues;
-  if (opts.lyrics) {
-    // Chế độ lời bài hát: không bỏ câu hát, đánh dấu để hiện "♪".
-    cues = lyricCues(asr, { ...cls, label: song ? 'singing' : 'speech' }, split);
-    // Không còn dòng nào: chỉ có tiếng đệm (yeah yeah), hay dòng hát chỉ có tiếng đệm (啦啦啦).
-    if (!cues.length) return skip(song || split.sung ? 'singing' : 'no_speech');
-  } else if (song) {
-    // Đoạn cả bài bị bỏ, trừ đúng các dòng chế độ lời bài hát hiện không có ♪ (câu nói nhanh), để hai chế độ khớp nhau.
-    cues = lyricCues(asr, { ...cls, label: 'singing' }, split).filter(c => !c.sung).map(({ sung: _s, ...c }) => c);
-    if ((cues.map(c => c.zh).join('').match(HAN) || []).length < 4) return skip('singing');
-  } else {
-    // Dòng chỉ có tiếng đệm chữ Latin ("yeah yeah") bỏ như ở chế độ lời bài hát: đoạn không có câu hát thì hai chế độ
-    // dùng chung một kết quả (noSinging ở server.mjs), nên phải ra cùng các dòng.
-    cues = segmentCues(split.r).filter(c => /\p{Script=Han}/u.test(c.zh) || !isFiller(c.zh));
-    // Bỏ câu hát rồi không còn dòng lời nói nào. Trước đây phần lời nói dưới 4 chữ Hán cũng bỏ cả đoạn: mất câu nói ngắn.
-    if (!cues.length) return skip(split.sung ? 'singing' : 'no_speech');
-  }
-  // Đoạn chỉ có tiếng đệm (嗯。, 啊。; verifier 3/11: 12 trên 20 đoạn "quá ít lời" cũ trong cache, ASR nghe ~0,6 s, thường lúc
-  // đầu video có nhạc): không dịch thành "Ừm.". Đoạn có lời thật thì giữ cả dòng tiếng đệm như trước. Nhãn riêng, không phải
-  // no_speech: server.mjs làm lại kết quả no_speech có chữ Hán.
-  if (!song && cues.every(c => isFiller(c.zh))) return skip('filler');
+  if (prep.skip) return skip(prep.skip);
   // opts.context có thể là hàm: server chờ đoạn trước (đang chạy) dịch xong rồi mới lấy ngữ cảnh. Trả về mảng dòng,
   // hoặc { lines, far, pronouns } (far: lấy từ đoạn đã dịch gần nhất phía trước, không phải đoạn liền trước; pronouns:
   // bảng xưng hô trong file cache của đoạn đó).

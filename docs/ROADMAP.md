@@ -123,7 +123,7 @@ Tới khi chọn model nhận dạng cuối (giai đoạn 3), bảng điểm dù
 **Mục tiêu:** giữ được bộ công cụ đo để kiểm từng thay đổi về sau (giai đoạn 1 cần nó để kiểm tiếng Anh); dọn các lỗi đã biết trên Douyin. Không so sánh model nhận dạng lúc này (quyết định 3/11).
 
 **Việc cần làm:**
-1. **Cứu bộ công cụ đo ngay.** Các script đang nằm trong scratchpad của phiên 3/11 (`/private/tmp/...`), thư mục máy có thể xoá bất cứ lúc nào. Chép vào repo (`alpha/dev/real/`):
+1. **Cứu bộ công cụ đo ngay.** *(Đã làm 4/11: `alpha/dev/real/`, HANDOFF §6al. Việc 2 cũng đã làm, trừ báo cáo đúng nhịp và chế độ ghi chẩn đoán.)* Các script đang nằm trong scratchpad của phiên 3/11 (`/private/tmp/...`), thư mục máy có thể xoá bất cứ lúc nào. Chép vào repo (`alpha/dev/real/`):
    - xem một video thật trong Chromium riêng (hồ sơ tạm, tắt tiếng), chọn tốc độ, tua tới đoạn cần, ghi sub và nhãn mỗi 0,25 s;
    - proxy ghi mọi yêu cầu extension gửi server, không ghi âm thanh;
    - báo cáo bảng điểm từ mẫu ghi được và cache;
@@ -146,6 +146,7 @@ Tới khi chọn model nhận dạng cuối (giai đoạn 3), bảng điểm dù
    - tải thừa khi tua lúc lượt tải đầu video còn chạy, ở video 25–26 s (R2, §6af);
    - phép kiểm "file đã đổi" bị bỏ khi không biết cỡ file (F3, §6af; mới là suy luận);
    - trang video dài có chương, và video xem trước khi rê chuột lên thanh tiến trình, chưa thử (HANDOFF §5 điểm 4).
+   - tốc độ đọc thấp: 67–75% dòng ≤ 17 ký tự/giây trên các lượt đo 4/11 (mốc 85%), vì server bỏ lượt rút gọn ở đoạn gấp và đoạn dịch sẵn (HANDOFF §6al); chờ bạn chọn hướng.
 6. **Thử tải riêng luồng âm thanh của Douyin**, như trình phát của trang (§6t), thay vì tải 5–6 MB cho 0,6 MB âm thanh mỗi đoạn 30 s. Giúp mạng chậm và video dài, và là bước chuẩn bị cho nền tảng dùng DASH (Bilibili, YouTube). Thử chỉ đọc, ít video. Trước đây luồng `bit_rate_audio` trả 403 (S1), chưa thử lại.
 7. **Máy Windows:** hướng dẫn cài đã có ([alpha/README.md](../alpha/README.md)). Còn thiếu: chạy test và bộ công cụ đo trên Windows, và nói rõ key nhận dạng bắt buộc (chỉ có key Gemini thì mất mốc từng chữ).
 
