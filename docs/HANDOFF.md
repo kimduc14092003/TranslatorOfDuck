@@ -1190,6 +1190,16 @@ Chủ dự án chọn làm cả 4 hướng.
   - Tiền nhận dạng (3 MB/s): lướt 4 s 190 → 200 s (0.2.34: 465); xem hết 778 → 798 (0.2.34: 762); trộn 441 → 481 (0.2.34: 516). Khi xem hay xem trộn, bản thử tốn ngang hoặc hơn 0.2.34 4–6%; chỉ rẻ hơn hẳn khi lướt.
   - Kém đi: mạng 1,2 MB/s lướt 2 s, video có sẵn sub 6,0 → 2,2/11.
 
+- **Chủ dự án dùng thử 0.2.36** (3/11, 8:50–8:56, Chromium của chủ dự án, ô thử bật):
+  - Bộ ghi `rec2.mjs` chết lúc 20:55 tối hôm trước (máy ngủ) nên không có mẫu nhãn/sub. Số dưới lấy từ mốc của extension (7 video gần nhất) và log server.
+  - 4/7 video có kết quả ngay khi tới (dịch sẵn).
+  - 3 video phải chờ:
+    - 2 video mở lạnh sau một lúc nghỉ, không được dịch sẵn: sub đầu ở 3,3 s và 4,2 s;
+    - 1 video dịch sẵn chưa xong vì lượt tải đầu chậm (mục lục 3,6 s): sub đầu ở 3,0 s.
+  - Hai video xem quá giây 10 có đoạn [10, …) xong lúc 6 s và 8 s sau khi tới, trước giây 10. Đây là suy ra từ thời gian, không có mẫu nhãn để xác nhận.
+  - Một video ở lại 8 s: đoạn 1 gửi ở giây ~4,4 (cửa 4 s) rồi bị huỷ giữa chừng, là cái giá đã biết.
+  - Bộ ghi cần sửa: hạn giờ cho mỗi lần đọc, tự kết nối lại sau khi máy ngủ, theo tab đang hiện thay vì tab Douyin đầu tiên.
+
 ## 7. Việc tiếp theo trên Mac
 
 1. **Kiểm tra môi trường:** `node -v` (cần 18+), `git status`, đang ở nhánh `claude/busy-newton-1y8nzr`. Có `alpha/server/.env` chưa (chỉ kiểm có file, không đọc nội dung).
