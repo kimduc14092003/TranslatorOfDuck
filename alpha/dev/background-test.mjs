@@ -122,6 +122,38 @@ await t('NDJSON hết mà không có dòng kết quả cuối: báo lỗi rõ (t
   assert.match(r.replies[0].error, /dòng kết quả cuối/);
 });
 
+await t('rút gọn sau: trả kết quả ngay khi có dòng kết quả (không chờ hết stream), rồi chuyển dòng { condensed } cho tab; trả lời đúng một lần kể cả khi stream bị ngắt sau đó', async () => {
+  const fin = { status: 'ok', cues: [{ start: 1, end: 2, vi: 'Dòng rất dài' }, { start: 3, end: 4, vi: 'B' }] };
+  const short = [{ ...fin.cues[0], vi: 'Ngắn' }, fin.cues[1]];
+  let ended = 0;
+  const srv = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    req.on('end', () => {
+      const p = JSON.parse(body);
+      res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });
+      res.write(JSON.stringify({ partial: [fin.cues[0]] }) + '\n' + JSON.stringify(fin) + '\n');
+      if (p.cut) return setTimeout(() => res.destroy(), 150);   // ngắt giữa lúc chờ bản rút gọn
+      setTimeout(() => { ended = Date.now(); res.end(JSON.stringify({ condensed: short }) + '\n'); }, 300);
+    });
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const base = 'http://127.0.0.1:' + srv.address().port;
+  const toTab = [];
+  const send = load(toTab);
+  const r = send({ type: 'subtitles', server: base, key: '7500000000000000006:1', payload: { id: '7500000000000000006', stream: true, condenseLater: true } });
+  const cut = send({ type: 'subtitles', server: base, key: '7500000000000000006:2', payload: { id: '7500000000000000006', stream: true, condenseLater: true, cut: true } });
+  for (let i = 0; i < 100 && !r.replies.length; i++) await new Promise((res) => setTimeout(res, 10));
+  assert.equal(JSON.stringify(r.replies), JSON.stringify([fin]));
+  assert.equal(ended, 0, 'câu trả lời phải tới trước khi server gửi xong bản rút gọn');
+  for (let i = 0; i < 100 && !toTab.some((m) => m.type === 'condensed'); i++) await new Promise((res) => setTimeout(res, 10));
+  await new Promise((res) => setTimeout(res, 100));
+  await new Promise((res) => srv.close(res));
+  assert.deepEqual(toTab.filter((m) => m.type === 'condensed').map((m) => [m.key, m.cues.map((c) => c.vi).join('|')]), [['7500000000000000006:1', 'Ngắn|B']]);
+  assert.equal(JSON.stringify(cut.replies), JSON.stringify([fin]), 'stream bị ngắt sau dòng kết quả: không trả lời lần hai');
+  assert.deepEqual(unhandled.map(String), []);
+});
+
 await t('hello: trả bản của background.js, bằng version trong manifest.json (content.js so để biết service worker có phải bản cũ không); không gọi server', async () => {
   const s = await startServer();
   const send = load();
@@ -129,7 +161,7 @@ await t('hello: trả bản của background.js, bằng version trong manifest.j
   await settle(s.got, 0);
   await s.close();
   assert.equal(r.ret, false);
-  assert.equal(JSON.stringify(r.replies), JSON.stringify([{ build: VERSION, ndjson: true }]), 'bản trong background.js khác manifest.json (' + VERSION + '): đổi cả hai khi tăng bản');
+  assert.equal(JSON.stringify(r.replies), JSON.stringify([{ build: VERSION, ndjson: true, condensed: true }]), 'bản trong background.js khác manifest.json (' + VERSION + '): đổi cả hai khi tăng bản');
   assert.deepEqual(s.got, []);
 });
 

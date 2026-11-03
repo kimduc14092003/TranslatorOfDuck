@@ -36,7 +36,18 @@ const providers = http.createServer((req, res) => {
       const n = calls.push({ at: Date.now(), stream: b.stream === true });
       if (mode === 'nokey') return json({ error: { message: 'bad key' } }, 401);
       const lines = JSON.parse(b.messages[0].content.match(/Các dòng: (.*)$/m)[1]);
-      const content = JSON.stringify({ pronouns: { pairs: [] }, cues: lines.map(l => ({ id: l.id, vi: 'Dòng ' + l.id + ' đã dịch.' })) });
+      // Lượt rút gọn: trả 'Ngắn N.' sau 150 ms, một lần (nhanh hơn hạn 2 × 0,3 s). mode 'long': lượt dịch đầu ra dòng quá dài.
+      const condensing = /^Rút gọn/.test(b.messages[0].content);
+      if (condensing) calls.at(-1).condense = true;
+      const viOf = (l) => (condensing ? 'Ngắn ' + l.id + '.' : mode === 'long' ? 'Dòng ' + l.id + ' ' + 'rất '.repeat(30) + 'dài.' : 'Dòng ' + l.id + ' đã dịch.');
+      const content = JSON.stringify({ pronouns: { pairs: [] }, cues: lines.map(l => ({ id: l.id, vi: viOf(l) })) });
+      if (condensing) {
+        return setTimeout(() => {
+          if (!b.stream) return json({ choices: [{ message: { role: 'assistant', content } }] });
+          res.writeHead(200, { 'content-type': 'text/event-stream' });
+          res.end(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\ndata: [DONE]\n\n`);
+        }, 150);
+      }
       if (!b.stream) return json({ choices: [{ message: { role: 'assistant', content } }] });
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       const pieces = [];
@@ -155,6 +166,49 @@ try {
     assert.equal(fv.out.at(-1).obj.status, 'error', JSON.stringify(fv.out.at(-1).obj));
     assert.ok(Date.now() - t0 < 3500, 'mất ' + (Date.now() - t0) + ' ms');
     assert.match(log, /quá 1\.8 s cả lượt: thôi, báo lỗi/);
+  });
+
+  // Rút gọn sau (extension 0.2.42: condenseLater: true): đoạn gấp trả kết quả chưa rút gọn ngay, rồi một dòng { condensed }.
+  mode = 'long';
+  calls.length = 0;
+  const lt = await post('7500000000000000208', { stream: true, condenseLater: true });
+  const lfin = lt.out.find(x => x.obj.status), lcon = lt.out.find(x => x.obj.condensed);
+  t('rút gọn sau: đoạn gấp trả kết quả chưa rút gọn trước, rồi dòng { condensed } đủ dòng, cùng mốc; cache giữ bản rút gọn', () => {
+    assert.equal(lfin.obj.status, 'ok', JSON.stringify(lt.out.map(x => Object.keys(x.obj))));
+    assert.ok(lfin.obj.cues.every(c => / rất rất /.test(c.vi)), 'kết quả đầu phải là bản đầy đủ');
+    assert.ok(lcon, 'thiếu dòng condensed: ' + JSON.stringify(lt.out.map(x => Object.keys(x.obj))));
+    assert.ok(lcon.at >= lfin.at + 100, `kết quả lúc ${lfin.at} ms, bản rút gọn lúc ${lcon.at} ms`);
+    assert.deepEqual(lcon.obj.condensed.map(c => c.start), lfin.obj.cues.map(c => c.start));
+    assert.ok(lcon.obj.condensed.every(c => /^Ngắn \d+\.$/.test(c.vi)), JSON.stringify(lcon.obj.condensed));
+    assert.deepEqual(lcon.obj.condensed.map(c => c.full), lfin.obj.cues.map(c => c.vi), 'full: bản đầy đủ đã trả');
+    const file = fs.readdirSync(path.join(TMP, 'work', 'cache')).find(f => f.startsWith('7500000000000000208.0-30.vi.'));
+    const saved = JSON.parse(fs.readFileSync(path.join(TMP, 'work', 'cache', file), 'utf8'));
+    assert.ok(saved.cues.every(c => c.full && /^Ngắn/.test(c.vi)) && saved.condensedLater === saved.cues.length, 'cache giữ bản rút gọn kèm full');
+    assert.equal(lt.out.indexOf(lcon), lt.out.length - 1, 'dòng condensed là dòng cuối');
+    assert.equal(calls.filter(c => c.condense).length, 1);
+    assert.match(log, /rút gọn sau: \d+\/\d+ dòng dài/);
+  });
+  const lc = await post('7500000000000000208', { stream: true, condenseLater: true });
+  t('rút gọn sau: lần hỏi lại lấy từ cache ra bản đã rút gọn, không gọi thêm', () => {
+    assert.equal(lc.out.length, 1); assert.equal(lc.out[0].obj.cached, true);
+    assert.ok(lc.out[0].obj.cues.every(c => /^Ngắn \d+\.$/.test(c.vi) && !('full' in c)), JSON.stringify(lc.out[0].obj.cues));
+    assert.ok(!('condensedLater' in lc.out[0].obj), 'full, condensedLater chỉ ở file cache');
+    assert.equal(calls.filter(c => c.condense).length, 1);
+  });
+  calls.length = 0;
+  const lo = await post('7500000000000000209', { stream: true });
+  t('extension cũ (không gửi condenseLater): đoạn gấp không rút gọn như trước, không có dòng condensed', () => {
+    assert.equal(lo.out.at(-1).obj.status, 'ok');
+    assert.ok(lo.out.at(-1).obj.cues.every(c => / rất rất /.test(c.vi)));
+    assert.ok(!lo.out.some(x => x.obj.condensed));
+    assert.equal(calls.filter(c => c.condense).length, 0);
+  });
+  calls.length = 0;
+  const ln = await post('7500000000000000210', { stream: true, condenseLater: true, urgent: false });
+  t('đoạn không gấp: rút gọn ngay trong lượt dịch như trước, không có dòng condensed', () => {
+    assert.ok(ln.out.at(-1).obj.cues.every(c => /^Ngắn \d+\.$/.test(c.vi)), JSON.stringify(ln.out.at(-1).obj));
+    assert.ok(!ln.out.some(x => x.obj.condensed));
+    assert.equal(calls.filter(c => c.condense).length, 1);
   });
 
   mode = 'nokey';

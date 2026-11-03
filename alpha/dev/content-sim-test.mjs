@@ -752,6 +752,65 @@ await t('Dòng dịch xong trước (server gửi dần, tin partial): hiện t�
   assert.equal(e.subText(), 'Cuối 1');
 });
 
+await t('Rút gọn sau (0.2.42): worker báo condensed thì gửi condenseLater: true; tin condensed chỉ thay dòng chưa hiện (tính cả độ lệch sub âm), dòng đang hiện giữ chữ; chỉ thay dòng còn mang đúng bản đầy đủ (full); tin sai số dòng, lệch mốc hay của đoạn chưa xong thì bỏ; video dịch sẵn thay hết; worker cũ thì không gửi', async () => {
+  const vis = (e, id = A) => Array.from(e.vid(id).cues || [], (c) => c.vi);   // mảng của vm: chép ra để so
+  const S = (cue, vi) => ({ ...cue, vi, full: cue.vi });   // dòng rút gọn từ dòng cue
+  const L = [C(1.5, 4, 'Dài 1'), C(6, 8, 'Dài 2'), C(9, 11, 'Dài 3')];
+  {
+    const e = makeEnv({ worker: { build: VERSION, ndjson: true, condensed: true } });
+    e.up('items', [e.item(A, 100000)]);
+    e.activeId = A; const v = e.video(A, 2); v.paused = true;
+    for (let i = 0; i < 3; i++) await e.tick();
+    const sent = e.sent.filter((m) => m.type === 'subtitles' && !m.payload.quick);   // mẩu nhanh không rút gọn
+    assert.ok(sent.length && sent.every((m) => m.payload.condenseLater === true), JSON.stringify(sent.map((m) => [m.key, m.payload.condenseLater])));
+    e.onMsg({ type: 'condensed', key: A + ':0', cues: [S(L[0], 'Sớm 1'), S(L[1], 'Sớm 2'), S(L[2], 'Sớm 3')] }, {}, () => {});   // đoạn chưa xong: bỏ
+    await e.reply(A + ':0', { status: 'ok', cues: L });
+    await e.tick();
+    assert.equal(e.subText(), 'Dài 1');
+    e.onMsg({ type: 'condensed', key: A + ':0', cues: [S(L[0], 'Ngắn 1'), S(L[1], 'Ngắn 2')] }, {}, () => {});   // thiếu dòng: bỏ
+    e.onMsg({ type: 'condensed', key: A + ':0', cues: [S(L[0], 'Ngắn 1'), { ...S(L[1], 'Lệch'), start: 6.5 }, S(L[2], 'Ngắn 3')] }, {}, () => {});   // lệch mốc: bỏ cả tin
+    e.onMsg({ type: 'condensed', key: A + ':0', cues: [S(L[0], 'Ngắn 1'), { ...S(L[1], 'Cũ 2'), full: 'Bản khác' }, S(L[2], 'Ngắn 3')] }, {}, () => {});   // dòng 2 không còn mang full đó
+    await e.tick();
+    assert.equal(e.subText(), 'Dài 1', 'dòng đang hiện không đổi chữ');
+    assert.deepEqual(vis(e), ['Dài 1', 'Dài 2', 'Ngắn 3']);
+  }
+  {
+    // Độ lệch sub -1 s: ở 5,2 s đang hiện dòng 6–8 s (sub sớm hơn): dòng đó không đổi chữ (verifier 4/11).
+    const e = makeEnv({ worker: { build: VERSION, ndjson: true, condensed: true }, settings: { ...DEFAULT_SETTINGS, delay: -1 } });
+    e.up('items', [e.item(A, 100000)]);
+    e.activeId = A; const v = e.video(A, 5.2); v.paused = true;
+    for (let i = 0; i < 3; i++) await e.tick();
+    await e.reply(A + ':0', { status: 'ok', cues: L });
+    await e.tick();
+    assert.equal(e.subText(), 'Dài 2');
+    e.onMsg({ type: 'condensed', key: A + ':0', cues: [S(L[0], 'Ngắn 1'), S(L[1], 'Ngắn 2'), S(L[2], 'Ngắn 3')] }, {}, () => {});
+    await e.tick();
+    assert.equal(e.subText(), 'Dài 2', 'dòng đang hiện (sub sớm 1 s) không đổi chữ');
+    assert.deepEqual(vis(e), ['Dài 1', 'Dài 2', 'Ngắn 3']);
+  }
+  {
+    // Video dịch sẵn (chưa xem): thay hết.
+    const e = makeEnv({ worker: { build: VERSION, ndjson: true, condensed: true } });
+    e.up('items', [e.item(A, 100000), e.item(B, 100000)]);
+    e.activeId = A; const v = e.video(A, 2); v.paused = true;
+    for (let i = 0; i < 6; i++) await e.tick();
+    const pf = e.sent.find((m) => m.type === 'subtitles' && m.key === B + ':0');
+    assert.ok(pf && pf.payload.prefetch === true && pf.payload.condenseLater === true, 'đoạn dịch sẵn của B: ' + JSON.stringify(pf && pf.payload && [pf.payload.prefetch, pf.payload.condenseLater]));
+    await e.reply(B + ':0', { status: 'ok', cues: L });
+    e.onMsg({ type: 'condensed', key: B + ':0', cues: [S(L[0], 'Ngắn 1'), S(L[1], 'Ngắn 2'), S(L[2], 'Ngắn 3')] }, {}, () => {});
+    await e.tick();
+    assert.deepEqual(vis(e, B), ['Ngắn 1', 'Ngắn 2', 'Ngắn 3']);
+  }
+  {
+    const e = makeEnv();
+    e.up('items', [e.item(A, 100000)]);
+    e.activeId = A; const v = e.video(A, 2); v.paused = true;
+    for (let i = 0; i < 3; i++) await e.tick();
+    const sent = e.sent.filter((m) => m.type === 'subtitles' && !m.payload.quick);
+    assert.ok(sent.length && sent.every((m) => m.payload.condenseLater === undefined), 'worker không báo condensed: không gửi condenseLater');
+  }
+});
+
 await t('Dòng tạm (verifier 2/11): tua vào giữa đoạn, dòng tạm của đoạn nằm sau mẩu nhanh không che dòng mẩu nhanh đã xong; huỷ hay đổi chế độ lời bài hát thì dòng tạm biến mất; nhãn "VI" chỉ khi dòng tạm đã tới chỗ đang xem', async () => {
   const vis = (e) => (e.vid(A).cues || []).map((c) => c.vi);
   // S1: tua tới 25 s, q25 xong (Q1–Q3), đoạn [20,50) gửi dần P0, P1–P3 (trùng Q), P4 (sau khoảng q25).

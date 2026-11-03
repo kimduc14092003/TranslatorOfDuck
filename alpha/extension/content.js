@@ -193,13 +193,14 @@
   // worker: null chưa biết (lỗi gửi, hay quá WORKER_WAIT: gửi không stream, lần gửi sau hỏi lại), 'ok', hay bản của worker
   // đang chạy ('?': không trả lời). Hỏi ngay khi trang mở, để lần gửi đầu không phải chờ worker thức dậy.
   const WORKER_WAIT = 2000;
-  let worker = null, workerStream = false, workerAsk = null;
+  let worker = null, workerStream = false, workerCondense = false, workerAsk = null;
   function workerReady() {
     if (worker || !alive()) return Promise.resolve();
     if (workerAsk) return workerAsk;
     // Lỗi (không gửi được, extension vừa bị tải lại nên getManifest hỏng): để null, không làm hỏng lần gửi đang chờ.
     const ask = chrome.runtime.sendMessage({ type: 'hello' }).then((r) => {
       workerStream = !!(r && r.ndjson === true);
+      workerCondense = workerStream && r.condensed === true;   // chuyển được bản rút gọn sau (tin 'condensed', từ 0.2.42)
       worker = r && r.build === chrome.runtime.getManifest().version ? 'ok' : (r && typeof r.build === 'string' ? r.build.slice(0, 20) : '?');
     }).catch(() => {});
     // Worker kẹt không bao giờ trả lời: không để mọi lần gửi của trang chờ theo (verifier 2/11).
@@ -1226,7 +1227,8 @@
       const pg = v.pronGen;
       chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':' + k, payload: {
         id, desc: d.desc, hashtags: d.hashtags, ...authorPayload(d), durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
-        prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, prefetch: id !== currentId, lyrics: entry.lyrics, stream: workerStream, ...pronPayload(v),
+        prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, prefetch: id !== currentId, lyrics: entry.lyrics, stream: workerStream,
+        ...(workerCondense ? { condenseLater: true } : {}), ...pronPayload(v),
         rank: id === currentId ? 0 : next >= 0 ? next + 1 : PREFETCH, aac: toBase64(aac) } })
         .then((r) => done(r && r.status ? { ...r, from, to } : { status: 'error', error: (r && r.error) || 'không có phản hồi', unreachable: true, from, to }, true, pg))
         .catch((e) => done({ status: 'error', error: e.message, unreachable: true, from, to }, true));
@@ -1613,6 +1615,31 @@
           .slice(0, 200).map(c => ({ start: c.start, end: c.end, se: typeof c.se === 'number' ? c.se : c.end, vi: c.vi.slice(0, 300),
             zh: typeof c.zh === 'string' ? c.zh : '', ...(c.sung ? { sung: true } : {}) }));
         mergeCues(v);
+      }
+      return false;
+    }
+    // Bản rút gọn sau của một đoạn đã có kết quả (server gửi sau dòng kết quả, payload condenseLater: true): đủ dòng, cùng thứ
+    // tự, dòng được rút gọn mang full (bản đầy đủ đã trả). Chỉ thay dòng chưa hiện (bắt đầu sau giờ của sub, tức chỗ đang xem trừ
+    // độ lệch sub: verifier 4/11, lệch âm thì sub hiện sớm hơn), để dòng đang đọc không đổi chữ giữa chừng; video dịch sẵn thì thay
+    // hết. Chỉ thay dòng mà chữ đang có đúng là full: tin muộn của yêu cầu cũ (đổi chế độ lời bài hát, làm lại đoạn) không ghi đè
+    // kết quả mới. Sai số dòng hay lệch mốc dù một dòng: bỏ cả tin. Đoạn chưa có kết quả (tin tới trước câu trả lời, gần như không
+    // xảy ra: rút gọn mất cả giây) thì bỏ qua.
+    if (msg && msg.type === 'condensed') {
+      const m = typeof msg.key === 'string' && /^(\d+):(\d+)$/.exec(msg.key);
+      const v = m && vids.get(m[1]);
+      const k = m && Number(m[2]);
+      const c = v && v.chunks.get(k);
+      if (c && c.status === 'ok' && Array.isArray(c.cues) && Array.isArray(msg.cues) && msg.cues.length === c.cues.length
+        && msg.cues.every((y, i) => y && y.start === c.cues[i].start)) {
+        const t = m[1] === currentId && headOf === currentId ? playhead - (Number(settings.delay) || 0) + 0.25 : -Infinity;
+        let n = 0;
+        const cues = c.cues.map((x, i) => {
+          const y = msg.cues[i];
+          if (typeof y.vi !== 'string' || !y.vi || y.full !== x.vi || y.vi === x.vi || x.start <= t) return x;
+          n++;
+          return { ...x, vi: y.vi.slice(0, 300) };
+        });
+        if (n) { v.chunks.set(k, { ...c, cues, condensed: (c.condensed || 0) + n }); mergeCues(v); }
       }
       return false;
     }

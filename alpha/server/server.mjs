@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkFfmpeg, config, dotEnvInfo, makeSubtitles, mergePronouns, misplacedOpenAIKey, normalizePronouns, PIPELINE_VERSION, pronounChanges, warmProviders } from './pipeline.mjs';
+import { checkFfmpeg, condenseCues, config, dotEnvInfo, makeSubtitles, mergePronouns, misplacedOpenAIKey, normalizePronouns, PIPELINE_VERSION, pronounChanges, tooLong, warmProviders } from './pipeline.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8787);
@@ -137,7 +137,8 @@ async function handleSubtitles(req, res) {
   const stale = (x) => x && x.status === 'skipped' && (x.label === 'too_short' || (x.label === 'no_speech' && /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(x.heard || '')));
   const fresh = (f) => { const x = readCache(f); return stale(x) ? null : x; };
   const ready = () => { const other = fresh(otherFile); return fresh(file) || (noSinging(other) ? other : null); };
-  const fromCache = (x) => { const { debug: _d, ...c } = x; return { ...c, cached: true }; };
+  // full, condensedLater (rút gọn sau): chỉ cho công cụ đo đọc file cache, không gửi extension.
+  const fromCache = (x) => { const { debug: _d, condensedLater: _l, ...c } = x; return { ...c, ...(Array.isArray(c.cues) ? { cues: c.cues.map(({ full: _f, ...q }) => q) } : {}), cached: true }; };
   // Bảng xưng hô trả cho request này (cả request nhập vào việc đang chạy của request khác, việc đó dịch với bảng của
   // request kia). Kết quả lấy từ cache mang bảng lúc nó được dịch, có thể cũ hơn bảng extension vừa gửi (tua lại đoạn đã
   // dịch): bảng extension gửi đứng trước, thêm cặp chỉ file cache có, để extension (giữ bảng mới nhất) không lùi về bảng
@@ -162,7 +163,7 @@ async function handleSubtitles(req, res) {
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, path.basename(file, '.json') + (chunked ? `.at${meta.audioStart}.aac` : '.mp4')), Buffer.from(chunked ? meta.aac : meta.b64, 'base64'));
     }
-    let opts = {};
+    let opts = {}, later = false;
     if (chunked) {
       // Ngữ cảnh: 3 dòng cuối của đoạn trước. Khi tua, đoạn đang xem và đoạn kế được gửi cùng lúc: nếu đoạn trước
       // đang chạy thì chờ nó dịch xong (chỉ chờ ở bước dịch, nhận dạng giọng nói vẫn chạy song song). Đoạn trước
@@ -201,6 +202,10 @@ async function handleSubtitles(req, res) {
       // lần gọi model, xong sớm hơn. Đo 2/11 trên 503 đoạn trong cache: có rút gọn thì dịch mất 4,0 s (trung vị) thay vì 1,8 s.
       // Đoạn gấp là lúc đang trễ (vừa tua, mạng chậm): sub sớm hơn ~2 s đáng hơn dòng ngắn hơn.
       opts = { kind: 'aac', offset: meta.audioStart, from: meta.from, to: meta.to, context, condense: !quick && meta.prefetch !== true && meta.urgent !== true };
+      // Rút gọn sau (extension từ 0.2.42 gửi condenseLater: true cùng stream: true): đoạn gấp, dịch sẵn vẫn trả kết quả ngay như
+      // trên, rồi mới rút gọn dòng dài; bản rút gọn gửi thêm một dòng { condensed: [dòng…] } sau dòng kết quả, và ghi đè vào cache.
+      // Extension chỉ thay những dòng chưa hiện (chủ dự án 4/11: giữ sub ra sớm, ROADMAP §6).
+      later = !quick && !opts.condense && meta.stream === true && meta.condenseLater === true;
     }
     opts.lyrics = lyrics;
     const buf = Buffer.from(chunked ? meta.aac : meta.b64, 'base64');
@@ -214,6 +219,21 @@ async function handleSubtitles(req, res) {
     const asrCache = {
       load: () => { const x = readCache(asrFile); return x && typeof x.seconds === 'number' && x.asr && Array.isArray(x.asr.segments) ? x : null; },
       save: (x) => writeCache(asrFile, KEEP_ASR && chunked ? { ...x, window: { audioStart: meta.audioStart, from: meta.from, to: meta.to, quick, desc: meta.desc || '', hashtags: meta.hashtags || [] } } : x),
+    };
+    // Rút gọn sau khi đã trả kết quả: không giữ chỗ trong hàng (submit), không huỷ theo request (đã có kết quả cuối). Trả các
+    // dòng sau khi rút gọn (đủ dòng, cùng thứ tự), hay null khi không dòng nào ngắn đi (lượt rút gọn lỗi, model không rút được).
+    const condenseAfter = async (out) => {
+      const t0 = Date.now();
+      const short = await condenseCues(out.cues.filter(tooLong), out.pronouns, null);
+      if (!short.size) { console.log(`${new Date().toLocaleTimeString()} ${id} [${span(meta.from, meta.to)}] rút gọn sau: không dòng nào ngắn đi · ${Date.now() - t0} ms`); return null; }
+      // full: bản đầy đủ đã trả trước đó. Extension chỉ thay dòng đang mang đúng chữ đó; cache giữ nó để công cụ đo (alpha/dev/real)
+      // so được chữ đã hiện (dòng đã hiện lúc đó vẫn là bản đầy đủ).
+      const cues = out.cues.map(c => (short.has(c) ? { ...c, vi: short.get(c), full: c.vi } : c));
+      // Ghi đè cache khi file vẫn là kết quả này (cùng số dòng, cùng mốc): lần xem lại có sẵn bản rút gọn.
+      const cur = readCache(file);
+      if (cur && Array.isArray(cur.cues) && cur.cues.length === cues.length && cur.cues.every((c, i) => c.start === cues[i].start)) writeCache(file, { ...cur, cues, condensedLater: short.size });
+      console.log(`${new Date().toLocaleTimeString()} ${id} [${span(meta.from, meta.to)}] rút gọn sau: ${short.size}/${out.cues.filter(tooLong).length} dòng dài · ${Date.now() - t0} ms`);
+      return cues;
     };
     job = submit(key, meta.urgent, meta.rank, async (signal) => {
       // Lúc tới lượt chạy, đoạn này có thể đã có kết quả: việc của chế độ kia cho cùng đoạn vừa xong mà không có câu hát
@@ -234,6 +254,7 @@ async function handleSubtitles(req, res) {
         writeCache(file, out);
         if (noSinging(out) && !KEEP_ASR) try { fs.rmSync(asrFile, { force: true }); } catch (_) { /* file nhỏ, để lại cũng được */ }
       }
+      if (later && r.status === 'ok' && r.cues.some(tooLong)) feed.condensed = condenseAfter(out);
       return out;
     });
     job.feed = feed;
@@ -283,6 +304,13 @@ async function handleSubtitles(req, res) {
       (out.pronouns && !out.cached ? `\n    xưng hô${pronounsIn || out.debug?.pronounsCtx ? ` (nhận ${pronounsIn} cặp${out.debug?.pronounsCtx ? `, từ cache đoạn trước ${out.debug.pronounsCtx} cặp` : ''})` : ''}: ${out.pronouns.pairs.map(p => `${p.who}: ${p.self}/${p.other}`).join('; ')}` +
         pronounChanges(out.debug?.pronounsIn, out.pronouns).map(c => `\n    xưng hô SỬA: ${c}`).join('') : ''));
     const { debug: _d, ...reply } = out;
+    // Rút gọn sau: gửi dòng kết quả, giữ kết nối tới khi có bản rút gọn (extension đã nhận kết quả, không chờ dòng này).
+    if (stream && meta.condenseLater === true && feed.condensed && !out.cached && !res.writableEnded && !res.destroyed) {
+      res.write(JSON.stringify(reply) + '\n');
+      const cues = await feed.condensed.catch(() => null);
+      if (!res.writableEnded && !res.destroyed) res.end(cues ? JSON.stringify({ condensed: cues }) + '\n' : '');
+      return;
+    }
     sendFinal(200, reply);
   } catch (e) {
     if (e.cancelled) {

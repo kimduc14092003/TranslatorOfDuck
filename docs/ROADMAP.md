@@ -146,7 +146,7 @@ Tới khi chọn model nhận dạng cuối (giai đoạn 3), bảng điểm dù
    - tải thừa khi tua lúc lượt tải đầu video còn chạy, ở video 25–26 s (R2, §6af);
    - phép kiểm "file đã đổi" bị bỏ khi không biết cỡ file (F3, §6af; mới là suy luận);
    - trang video dài có chương, và video xem trước khi rê chuột lên thanh tiến trình, chưa thử (HANDOFF §5 điểm 4).
-   - tốc độ đọc thấp: trung vị 64,9% dòng ≤ 17 ký tự/giây trên cả bộ ngày 4/11 (mốc 85%), vì server bỏ lượt rút gọn ở đoạn gấp và đoạn dịch sẵn (HANDOFF §6al, §6am). Bạn chọn ngày 4/11: giữ sub ra sớm (§6). Chỉ làm cách nào nâng tốc độ đọc mà sub không ra chậm hơn.
+   - tốc độ đọc thấp: trung vị 64,9% dòng ≤ 17 ký tự/giây trên cả bộ ngày 4/11 (mốc 85%), vì server bỏ lượt rút gọn ở đoạn gấp và đoạn dịch sẵn (HANDOFF §6al, §6am). Bạn chọn ngày 4/11: giữ sub ra sớm (§6). Chỉ làm cách nào nâng tốc độ đọc mà sub không ra chậm hơn. Đã làm "rút gọn sau" (HANDOFF §6an, extension 0.2.42): +5–6 điểm ở 2/3 video; phần còn lại chủ yếu là dòng quá ngắn so với lời.
 6. **Thử tải riêng luồng âm thanh của Douyin**, như trình phát của trang (§6t), thay vì tải 5–6 MB cho 0,6 MB âm thanh mỗi đoạn 30 s. Giúp mạng chậm và video dài, và là bước chuẩn bị cho nền tảng dùng DASH (Bilibili, YouTube). Thử chỉ đọc, ít video. Trước đây luồng `bit_rate_audio` trả 403 (S1), chưa thử lại.
 7. **Máy Windows:** hướng dẫn cài đã có ([alpha/README.md](../alpha/README.md)). Còn thiếu: chạy test và bộ công cụ đo trên Windows, và nói rõ key nhận dạng bắt buộc (chỉ có key Gemini thì mất mốc từng chữ).
 

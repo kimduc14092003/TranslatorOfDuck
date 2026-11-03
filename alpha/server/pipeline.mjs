@@ -819,6 +819,32 @@ export function completedCues(text) {
   }
   return out;
 }
+// Dòng tiếng Việt dài hơn 1,1 lần max_chars (17 ký tự/giây, tối đa 84): cần rút gọn.
+export const tooLong = (c) => String(c.vi || '').length > 1.1 * budget(c);
+// Lượt rút gọn: một lần gọi model cho các dòng `long` ({ start, end, vi, zh, sung? }). Trả Map dòng → bản ngắn hơn, chỉ cho dòng
+// được rút gọn thật (ngắn hơn, không thêm chữ Hán). Tuỳ chọn: lỗi thì Map rỗng (giữ bản đầy đủ); chờ tối đa 2 lần hạn đầu, không
+// chờ cả chuỗi gọi lại 10-20-30 s trong khi đoạn đã dịch xong. Dùng trong translate (đoạn không gấp) và sau khi trả kết quả
+// (đoạn gấp, dịch sẵn: server.mjs, "rút gọn sau").
+export async function condenseCues(long, pronouns, signal) {
+  const out = new Map();
+  if (!long.length) return out;
+  try {
+    const cs = AbortSignal.any([signal, AbortSignal.timeout(2 * MT_TIMEOUT_MS)].filter(Boolean));
+    const r = await mtJson([
+      'Rút gọn các dòng phụ đề tiếng Việt sau cho vừa max_chars (đếm cả dấu cách). Giữ ý chính, giữ xưng hô và tên riêng, bỏ từ đệm và chi tiết phụ. Không thêm ý mới.',
+      ...(pronouns && pronouns.pairs ? ['Bảng xưng hô của video (giữ đúng, không đổi đại từ khi rút gọn): ' + JSON.stringify(pronouns.pairs)] : []),
+      ...(long.some(c => c.sung) ? ['Dòng có "sung": true là lời bài hát: rút gọn mà vẫn là lời hát tự nhiên, giữ hình ảnh và cảm xúc chính.'] : []),
+      'Các dòng: ' + JSON.stringify(long.map((c, i) => ({ id: i + 1, max_chars: budget(c), zh: c.zh, vi: c.vi, ...(c.sung ? { sung: true } : {}) }))),
+    ].join('\n'), CUE_SCHEMA, 0.2, cs);
+    const short = new Map((r.cues || []).map(c => [c.id, fixViText(c.vi)]));
+    long.forEach((c, i) => {
+      const v = short.get(i + 1);
+      // Dòng đã có ít chữ Hán (dịch lại vẫn giữ): bản rút gọn được giữ chữ đó, không thêm chữ Hán mới.
+      if (v && v.length < c.vi.length && hanOut(v) <= hanOut(c.vi) && (v.match(HAN) || []).length <= (c.vi.match(HAN) || []).length) out.set(c, v);
+    });
+  } catch (_) { /* giữ bản đầy đủ nếu lượt rút gọn lỗi */ }
+  return out;
+}
 // context: dòng đã dịch ngay trước (hoặc ở đoạn đã dịch gần nhất phía trước, far = true). before: lời nói ngay trước
 // đoạn (chữ Hán, chưa dịch) khi đoạn trước chưa dịch, ví dụ vừa tua tới.
 // condense = false: bỏ lượt rút gọn dòng quá dài (mẩu nhanh: sub ra sớm hơn một lần gọi model).
@@ -925,28 +951,9 @@ export async function translate(meta, cues, context = [], signal, { far = false,
       }
     } catch (_) { /* giữ bản đầu nếu lượt dịch lại lỗi */ }
   }
-  const long = out.filter(c => c.flags.includes('too_long'));
-  if (long.length && condense) {
-    try {
-      // Lượt rút gọn là tuỳ chọn (lỗi thì giữ bản đầy đủ): chờ tối đa 2 lần hạn đầu, không chờ cả chuỗi gọi lại 10-20-30 s
-      // trong khi đoạn đã dịch xong.
-      const cs = AbortSignal.any([signal, AbortSignal.timeout(2 * MT_TIMEOUT_MS)].filter(Boolean));
-      const r = await mtJson([
-        'Rút gọn các dòng phụ đề tiếng Việt sau cho vừa max_chars (đếm cả dấu cách). Giữ ý chính, giữ xưng hô và tên riêng, bỏ từ đệm và chi tiết phụ. Không thêm ý mới.',
-        ...(pronouns ? ['Bảng xưng hô của video (giữ đúng, không đổi đại từ khi rút gọn): ' + JSON.stringify(pronouns.pairs)] : []),
-        ...(long.some(c => c.sung) ? ['Dòng có "sung": true là lời bài hát: rút gọn mà vẫn là lời hát tự nhiên, giữ hình ảnh và cảm xúc chính.'] : []),
-        'Các dòng: ' + JSON.stringify(long.map(c => ({ id: c.id, max_chars: budget(c), zh: c.zh, vi: c.vi, ...(c.sung ? { sung: true } : {}) }))),
-      ].join('\n'), CUE_SCHEMA, 0.2, cs);
-      const short = new Map((r.cues || []).map(c => [c.id, fixViText(c.vi)]));
-      for (const c of long) {
-        const v = short.get(c.id);
-        // Dòng đã có ít chữ Hán (dịch lại vẫn giữ): bản rút gọn được giữ chữ đó, không thêm chữ Hán mới.
-        if (v && v.length < c.vi.length && hanOut(v) <= hanOut(c.vi) && (v.match(HAN) || []).length <= (c.vi.match(HAN) || []).length) {
-          c.vi = v;
-          c.flags = flagsOf(c, v).concat(['condensed']);
-        }
-      }
-    } catch (_) { /* giữ bản đầy đủ nếu lượt rút gọn lỗi */ }
+  if (condense) {
+    const short = await condenseCues(out.filter(c => c.flags.includes('too_long')), pronouns, signal);
+    for (const c of out) if (short.has(c)) { c.vi = short.get(c); c.flags = flagsOf(c, c.vi).concat(['condensed']); }
   }
   const fix = bad.length ? { retried: bad.length, ok: retryOk, fixed: [...changed].filter(keep).length, keptHan: out.filter(c => keep(c) && c.flags.includes('han_left')).length,
     dropped: out.filter(c => !keep(c)).map(c => ({ zh: c.zh, why: c.vi ? 'han' : 'missing' })) } : null;

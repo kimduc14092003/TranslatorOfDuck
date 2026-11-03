@@ -1393,6 +1393,35 @@ Chủ dự án chọn làm cả 4 hướng.
   - Dữ liệu của `check-0411` đã xoá, nên không chấm lại được bằng bản sửa cuối. `check-0411/summary.json` còn điểm của bản cũ (3 vế cần duyệt). Theo luật mới, 7696833663460553073 sẽ là 0 vế cần duyệt, độ phủ 52/53 (suy luận từ lượt chấm bằng bản đầu).
 - **Một lỗi thật nhỏ của cues.js:** dòng của đoạn sau nằm gọn trong thời gian dòng cuối đoạn trước thì bị bỏ mà không so chữ. 7649415147513375994 ở 21,4 s: chỉ đoạn sau nghe được "哭" (trong bài hát), bị bỏ. 1 ca trong 5.601 vế của cache hằng ngày, chưa sửa.
 
+## 6an. Rút gọn sau: đoạn gấp, dịch sẵn vẫn ra sớm, rồi thay dòng chưa hiện (4/11, extension 0.2.42, server)
+
+- **Vì sao:** chủ dự án chọn giữ sub ra sớm (ROADMAP §6, 4/11), nên không bật lại lượt rút gọn trong lượt dịch của đoạn gấp và đoạn dịch sẵn.
+- **Cách làm:**
+  - Server (`server.mjs`, `condenseAfter`; `pipeline.mjs`, `condenseCues` tách khỏi `translate`): đoạn gấp hay dịch sẵn, khi extension gửi `stream: true` và `condenseLater: true`, vẫn trả dòng kết quả ngay như trước. Sau đó server rút gọn các dòng dài (cùng câu lệnh, cùng luật nhận như lượt rút gọn cũ), gửi thêm một dòng `{ condensed: [dòng…] }` trên cùng kết nối, và ghi đè cache. Dòng được rút gọn mang `full` (bản đầy đủ đã trả); trả từ cache thì bỏ `full`, `condensedLater`.
+  - `background.js`: trả kết quả cho trang ngay ở dòng kết quả (trước đây chờ hết luồng), trả lời đúng một lần, chuyển dòng rút gọn bằng tin `condensed`. `hello` báo `condensed: true`.
+  - `content.js`: chỉ thay dòng chưa hiện. Với video đang xem, đó là dòng bắt đầu sau giờ của sub (chỗ đang xem trừ độ lệch sub, cộng 0,25 s); video dịch sẵn thì thay hết. Chỉ thay dòng còn mang đúng chữ `full`; sai số dòng hay lệch mốc thì bỏ cả tin.
+  - Extension cũ (không gửi `condenseLater`): như trước. Mẩu nhanh: không rút gọn.
+- **Test:** `stream-test` (4 ca mới), `background-test` (1 ca), `content-sim-test` (1 ca, 4 tình huống: dòng đang hiện, độ lệch sub −1 s, video dịch sẵn, worker cũ). Verifier chạy các test mới trên code cũ: đều trượt. `npm test` của server và mọi test extension đều đạt.
+- **Soát:** verifier (accept_with_fixes). Lỗi lớn đã sửa: với độ lệch sub âm, dòng đang hiện vẫn bị đổi chữ (lúc đầu so với chỗ đang xem, không trừ độ lệch). Sửa thêm: tin muộn của yêu cầu cũ (đổi chế độ lời bài hát) không ghi đè được nhờ `full`; dòng chưa được chụp thì công cụ đo tính bản đầy đủ. Chưa sửa (chấp nhận):
+  - request trúng cache trong lúc đang rút gọn nhận bản đầy đủ;
+  - lượt rút gọn sau chạy ngoài hàng đợi, không huỷ được: video dịch sẵn có dòng dài nào cũng thêm một lần gọi model, kể cả khi người xem không lướt tới (chi phí để sau, ROADMAP §6);
+  - service worker bị Chrome tắt trong lúc chờ thì chỉ mất bản rút gọn, chưa kiểm.
+- **Công cụ đo:** hiện bản đầy đủ hay bản ngắn của dòng rút gọn sau đều là "đúng dòng"; tốc độ đọc tính theo chữ đã hiện; proxy đọc trạng thái ở dòng có `status` (`outcomeOf`), ngắt sau dòng kết quả không tính là huỷ.
+- **Đo trên Douyin thật** (lượt `condense-0411`, 1×, bản trước mấy chỗ sửa của verifier; với độ lệch sub 0 thì hai bản chạy như nhau):
+
+  | Video | Đọc ≤ 17 ký tự/giây: nếu hiện bản đầy đủ → đã hiện | Dòng rút gọn sau (hiện bản ngắn / bản đầy đủ) | Hiện đúng dòng | Sub đầu tiên |
+  |---|---|---|---|---|
+  | 7696833663460553073 (1:38) | 75% → 81,3% | 2 (2 / 0) | 95,5% | 5,6 s |
+  | 7672279659249290548 (2:44) | 64,9% → 70,2% | 5 (3 / 2) | 98,1% | 5,0 s |
+  | 7701192992614370560 (xem 3:00) | 53,4% → 53% | 4 (1 / 1) | 98,8% | 4,1 s |
+
+  0 vế cần duyệt, 0 chờ, 0 lỗi, 0 yêu cầu bị huỷ.
+  - Sub đầu tiên chậm hơn lần đo nền (3,8 s, 3,5 s) là do nhà cung cấp trả chậm lần này (dịch đoạn đầu 2.743 ms; nhận dạng 1.739 ms), trước khi có lượt rút gọn nào. Lượt rút gọn chạy sau khi đã trả kết quả.
+- **Phát hiện, sửa lại nhận định ở §6al:** khi phát liền ở 1×, chỉ hai đoạn đầu (0–10, 10–20) của video đang xem là đoạn gấp; các đoạn sau gửi trước và đã được rút gọn ngay trong lượt dịch như cũ. Nhận định "gần như mọi đoạn đều gấp hay dịch sẵn" chỉ đúng khi tua hay xem nhanh. Tốc độ đọc thấp chủ yếu vì:
+  - dòng quá ngắn so với lời: video 7701192992614370560 có 27/88 dòng vượt 1,1 lần mức; đa số dài 0,6–2,4 s (0,8 s mà 32 ký tự: mức là 13). Rút gọn không đủ, kể cả ở đoạn đã rút gọn trong lượt dịch;
+  - dòng vượt 1,0–1,1 lần mức không bao giờ được rút gọn (luật `too_long` là trên 1,1 lần), ví dụ 14 dòng ở video trên.
+  - Hướng có thể thử (chưa làm): kéo dài thời gian hiện của dòng vào quãng lặng sau nó; gộp hai dòng ngắn liền nhau; hạ ngưỡng rút gọn về 1,0.
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).

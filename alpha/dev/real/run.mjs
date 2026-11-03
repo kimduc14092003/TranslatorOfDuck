@@ -56,7 +56,7 @@ for (const [i, v] of list.entries()) {
   rows.push(r ? { id: v.id, kind: v.kind || null, from: v.from || 0, to: v.to ?? null, error: error || r.error, duration: r.duration, chunks: r.chunks,
     unapproved: r.unapproved, failed: r.failed.length, coverage: r.coverage, correct: r.correct, expected: r.expected, samples: r.samples,
     waitRuns: r.waitRuns, errorRuns: r.errorRuns, platformErrorRuns: r.platformErrorRuns, ttfsS: r.ttfsMs == null ? null : +(r.ttfsMs / 1000).toFixed(1),
-    readingWithin: r.readingSpeed.within, cancelled: r.cancelled.length, cancelledOther: r.cancelledOther, silentGaps: r.silentGaps.length }
+    readingWithin: r.readingSpeed.within, condensedLater: r.condensedLater, cancelled: r.cancelled.length, cancelledOther: r.cancelledOther, silentGaps: r.silentGaps.length }
     : { id: v.id, kind: v.kind || null, error });
   if (!a.keep && !rmrf(dir)) console.log('Không xoá được', dir, '— xoá tay thư mục này');
   current = null;

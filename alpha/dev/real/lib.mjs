@@ -170,19 +170,31 @@ export async function startProxy({ port = 8789, target, log }) {
         r.on('data', (c) => { res.write(c); if (got.length < 4e6) got += c; });
         r.on('end', () => {
           done = true; res.end();
-          // Câu trả lời là JSON, hay NDJSON (dòng tạm rồi dòng cuối): chỉ lấy trạng thái của dòng cuối.
-          let outcome = null;
-          try { const x = JSON.parse(got.trim().split('\n').pop()); if (x && x.status) outcome = { status: x.status, label: x.label || null, cues: (x.cues || []).length, cached: !!x.cached }; } catch (_) {}
-          write({ ev: 'done', rid, status: r.statusCode, outcome });
+          const { outcome, condensed } = outcomeOf(got);
+          write({ ev: 'done', rid, status: r.statusCode, outcome, ...(condensed != null ? { condensed } : {}) });
         });
       });
       pr.on('error', (e) => { write({ ev: 'error', rid, err: e.message }); try { res.end(); } catch (_) {} });
-      res.on('close', () => { if (!done) { write({ ev: 'closed', rid }); pr.destroy(); } });
+      // Ngắt sau khi đã có dòng kết quả (đang chờ bản rút gọn sau): không phải yêu cầu bị huỷ (afterResult).
+      res.on('close', () => { if (!done) { write({ ev: 'closed', rid, ...(outcomeOf(got).outcome ? { afterResult: true } : {}) }); pr.destroy(); } });
       pr.end(body);
     });
   });
   await new Promise((r) => srv.listen(port, '127.0.0.1', r));
   return { url: `http://127.0.0.1:${port}`, log, close: () => new Promise((r) => srv.close(r)) };
+}
+
+// Câu trả lời là JSON, hay NDJSON (dòng tạm, dòng kết quả, rồi có thể một dòng { condensed }: rút gọn sau, server từ 4/11).
+// outcome: trạng thái của dòng kết quả (dòng có status); condensed: số dòng của bản rút gọn sau, nếu có.
+export function outcomeOf(got) {
+  let outcome = null, condensed = null;
+  for (const l of String(got).trim().split('\n')) {
+    let x;
+    try { x = JSON.parse(l); } catch (_) { continue; }
+    if (x && x.status) outcome = { status: x.status, label: x.label || null, cues: (x.cues || []).length, cached: !!x.cached };
+    else if (x && Array.isArray(x.condensed)) condensed = x.condensed.length;
+  }
+  return { outcome, condensed };
 }
 
 // ---------------------------------------------------------------- cache của server

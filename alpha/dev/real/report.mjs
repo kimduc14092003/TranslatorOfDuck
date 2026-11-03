@@ -18,10 +18,20 @@ export function samplesScore(samples, cues, { from = 0 } = {}) {
   const startIdx = from ? all.findIndex((s) => Math.abs(s.t - from) < 2) : 0;
   const S = startIdx >= 0 ? grid(all.slice(startIdx)) : [];
   const r = { samples: S.length, expected: 0, same: 0, blank: 0, other: 0, extra: 0, waitRuns: 0, waitSamples: 0, errorRuns: 0, platformErrorRuns: 0 };
+  // seen: dòng rút gọn sau (có full) → số lần chụp thấy bản rút gọn trừ số lần thấy bản đầy đủ.
+  const seen = new Map();
+  r.seen = seen;
   let prevW = false, prevE = false;
   for (const s of S) {
     const st = stateOf(s), c = at(cues, s.t);
-    if (c) { r.expected++; if (!s.sub) r.blank++; else if (clean(s.sub) === clean(c.vi)) r.same++; else r.other++; } else if (s.sub) r.extra++;
+    // Dòng rút gọn sau (server ghi bản đầy đủ đã trả vào full): hiện bản nào cũng là đúng dòng.
+    if (c) {
+      r.expected++;
+      if (!s.sub) r.blank++;
+      else if (clean(s.sub) === clean(c.vi)) { r.same++; if (c.full) seen.set(c, (seen.get(c) || 0) + 1); }
+      else if (c.full && clean(s.sub) === clean(c.full)) { r.same++; seen.set(c, (seen.get(c) || 0) - 1); }
+      else r.other++;
+    } else if (s.sub) r.extra++;
     const w = st === 'pending' && !s.sub && !s.paused && s.t >= from + 5;
     if (w) { r.waitSamples++; if (!prevW) r.waitRuns++; }
     prevW = w;
@@ -52,7 +62,7 @@ export function proxyFacts(proxy, { id, endWall } = {}) {
   const before = (x) => !endWall || !x.wall || x.wall < endWall;
   const reqs = new Map(proxy.filter((x) => x.ev === 'req' && x.url === '/v1/subtitles').map((x) => [x.rid, x]));
   const span = (m) => (m.from != null ? `${m.quick ? 'q' : ''}${m.from}-${m.to}` : null);
-  const closed = proxy.filter((x) => x.ev === 'closed' && before(x) && reqs.has(x.rid)).map((x) => {
+  const closed = proxy.filter((x) => x.ev === 'closed' && !x.afterResult && before(x) && reqs.has(x.rid)).map((x) => {
     const q = reqs.get(x.rid), m = q.meta || {};
     return { id: m.id, span: span(m), after: x.ms - q.ms };
   });
@@ -77,6 +87,8 @@ export function report(dir) {
   const chunks = (meta.id ? chunksOf(path.join(dir, 'server', 'cache'), meta.id, lyrics, null) : [])
     .filter((c) => inRange(c.from, c.to) && !(c.status === 'none' && range && c.from >= range[1] - 1));
   const cues = mergedCues(chunks);
+  const { seen: _seen, ...rest } = samplesScore(samples, cues, { from });
+  const sc = { seen: _seen };
   const d = drops(chunks, { lyrics });
   const p0 = proxyFacts(proxy, meta);
   const okSpans = new Set(chunks.filter((c) => c.status === 'ok').map((c) => `${c.quick ? 'q' : ''}${c.from}-${c.to}`));
@@ -89,8 +101,12 @@ export function report(dir) {
     duration: durMs ? durMs / 1000 : meta.duration || null,
     chunks: byStatus, asrModels: [...new Set(chunks.map((c) => c.asrModel || c.asr).filter(Boolean))],
     clauses: d.clauses, lost: d.lost, coverage: d.coverage, unapproved: d.unapproved, staleChunks: d.stale, noResult: d.noResult, drops: d.items, failed: p.failed,
-    cues: cues.length, sung: cues.filter((c) => c.sung).length, readingSpeed: readingSpeed(cues),
-    ...samplesScore(samples, cues, { from }),
+    cues: cues.length, sung: cues.filter((c) => c.sung).length,
+    // Tốc độ đọc theo chữ đã hiện: dòng rút gọn sau chỉ tính bản ngắn khi lúc xem thấy bản ngắn nhiều hơn; chưa chụp được hay
+    // hoà thì tính bản đầy đủ (cho chắc, verifier 4/11).
+    readingSpeed: readingSpeed(cues.map((c) => (c.full && !((sc.seen.get(c) || 0) > 0) ? { ...c, vi: c.full } : c))),
+    condensedLater: { lines: cues.filter((c) => c.full).length, shownShort: [...sc.seen.values()].filter((x) => x > 0).length, shownFull: [...sc.seen.values()].filter((x) => x < 0).length },
+    ...rest,
     cancelled: p.cancelled, cancelledOther: p.cancelledOther, silentGaps: silentGaps(chunks),
   };
 }
@@ -115,7 +131,8 @@ export function print(r) {
     `  Chờ dịch khi đang xem (sau 5 s đầu): ${r.waitRuns} lần (${r.waitSamples} lần chụp)`,
     `  Lỗi của ta: ${r.errorRuns} lần; lỗi phía Douyin: ${r.platformErrorRuns} lần`,
     `  Sub đầu tiên${r.from ? ' sau khi tua' : ''}: ${r.ttfsMs == null ? '-' : (r.ttfsMs / 1000).toFixed(1) + ' s'}${r.watched ? `; đã xem ${mmss(r.watched[0])}–${mmss(r.watched[1])}` : ''}`,
-    `  Tốc độ đọc: ${r.readingSpeed.within ?? '-'}% dòng ≤ ${r.readingSpeed.limit} ký tự/giây (${r.readingSpeed.cues} dòng, ${r.sung} dòng ♪)`,
+    `  Tốc độ đọc: ${r.readingSpeed.within ?? '-'}% dòng ≤ ${r.readingSpeed.limit} ký tự/giây (${r.readingSpeed.cues} dòng, ${r.sung} dòng ♪)` +
+      (r.condensedLater && r.condensedLater.lines ? `; rút gọn sau ${r.condensedLater.lines} dòng: hiện bản ngắn ${r.condensedLater.shownShort}, bản đầy đủ ${r.condensedLater.shownFull}` : ''),
     `  Yêu cầu dịch của video này bị huỷ: ${r.cancelled.length}${r.cancelled.length ? ' (' + r.cancelled.map((x) => `${x.span} sau ${(x.after / 1000).toFixed(1)} s`).join('; ') + ')' : ''}; của video dịch sẵn: ${r.cancelledOther}`,
     `  Quãng nghi nghe sót (> 4 s không có câu nào, kể cả nhạc, im lặng): ${r.silentGaps.length ? r.silentGaps.map(([a, b]) => `${a}–${b}`).join(', ') : 'không có'}`,
   ];
