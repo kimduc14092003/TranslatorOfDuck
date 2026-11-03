@@ -1,6 +1,6 @@
 'use strict';
 const $ = (id) => document.getElementById(id);
-const DEFAULTS = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0, lyrics: true, first10: false };
+const DEFAULTS = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0, lyrics: true, first10: true };
 
 async function load() {
   const { settings = {} } = await chrome.storage.local.get('settings');
@@ -49,13 +49,14 @@ async function showStats() {
   const s = await load();
   $('enabled').checked = s.enabled;
   $('lyrics').checked = s.lyrics !== false;
-  $('first10').checked = s.first10 === true;
+  $('first10').checked = s.first10 !== false || !s.first10Set;
   $('position').value = s.position;
   $('size').value = s.size;
   $('server').value = s.server;
   $('enabled').addEventListener('change', (e) => save({ enabled: e.target.checked }));
   $('lyrics').addEventListener('change', (e) => save({ lyrics: e.target.checked }));
-  $('first10').addEventListener('change', (e) => save({ first10: e.target.checked }));
+  // first10Set: chính người xem đã chọn (content.js: first10 false do popup cũ tự lưu thì không tính).
+  $('first10').addEventListener('change', (e) => save({ first10: e.target.checked, first10Set: true }));
   $('position').addEventListener('change', (e) => save({ position: e.target.value }));
   $('size').addEventListener('change', (e) => save({ size: e.target.value }));
   $('server').addEventListener('change', (e) => save({ server: e.target.value.trim() || DEFAULTS.server }));

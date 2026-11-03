@@ -92,7 +92,7 @@ Chạy trên máy chủ dự án: một extension, cộng một server Node ở 
 | `node alpha/dev/cues-test.mjs` | Gộp sub các đoạn, câu vắt qua ranh giới hai đoạn (5 kiểm tra) |
 | `node alpha/dev/background-test.mjs` | background.js gửi `POST /v1/warm` (kiểu JSON) tới server trên máy, bỏ qua lỗi, chặn địa chỉ ngoài máy; trả lời NDJSON: dòng { partial } chuyển cho tab, dòng cuối là câu trả lời; `hello` trả bản, bằng version trong manifest; NDJSON thiếu dòng cuối thì báo lỗi rõ (5 kiểm tra) |
 | `node alpha/dev/tap-test.mjs` | tap.main.js đọc response API với Response thật (fetch, XHR): thân chia khúc của search/stream, thân hỏng, giữ thứ tự danh sách tìm kiếm khi search/single đọc xong trước (3 kiểm tra) |
-| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua, đồng hồ trình phát lệch 50 s, CDN treo một lần, lời bài hát ♪, bấm ô tắt lời bài hát trong popup, video mở từ trang tìm kiếm, video đầu tải một lượt từ byte 0 , bảng xưng hô gửi lại cho đoạn sau, rê chuột thật vào nhãn thì hiện bảng thông tin, service worker đúng bản (31 kiểm tra). `E2E_MT=openai`: dịch bằng OpenAI giả trả SSE, có dòng tạm (32 kiểm tra) |
+| `node alpha/dev/e2e.mjs` | Chromium thật + extension + Douyin giả + AI giả + server thật, có video dài 100 s, video "đã thích" ở cột bên, mẩu nhanh khi tua, đồng hồ trình phát lệch 50 s, CDN treo một lần, lời bài hát ♪, bấm ô tắt lời bài hát trong popup, video mở từ trang tìm kiếm, video đầu tải một lượt từ byte 0 , bảng xưng hô gửi lại cho đoạn sau, rê chuột thật vào nhãn thì hiện bảng thông tin, service worker đúng bản (31 kiểm tra). `E2E_MT=openai`: dịch bằng OpenAI giả trả SSE, có dòng tạm (32 kiểm tra). Mặc định chạy cách dịch sẵn 20–30 s; `E2E_FIRST10=1`: cách dịch sẵn 10 s (§6ad) |
 
 Cần cho các test: Node 18+, `playwright`, `ffmpeg`, `openssl`.
 
@@ -1200,6 +1200,31 @@ Chủ dự án chọn làm cả 4 hướng.
   - Một video ở lại 8 s: đoạn 1 gửi ở giây ~4,4 (cửa 4 s) rồi bị huỷ giữa chừng, là cái giá đã biết.
   - Bộ ghi cần sửa: hạn giờ cho mỗi lần đọc, tự kết nối lại sau khi máy ngủ, theo tab đang hiện thay vì tab Douyin đầu tiên.
   - Chủ dự án xác nhận (3/11): không còn thấy "đang dịch" ở giây 10.
+
+## 6ad. "Dịch sẵn 10 s đầu" thành mặc định (3/11, extension 0.2.37)
+
+- **Quyết định của chủ dự án:** sau phiên dùng thử 0.2.36, không còn thấy "đang dịch" ở giây 10 (§6ac). Chủ dự án yêu cầu bật làm mặc định.
+- **Đổi:**
+  - `settings.first10` mặc định `true`. Chỉ người đã lưu `first10: false` (bỏ chọn ô) mới dùng cách cũ.
+  - Ô trong popup: "Dịch sẵn 10 s đầu (lướt nhanh, đỡ tốn)". Ghi chú: bỏ chọn thì dịch sẵn 20–30 s như trước, hợp mạng rất chậm.
+  - Bảng thông tin ghi "· dịch sẵn 10 s đầu". README thêm một dòng.
+- **Test:**
+  - content-time-test 41: các ca cũ nay ghi rõ `{ first10: false, first10Set: true }` để vẫn kiểm cách cũ. Thêm ca "chưa lưu thì là 10 s; `first10: false` không có `first10Set` vẫn là 10 s; đã bỏ chọn ô thì như cũ" và ca D3. Cả hai trượt trên code trước khi sửa.
+  - content-sim-test cũng ghi rõ cách cũ.
+  - e2e mặc định chạy cách cũ (`first10: false`): 31/31 (Gemini) và 32/32 (OpenAI stream).
+  - `E2E_FIRST10=1`: 23/31 và 24/32. Cả 8 kiểm tra trượt đều thuộc ca video 100 s, và do cách viết ca chứ không phải lỗi:
+    - ca này dừng video rồi tua (`subAt` gọi `pause()`), nên thời gian đã phát luôn < 4 s; cửa chờ không mở, đoạn sau đoạn ở chỗ đang xem không được gửi;
+    - tua tới 21 s và 85 s thì đoạn đó gửi dư 8 s phía trước (`PRE_SEEK`, đoạn trước chưa dịch), mà ASR giả trả câu ở mốc cố định 2 s và 6 s tính từ đầu âm thanh. Hai câu rơi vào trước đầu đoạn, bị bỏ ("không nghe thấy lời"; log server: `[0:20–0:50] … 44.1 s âm thanh · 0 câu`).
+  - Với người dùng thật: tua lúc dừng thì đoạn ở chỗ đang xem vẫn dịch ngay, đoạn sau chờ tới khi đã phát 4 s. Muốn e2e kiểm cách 10 s cho đúng thì cần một ca riêng cho phát liên tục (chưa làm).
+- **Verifier soát** (ship_with_fixes), đã sửa:
+  - **D1:** popup 0.2.35–0.2.36 lưu cả object cài đặt kèm `first10: false` (mặc định khi đó) mỗi khi đổi bất kỳ cài đặt nào. Người đã đổi gì đó sẽ ở cách cũ mà không biết. Nay `first10: false` chỉ tính khi có `first10Set`, ghi lúc bấm ô.
+  - **D3:** cửa chờ tính theo thời gian đã phát, nên tua sớm hay dừng thì cửa đóng, đoạn kế gửi muộn hơn cách cũ 1,8–3,3 s. Nay đoạn còn ≤ 6 s là tới (`F10_NEAR`) thì không chờ cửa. Test so với cách cũ: tua tới 46 s lúc mới xem 0,5 s thì đoạn [50,80) gửi không muộn hơn (đối chứng không sửa: 7,9 s so với 6,15 s).
+  - **D4:** sửa chú thích.
+- **Chưa làm (D2):** đường mặc định ít test tự động. 11/41 ca content-time và 0/57 ca content-sim chạy ở cách 10 s. Cần cho cả hai bộ chạy ở hai chế độ, kỳ vọng theo từng chế độ, và một ca e2e phát liên tục ở cách 10 s.
+- **Cái giá** (mô phỏng §6ab–§6ac):
+  - xem lâu hay xem trộn tốn hơn cách cũ 4–6% giây nhận dạng; chỉ khi lướt mới rẻ hơn hẳn (45–63%);
+  - mạng ~1,2 MB/s lướt 2 s ngay sau một video xem lâu: ít video có sẵn sub hơn;
+  - mạng ~450 KB/s xem hết video: phủ 27% thay vì 59% (bản 0.2.35; nên bỏ chọn ô).
 
 ## 7. Việc tiếp theo trên Mac
 

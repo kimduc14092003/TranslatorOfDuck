@@ -199,7 +199,9 @@ const ctx = await chromium.launchPersistentContext(path.join(TMP, 'profile'), {
 });
 const pop = await ctx.newPage();
 await pop.goto(`chrome-extension://${extId}/popup.html`);
-await pop.evaluate((p) => chrome.storage.local.set({ settings: { enabled: true, server: `http://127.0.0.1:${p}`, position: 'bottom', size: 'm' } }), alphaPort);
+// first10: các kiểm tra ở đây đo cách dịch sẵn 20–30 s; E2E_FIRST10=1 chạy cách dịch sẵn 10 s (mặc định từ 0.2.37), một số
+// kiểm tra số đoạn, độ dài âm thanh, mẩu nhanh sẽ khác theo thiết kế.
+await pop.evaluate(([p, f10]) => chrome.storage.local.set({ settings: { enabled: true, server: `http://127.0.0.1:${p}`, position: 'bottom', size: 'm', first10: f10, first10Set: true } }), [alphaPort, process.env.E2E_FIRST10 === '1']);
 await pop.click('#check');
 await pop.waitForFunction(() => !/Đang kiểm tra/.test(document.getElementById('health').textContent));
 const health = await pop.evaluate(() => document.getElementById('health').textContent);

@@ -5,7 +5,7 @@ const pending = new Map();   // "tab:key" -> AbortController
 // Bản của file này: phải bằng "version" trong manifest.json (dev/background-test.mjs kiểm). Content script hỏi { type: 'hello' }
 // để biết service worker đang chạy có phải bản cũ không (Chrome có thể giữ background.js bản trước: content.js, workerReady)
 // và có đọc được NDJSON không (ndjson: gửi stream: true được).
-const BUILD = '0.2.36';
+const BUILD = '0.2.37';
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   const tab = sender.tab ? sender.tab.id : -1;
   if (msg && msg.type === 'hello') { reply({ build: BUILD, ndjson: true }); return false; }

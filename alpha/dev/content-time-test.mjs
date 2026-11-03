@@ -15,9 +15,10 @@ const VERSION = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf
 // hướng 302 rồi mới tới máy chủ video). realProbe: lượt tải 64 KB đầu file cũng chia băng thông như mọi lượt khác (mặc định:
 // xong ngay). Mục lục giả: moov dài head byte, giây t của video ở byte base + t * bps. status(a, b, url): mã HTTP.
 // Mỗi byte gửi về có giá trị theo vị trí trong file, aacSum của tin gửi đi là tổng kiểm của đúng các byte âm thanh đã tải.
-// settings: cài đặt đã lưu (chrome.storage), vd. { first10: true } cho chế độ thử dịch sẵn 10 s.
+// settings: cài đặt đã lưu (chrome.storage). Mặc định { first10: false, first10Set: true } (đã bỏ chọn ô): các ca cũ kiểm cách dịch sẵn 20–30 s (từ 0.2.37
+// mặc định là dịch sẵn 10 s; chưa lưu gì thì truyền settings: {}).
 function makeEnv(dir, { bw = 9000, stall = () => 0, total = () => 99999999, autoReplyMs = null, cap = () => 0, pause = () => false,
-  rtt = 0, realProbe = false, head = 10, base = 0, bps = 1000, status = () => 206, settings = {} } = {}) {
+  rtt = 0, realProbe = false, head = 10, base = 0, bps = 1000, status = () => 206, settings = { first10: false, first10Set: true } } = {}) {
   const env = { now: 1_000_000, perf: 0, sent: [], replies: new Map(), fetches: [], rafs: [], listeners: {}, videos: new Map(), activeId: null,
     href: 'https://www.douyin.com/', onChanged: null, timers: [], tid: 0, log: [] };
   const setTimeout_ = (fn, ms = 0) => { const id = ++env.tid; env.timers.push({ id, at: env.perf + ms, fn }); return id; };
@@ -957,7 +958,7 @@ await t('Thử dịch sẵn 10 s: video 45 s chia [0,10) [10,20) [20,46); đoạ
   assert.equal(s1.payload.audioStart, 5.5, 'đoạn [10,20) bắt đầu âm thanh ở');
   assert.equal(s1.payload.aacLen, (26 - 5.5) * BPS, 'âm thanh đoạn [10,20) (byte)');
   assert.ok(!at(B + ':1') && !r.e.subs().some((m) => m.key.endsWith(':q0')), 'gửi thêm: ' + r.e.subs().map((m) => m.key.slice(17)));
-  const off = await openVideo({ feed: true, ids: [A, B], ms: 3000 });
+  const off = await openVideo({ feed: true, ids: [A, B], ms: 3000 });   // mặc định của harness: đã bỏ chọn ô
   assert.equal(JSON.stringify(off.e.vid(A).plan), JSON.stringify([[0, 20], [20, 46]]));
 });
 
@@ -1062,6 +1063,30 @@ await t('Thử dịch sẵn 10 s: lướt tới video dịch sẵn mà đoạn 0
   const s0 = r.e.subs().find((m) => m.key === A + ':0');
   const list = r.e.fetches.filter((f) => f.vid === A).map((f) => (/aweme/.test(f.url) ? 'api ' : 'cdn ') + r.e.fmt(f)).join(' | ');
   assert.ok(s0 && s0.perf - r.t0 <= 4000, 'đoạn 0 gửi sau ' + (s0 && s0.perf - r.t0) + ' ms: ' + list);
+});
+
+await t('Mặc định (chưa lưu cài đặt first10) là dịch sẵn 10 s đầu (0.2.37); first10: false chỉ là lựa chọn khi đã bấm ô (first10Set), không thì là giá trị popup 0.2.35–0.2.36 tự lưu (verifier 3/11, D1)', async () => {
+  const plan = async (settings) => (await openVideo({ feed: true, ms: 3000, env: { settings } })).e.vid(A).plan;
+  assert.equal(JSON.stringify(await plan({})), JSON.stringify([[0, 10], [10, 20], [20, 46]]));
+  assert.equal(JSON.stringify(await plan({ first10: false, lyrics: true })), JSON.stringify([[0, 10], [10, 20], [20, 46]]), 'first10: false không có first10Set (popup cũ lưu cả object)');
+  assert.equal(JSON.stringify(await plan({ first10: false, first10Set: true })), JSON.stringify([[0, 20], [20, 46]]), 'đã bỏ chọn ô');
+});
+
+await t('Dịch sẵn 10 s: tua sớm (cửa chờ chưa mở) tới gần cuối một đoạn: đoạn kế không phải chờ cửa, gửi không muộn hơn cách cũ (verifier 3/11, D3: trước đây muộn hơn 1,8–3,3 s)', async () => {
+  const sentAt = async (settings) => {
+    const e = makeEnv(EXT, { bw: 3e6, rtt: 150, realProbe: true, head: H, base: H, bps: BPS, autoReplyMs: 2600, settings });
+    e.activeId = A; const v = e.video(A, 0);
+    e.up('items', [e.item(A, 120000, true)]);
+    for (let t = 0; t < 500; t += 50) await e.tick(50);
+    v.currentTime = 46;   // tua lúc mới xem 0,5 s
+    const t0 = e.perf;
+    for (let t = 0; t < 9000; t += 50) await e.tick(50);
+    const k = e.vid(A).plan.findIndex(([a]) => a === 50);
+    const s = e.subs().find((m) => m.key === A + ':' + k);
+    return { at: s ? s.perf - t0 : null, list: e.subs().map((m) => m.key.slice(17) + '@' + (m.perf - t0)).join(' ') };
+  };
+  const now = await sentAt({ first10: true }), old = await sentAt({ first10: false, first10Set: true });
+  assert.ok(now.at != null && old.at != null && now.at <= old.at + 500, `đoạn [50,80) gửi sau ${now.at} ms (cách cũ ${old.at} ms): ${now.list} | cũ: ${old.list}`);
 });
 
 console.log(failed ? `\n${failed} kiểm tra trượt, ${n} đạt.` : `\n${n} kiểm tra đều đạt.`);

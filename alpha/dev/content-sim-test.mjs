@@ -67,7 +67,8 @@ function makeEnv({ fetchHang = () => false, total = () => 99999999, status = () 
         return new Promise((r) => env.replies.set(msg.key, r));
       },
       getManifest: () => ({ version: VERSION }) },
-    storage: { local: { get: (_k, cb) => cb({ settings: {} }), set() {} }, onChanged: { addListener: (f) => { env.onChanged = f; } } },
+    // first10: false: các ca ở đây kiểm cách dịch sẵn 20–30 s (mặc định từ 0.2.37 là 10 s; content-time-test kiểm cách đó).
+    storage: { local: { get: (_k, cb) => cb({ settings: { first10: false, first10Set: true } }), set() {} }, onChanged: { addListener: (f) => { env.onChanged = f; } } },
   };
   // Mục lục giả: giây t ở byte t*1000.
   const TodMp4 = { headerEnd: () => 10, parse: () => ({ duration: 0 }),
