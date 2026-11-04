@@ -40,6 +40,9 @@ const cancelledError = () => Object.assign(new Error('cancelled'), { cancelled: 
 const CONTEXT_WAIT_MS = 30000;
 // Ngôn ngữ đích server dịch được (gói trong langs.mjs). Yêu cầu không ghi target là tiếng Việt, như extension cũ.
 const TARGET_CODES = Object.keys(TARGETS);
+// Thứ tự bắt đầu chạy của từng việc (khoá = file cache): việc đổi ngôn ngữ chỉ chờ việc của ngôn ngữ khác bắt đầu trước nó.
+const runOrder = new Map();
+let runN = 0;
 const targetOf = (meta) => (meta.target == null ? 'vi' : String(meta.target));
 const canRun = (job) => running < MAX_PARALLEL || (job.urgent && running < MAX_PARALLEL + 1);
 function pumpQueue() {
@@ -64,7 +67,7 @@ function submit(key, urgent, rank, fn) {
       if (i >= 0) { queue.splice(i, 1); reject(cancelledError()); } else if (job.started) ctl.abort(cancelledError());
     };
   });
-  job.promise.then(() => inflight.delete(key), () => inflight.delete(key));
+  job.promise.then(() => { inflight.delete(key); runOrder.delete(key); }, () => { inflight.delete(key); runOrder.delete(key); });
   inflight.set(key, job);
   queue.push(job);
   pumpQueue();
@@ -184,16 +187,22 @@ async function handleSubtitles(req, res) {
     const p = c.status === 'ok' && TARGETS[target].pronouns ? (c.cached ? mergePronouns(meta.pronouns, x.pronouns) : mergePronouns(x.pronouns, meta.pronouns)) : null;
     return { ...c, ...(p ? { pronouns: p } : {}) };
   };
+  // Việc của đoạn này ở ngôn ngữ đích khác (khoá = file cache). Đổi ngôn ngữ lúc đoạn đang dịch: chờ việc đó rồi dịch từ dòng gốc
+  // của nó, khỏi nhận dạng lần nữa (verifier 4/11, F2). Chỉ chờ việc bắt đầu trước (runOrder), để hai việc không chờ nhau.
+  const otherKeys = () => TARGET_CODES.filter(t => t !== target).flatMap(t => [lyrics, !lyrics].map(l => cacheFile(fileSpan, kindOf(t, l))));
   const hit = ready();
   if (hit) return send(res, 200, withPronouns(fromCache(hit)));
   let job = inflight.get(key);
-  if (retarget && !job && !otherTarget()) return send(res, 200, { id, from: meta.from, to: meta.to, status: 'need_audio', target });
+  if (retarget && !job && !otherTarget() && !otherKeys().some(k => inflight.has(k))) return send(res, 200, { id, from: meta.from, to: meta.to, status: 'need_audio', target });
   if (job && !job.started) { job.urgent = job.urgent || !!meta.urgent; job.rank = Math.min(job.rank, rankOf(meta.rank)); job.seq = ++seq; pumpQueue(); }   // lại được hỏi: đẩy lên
   // Dòng dịch xong trước (OpenAI stream): việc giữ bản mới nhất (partials) và báo các request đang chờ nó (listeners), kể cả
   // request nhập vào việc đang chạy của request khác.
   const feed = (job && job.feed) || { partials: null, listeners: new Set() };
   if (!job) {
     // TOD_DUMP=1: giữ âm thanh nhận được ở work/dump (tên file kèm audioStart) để soi lỗi ASR, mốc thời gian. Chỉ để trên máy, xoá sau khi xong.
+    // Âm thanh gửi lên; yêu cầu đổi ngôn ngữ không kèm âm thanh thì null. Khai báo trước TOD_DUMP (verifier 4/11, F1: đọc trước
+    // khi khai báo làm mọi đoạn lỗi ở server đo).
+    const buf = retarget ? null : Buffer.from(chunked ? meta.aac : meta.b64, 'base64');
     if (process.env.TOD_DUMP && buf) {
       const dir = path.join(CACHE, '..', 'dump');
       fs.mkdirSync(dir, { recursive: true });
@@ -253,11 +262,10 @@ async function handleSubtitles(req, res) {
       // Rút gọn sau (extension từ 0.2.42 gửi condenseLater: true cùng stream: true): đoạn gấp, dịch sẵn vẫn trả kết quả ngay như
       // trên, rồi mới rút gọn dòng dài; bản rút gọn gửi thêm một dòng { condensed: [dòng…] } sau dòng kết quả, và ghi đè vào cache.
       // Extension chỉ thay những dòng chưa hiện (chủ dự án 4/11: giữ sub ra sớm, ROADMAP §6).
-      later = CONDENSE && !quick && !opts.condense && meta.stream === true && meta.condenseLater === true;
+      later = CONDENSE && !!TARGETS[target].condense && !quick && !opts.condense && meta.stream === true && meta.condenseLater === true;
     }
     opts.lyrics = lyrics;
     opts.target = target;
-    const buf = retarget ? null : Buffer.from(chunked ? meta.aac : meta.b64, 'base64');
     // Kết quả nhận dạng giọng nói giữ theo mã băm âm thanh (cùng đoạn mà gửi dư khác nhau thì âm thanh, mốc thời gian
     // khác nhau): dịch lỗi rồi extension gửi lại thì không trả tiền ASR lần nữa. Có kết quả cuối thì xoá, trừ đoạn có câu
     // hát (cùng điều kiện noSinging): đổi chế độ lời bài hát thì đoạn đó phải làm lại, giữ ASR để khỏi trả tiền lần nữa.
@@ -299,10 +307,17 @@ async function handleSubtitles(req, res) {
       const tmeta = { desc: meta.desc, hashtags: meta.hashtags, author, pronouns: TARGETS[target].pronouns ? meta.pronouns : null };
       // Đoạn đã có ở ngôn ngữ đích khác: kết quả bỏ qua dùng lại luôn; có dòng gốc thì chỉ dịch, không nhận dạng lại (cả khi
       // yêu cầu có âm thanh). Yêu cầu không âm thanh mà kết quả kia vừa mất (cache bị xoá): need_audio, không cache.
+      runOrder.set(key, ++runN);
+      if (chunked && !otherTarget()) {
+        const mine = runOrder.get(key);
+        const earlier = otherKeys().filter(k => inflight.get(k)?.started && runOrder.get(k) < mine).map(k => inflight.get(k).promise.catch(() => {}));
+        if (earlier.length) await Promise.race([Promise.all(earlier), new Promise(r => { setTimeout(r, CONTEXT_WAIT_MS); signal?.addEventListener('abort', r, { once: true }); })]);
+        signal?.throwIfAborted();
+      }
       const other = chunked ? otherTarget() : null;
       if (other?.skip) {
         const { debug: _d, cached: _c, ...x } = other.skip;
-        const out = { ...x, target };
+        const out = { ...x, target, reused: other.skip.target || 'vi' };
         writeCache(file, out);
         return out;
       }
@@ -359,6 +374,7 @@ async function handleSubtitles(req, res) {
       // Dòng lượt dịch đầu bỏ trống hay còn chữ Hán: đã dịch lại; dòng vẫn phải bỏ thì in ra (lý do, chữ gốc).
       (out.debug?.mtFix && !out.cached ? ` · dịch lại ${out.debug.mtFix.retried} dòng` + (out.debug.mtFix.ok ? ` (sửa được ${out.debug.mtFix.fixed})` : ' (lượt dịch lại lỗi)') + (out.debug.mtFix.keptHan ? `, ${out.debug.mtFix.keptHan} dòng còn chữ Hán vẫn hiện` : '') + (out.debug.mtFix.wrongLang ? `, ${out.debug.mtFix.wrongLang} dòng sai ngôn ngữ (wrong_lang) vẫn hiện` : '')
         + out.debug.mtFix.dropped.map(d => `\n    bỏ dòng (${d.why === 'han' ? 'còn chữ Hán' : 'dịch trống'}): ${d.zh}`).join('') : '') +
+      (out.reused && !out.cached ? ` · dùng lại kết quả bỏ qua của ${out.reused}` : '') +
       (out.retargeted && !out.cached ? ` · dịch từ dòng gốc đã có (${out.retargeted}), không nhận dạng lại` : '') +
       (job.startedAt - job.at > 300 ? ` · xếp hàng ${job.startedAt - job.at} ms` : '') +
       (out.heard ? `\n    nghe được: ${out.heard}` : '') +

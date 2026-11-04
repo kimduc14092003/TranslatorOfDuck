@@ -868,7 +868,7 @@ export async function translate(meta, cues, context = [], signal, { far = false,
   const changed = new Set();
   if (bad.length) {
     try {
-      const rs = AbortSignal.any([signal, AbortSignal.timeout((condense ? 2 : 1) * MT_TIMEOUT_MS)].filter(Boolean));
+      const rs = AbortSignal.any([signal, AbortSignal.timeout((condense && pack.condense ? 2 : 1) * MT_TIMEOUT_MS)].filter(Boolean));
       // Dòng ngay trước, ngay sau mỗi dòng lỗi (3 dòng mỗi phía), và dòng cuối đoạn trước khi dòng lỗi ở đầu đoạn.
       const near = new Set(bad.flatMap(c => { const i = out.indexOf(c); return out.slice(Math.max(0, i - 3), i + 4); }));
       const around = out.filter(c => near.has(c) && !bad.includes(c) && c.vi).map(c => ({ zh: c.zh, vi: c.vi }));
@@ -885,7 +885,9 @@ export async function translate(meta, cues, context = [], signal, { far = false,
         if (!v || (c.vi && hanOut(v) > hanOut(c.vi))) continue;
         // Không đổi một dòng hiện được thành dòng phải bỏ (bản dịch lại chép cả câu Hán vào ngoặc; verifier 3/11).
         if (keep(c) && !keep({ ...c, vi: v })) continue;
-        if (pack.wrongLang && pack.wrongLang(v) && !(c.vi && pack.wrongLang(c.vi))) continue;   // không đổi dòng đúng ngôn ngữ thành sai
+        // Không đổi dòng đúng ngôn ngữ thành sai. Dòng đang trống thì nhận cả bản sai ngôn ngữ (gắn wrong_lang, vẫn hiện): mất câu tệ
+        // hơn (verifier 4/11, F5).
+        if (pack.wrongLang && pack.wrongLang(v) && c.vi && !pack.wrongLang(c.vi)) continue;
         if (v !== c.vi) changed.add(c);
         c.vi = v; c.flags = flagsOf(c, v);
       }

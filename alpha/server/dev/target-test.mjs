@@ -48,23 +48,38 @@ const providers = http.createServer((req, res) => {
     const json = (o) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
     if (req.url.endsWith('/multimodal-generation/generation')) {
       asrCalls++;
+      if (asrDelay) return setTimeout(() => answerAsr(body, json), asrDelay);
+      return answerAsr(body, json);
+    }
+    if (req.url.endsWith('/v1/chat/completions')) {
+      const b = JSON.parse(body);
+      const content = b.messages[0].content;
+      mtBodies.push(content);
+      return answerMt(b, content, res, json);
+    }
+    res.writeHead(404); res.end();
+  });
+});
+let asrDelay = 0;
+function answerAsr(body, json) {
+  {
       const b64 = JSON.parse(body).input.messages[0].content[0].input_audio.data;
       const seconds = Math.round((Buffer.from(b64.split(',')[1], 'base64').length * 8) / 48000);
       const words = WORDS[seconds < 10 ? 8 : seconds < 14 ? 12 : 16];
       if (!words.length) return json({ output: { sentences: [], text: '' } });
       const sentence = { begin_time: words[0].begin_time, end_time: words.at(-1).end_time, text: words.map(w => w.text + w.punctuation).join(''), words };
       return json({ output: { sentence, text: sentence.text } });
-    }
-    if (req.url.endsWith('/v1/chat/completions')) {
-      const b = JSON.parse(body);
-      const content = b.messages[0].content;
-      mtBodies.push(content);
+  }
+}
+function answerMt(b, content, res, json) {
+  {
       let out;
       if (/^Lines: /m.test(content)) {
         // Câu lệnh tiếng Anh: khoá 'text'.
         const lines = JSON.parse(content.match(/^Lines: (.*)$/m)[1]);
-        const wrong = content.includes('WRONGLANG');
-        out = { cues: lines.map(l => ({ id: l.id, text: wrong && l.zh.includes('陀螺') ? WRONG : pick(EN, l.zh) })) };
+        const wrong = content.includes('WRONGLANG') || (content.includes('EMPTYFIRST') && /^Translate again/.test(content));
+        const empty = content.includes('EMPTYFIRST') && !/^Translate again/.test(content);
+        out = { cues: lines.map(l => ({ id: l.id, text: l.zh.includes('陀螺') && empty ? '' : wrong && l.zh.includes('陀螺') ? WRONG : pick(EN, l.zh) })) };
       } else {
         const lines = JSON.parse(content.match(/^Các dòng: (.*)$/m)[1]);
         out = { pronouns: { pairs: [] }, cues: lines.map(l => ({ id: l.id, vi: pick(VI, l.zh) })) };
@@ -76,11 +91,8 @@ const providers = http.createServer((req, res) => {
       const step = Math.ceil(text.length / 6);
       for (let i = 0; i < text.length; i += step) res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: text.slice(i, i + step) } }] })}\n\n`);
       res.end('data: [DONE]\n\n');
-      return;
-    }
-    res.writeHead(404); res.end();
-  });
-});
+  }
+}
 await new Promise(r => providers.listen(0, '127.0.0.1', r));
 const PROV = `http://127.0.0.1:${providers.address().port}`;
 const port = 24787 + Math.floor(Math.random() * 1000);
@@ -88,7 +100,7 @@ const WORK = path.join(TMP, 'work');
 const server = spawn(process.execPath, [path.join(HERE, '..', 'server.mjs')], {
   env: { ...process.env, PORT: String(port), TOD_WORK: WORK, FFMPEG: ffmpeg, DASHSCOPE_API_KEY: 'test', GEMINI_API_KEY: '',
     OPENAI_API_KEY: 'test-openai', OPENAI_MODEL: 'test-model', OPENAI_REASONING_EFFORT: '', DASHSCOPE_BASE: PROV, OPENAI_BASE: PROV + '/v1',
-    FUNASR_MODEL: 'fun-asr-flash-2026-06-15', MAX_PARALLEL: '2', TOD_CONDENSE: '', MT_TIMEOUT_MS: '2000' },
+    FUNASR_MODEL: 'fun-asr-flash-2026-06-15', MAX_PARALLEL: '4', TOD_CONDENSE: '', MT_TIMEOUT_MS: '2000', TOD_DUMP: '1' },   // TOD_DUMP như server đo (alpha/dev/real)
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let log = '';
@@ -225,6 +237,7 @@ try {
     assert.equal(s2.last.status, 'skipped');
     assert.equal(s2.last.label, s1.last.label);
     assert.equal(s2.last.target, 'en');
+    assert.equal(s2.last.reused, 'vi');
     assert.deepEqual(counts(), c6);
     assert.ok(cacheFiles().includes(`${C}.0-8.en.lyr.${V}.json`));
   });
@@ -246,6 +259,35 @@ try {
     const wl = TARGETS.en.wrongLang;
     for (const s of ['Wang Xiaoming loves café and Pokémon.', 'Rosé sings with Lǐ Míng.', 'Hello my friend, how are you?']) assert.equal(wl(s), false, s);
     for (const s of ['Xin chào các bạn, hôm nay đi ăn lẩu.', WRONG, 'Mình đang đứng trước cổng trụ sở BLG']) assert.equal(wl(s), true, s);
+  });
+
+  // 7b. Lượt đầu bỏ trống dòng, lượt dịch lại trả tiếng Việt: giữ câu (gắn wrong_lang), không mất câu (verifier 4/11, F5).
+  const D2 = '7500000000000000405';
+  const w2 = await post(base(D2, { target: 'en', desc: '陀螺 EMPTYFIRST', from: 0, to: 10, audioStart: 0, aac: aac(12) }));
+  t('dòng trống ở lượt đầu, lượt dịch lại sai ngôn ngữ: vẫn giữ câu', () => {
+    assert.deepEqual(w2.last.cues.map(c => c.vi), [EN.大家好, EN.王小明, WRONG]);
+  });
+
+  // 9. Hai ngôn ngữ cùng lúc cho cùng một đoạn (đổi ngôn ngữ lúc đoạn đang chạy): ngôn ngữ sau chờ việc đang chạy, dịch từ dòng
+  // gốc của nó; chỉ một lần nhận dạng. Yêu cầu không âm thanh lúc đó cũng chờ, không trả need_audio (verifier 4/11, F2).
+  const E = '7500000000000000406';
+  asrDelay = 300;
+  const c9 = counts();
+  const [p1, p2, p3] = await Promise.all([
+    post(base(E, { from: 0, to: 10, audioStart: 0, aac: aac(12) })),
+    new Promise(r => setTimeout(r, 50)).then(() => post(base(E, { target: 'en', from: 0, to: 10, audioStart: 0, aac: aac(12) }))),
+    new Promise(r => setTimeout(r, 100)).then(() => post(base(E, { target: 'en', from: 0, to: 10, retarget: true }))),
+  ]);
+  asrDelay = 0;
+  t('hai ngôn ngữ cùng lúc: một lần nhận dạng, ngôn ngữ sau dịch từ dòng gốc, yêu cầu không âm thanh chờ chứ không need_audio', () => {
+    assert.equal(p1.last.status, 'ok', JSON.stringify(p1.last));
+    assert.equal(p2.last.status, 'ok', JSON.stringify(p2.last));
+    assert.equal(p3.last.status, 'ok', JSON.stringify(p3.last));
+    assert.equal(p2.last.retargeted, 'vi');
+    assert.equal(counts().asr - c9.asr, 1, 'nhận dạng hai lần');
+  });
+  t('TOD_DUMP=1 (server đo): yêu cầu có âm thanh vẫn chạy, giữ âm thanh ở work/dump', () => {
+    assert.ok(fs.readdirSync(path.join(WORK, 'dump')).some(f => f.endsWith('.aac')));
   });
 
   // 8. Ngôn ngữ lạ: 400; bump theo ngôn ngữ.
