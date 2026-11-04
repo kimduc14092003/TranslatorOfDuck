@@ -1572,6 +1572,21 @@ Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt
   - Bản dịch đọc tự nhiên ("If you understand this story," → "Nếu các bạn hiểu câu chuyện này,"). Lượt vi chạy trên code trước bản sửa luật bài hát cuối; lượt en trên code cuối.
   - Đúng dòng 96,4% (dưới mốc 98%): 15/17 lần chụp sai là trống, chưa tra từng lần.
 
+## 6av. So model nhận dạng trên bộ video thử (4/11, giai đoạn 3, `alpha/dev/real/asr-bench.mjs`)
+
+- 87 đoạn của 13 video (chữ đồng thuận: Hán 64, Nhật 6, Latin 1). Gọi đồng bộ, base64 mp3, tự nhận ngôn ngữ. Không có bản chép tay: số chênh (CER) là mức hai model chép khác nhau, không phải độ chính xác.
+
+  | Model | Đoạn ok | p50 | p95 | Mốc từng từ | Từ kéo dài > 2 s | Báo ngôn ngữ đúng |
+  |---|---|---|---|---|---|---|
+  | qwen3-asr-flash | 87/87 | 1,43 s | 2,28 s | không (đồng bộ) | — | 85/87 |
+  | qwen-audio-3.1-asr-flash (đang dùng) | 87/87 | 1,66 s | 3,71 s | có | 11% đoạn (14 từ) | không báo |
+  | gemini-3.5-transcribe | 26/87 | 5,35 s | 40,6 s | có | 0 | không báo |
+
+  - Chênh nhau: hai model Alibaba 0,11–0,12; Gemini so với hai model kia 0,18–0,21.
+  - Gemini: gói miễn phí chỉ 25 lần gọi mỗi ngày (61 lần 429). Lượt đầu có 16 đoạn lỗi mạng (ENOTFOUND) ở mọi model, chạy lại được.
+  - Không gọi: `fun-asr` (chỉ bất đồng bộ qua link công khai), ElevenLabs, Azure (chưa có key).
+- Chưa biết model nào đúng hơn: cần nghe lại các đoạn chênh nhau nhất (`node asr-bench.mjs asr-full --top 15`); dữ liệu giữ ở `alpha/server/work/` tới khi chủ dự án nghe xong, rồi `node asr-bench.mjs --clean asr-full && node run.mjs --clean asr-full`.
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).
