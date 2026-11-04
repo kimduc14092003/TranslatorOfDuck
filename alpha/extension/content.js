@@ -350,20 +350,27 @@
   // redo: k -> phần âm thanh gửi dư (PRE hay PRE_SEEK) của đoạn bị bỏ khi đổi chế độ lời bài hát (resetResults).
   // pron, pronGen, pronQuick: bản đồ xưng hô của video (takePron).
   // tgt: ngôn ngữ đích của chunks, quick; stash: ngôn ngữ khác -> { chunks, quick } kết quả cuối đã có (switchTarget).
-  const vid = (id) => { let v = vids.get(id); if (!v) { v = { chunks: new Map(), quick: new Map(), cues: [], redo: new Map(), pron: null, pronGen: 0, pronQuick: false, tgt: targetLang(), stash: new Map() }; vids.set(id, v); } return v; };
+  const vid = (id) => { let v = vids.get(id); if (!v) { v = { chunks: new Map(), quick: new Map(), cues: [], redo: new Map(), pron: null, pronGen: 0, pronQuick: false, tgt: targetLang(), stash: new Map(), needAudio: new Set() }; vids.set(id, v); } return v; };
+  // Khoá yêu cầu: "<id>:<k>" (đoạn) hay "<id>:q<from>" (mẩu nhanh); ngôn ngữ đích khác tiếng Việt thêm "@<mã>". Background.js chuyển
+  // khoá nguyên vẹn trong tin dòng tạm, kể cả worker bản cũ không chuyển target (verifier 4/11, F1, F2): dòng tạm của ngôn ngữ
+  // này không lọt vào yêu cầu của ngôn ngữ kia cùng đoạn. Khoá tiếng Việt giữ như cũ.
+  const keyOf = (id, part, t) => id + ':' + part + (t && t !== 'vi' ? '@' + t : '');
   // Bảng xưng hô chỉ dùng khi dịch sang tiếng Việt.
   const pronFor = (v, t) => (t === 'vi' ? pronPayload(v) : {});
   // Đoạn (kind 'c', khoá k) hay mẩu nhanh ('q', khoá from) đã có kết quả cuối ở ngôn ngữ khác: thử xin bản dịch không kèm âm
   // thanh (retarget), server dịch từ dòng gốc đã lưu.
-  const otherDone = (v, kind, key) => [...v.stash].some(([t, s]) => {
+  // needAudio: "<ngôn ngữ>:<c|q><khoá>" server đã trả need_audio, lần sau gửi âm thanh luôn.
+  const otherDone = (v, kind, key) => !v.needAudio.has(v.tgt + ':' + kind + key) && [...v.stash].some(([t, s]) => {
     const x = t !== v.tgt && (kind === 'q' ? s.quick : s.chunks).get(key);
     return !!x && (x.status === 'ok' || x.status === 'skipped');
   });
-  // Gửi yêu cầu không âm thanh; trả kết quả, hay null khi server cần âm thanh (need_audio) hay đoạn không còn cần.
+  // Gửi yêu cầu không âm thanh; trả kết quả, hay null khi phải gửi âm thanh: server trả need_audio, hay lỗi không ghi target
+  // (server trước giai đoạn 1 trả 400 cho yêu cầu không âm thanh; đường gửi âm thanh sẽ báo "server cũ": verifier 4/11, F4).
   async function tryRetarget(id, key, body) {
     let r;
     try { r = await chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key, payload: { ...body, retarget: true } }); } catch (_) { return null; }
-    return r && r.status && r.status !== 'need_audio' ? r : null;
+    if (!r || !r.status || r.status === 'need_audio' || (r.status === 'error' && typeof r.target !== 'string')) return null;
+    return r;
   }
   // Xưng hô theo cả video (P2, soát 837 dòng 1/11: khoảng 26/62 lỗi xưng hô là trôi khi sang đoạn mới, vd.
   // 7492643322209619257 nói 'chị' mà đoạn hát sau thành 'em'). Server trả "pronouns" (ai nói với ai, cặp đã chọn;
@@ -579,11 +586,11 @@
         // Đoạn bị bỏ vì tải chậm: chỗ đang xem ra khỏi nó (hết cần, hay tua lùi về đoạn trước) thì xoá, quay lại thì tải lại.
         if (c.slow && (!wanted.has(id + ':' + k) || (id === currentId && v.plan && chunkAt(v.plan, playhead) !== k))) { v.chunks.delete(k); continue; }
         if (c.status !== 'pending' || wanted.has(id + ':' + k)) continue;
-        if (c.sent) { c.sent = false; keys.push(id + ':' + k); if (c.partial) { c.partial = null; dropped = true; } } else if (c.ctl) c.ctl.abort();
+        if (c.sent) { c.sent = false; keys.push(keyOf(id, k, c.target)); if (c.partial) { c.partial = null; dropped = true; } } else if (c.ctl) c.ctl.abort();
       }
       for (const [qa, q] of v.quick) {
         if (q.status !== 'pending' || quickWanted(id, q)) continue;
-        if (q.sent) { q.sent = false; keys.push(id + ':q' + qa); if (q.partial) { q.partial = null; dropped = true; } } else q.ctl.abort();
+        if (q.sent) { q.sent = false; keys.push(keyOf(id, 'q' + qa, q.target)); if (q.partial) { q.partial = null; dropped = true; } } else q.ctl.abort();
       }
       if (dropped) mergeCues(v);
       headCheck(id, v);   // lượt tải đầu video không còn ai cần (vừa lướt đi, tua đi khi chưa có ai chờ) thì ngắt
@@ -1135,14 +1142,15 @@
     };
     try {
       // Mẩu này đã có ở ngôn ngữ khác (vừa đổi ngôn ngữ): xin bản dịch không kèm âm thanh trước.
-      if (otherDone(v, 'q', from)) {
+      if (otherDone(v, 'q', from) && quickWanted(id, q)) {
         if (!worker) await workerReady();
         Object.assign(q, { sent: true, sentAt: Date.now(), lyrics: lyricsOn(), target: targetLang() });
         const pg = v.pronGen;
-        const r = await tryRetarget(id, id + ':q' + from, { id, desc: d.desc, hashtags: d.hashtags, ...authorPayload(d), durationMs: d.durationMs, from, to,
+        const r = await tryRetarget(id, keyOf(id, 'q' + from, q.target), { id, desc: d.desc, hashtags: d.hashtags, ...authorPayload(d), durationMs: d.durationMs, from, to,
           quick: true, urgent: true, rank: 0, lyrics: q.lyrics, stream: workerStream, target: q.target, ...pronFor(v, q.target) });
         if (v.quick.get(from) !== q) return;
         if (r) { noteReply(r); return done(r, pg); }
+        v.needAudio.add(q.target + ':q' + from);
         q.sent = false;
       }
       const media = await ensureMedia(id);
@@ -1173,7 +1181,7 @@
       q.sent = true; q.sentAt = Date.now(); q.lyrics = lyricsOn(); q.target = targetLang();
       mark(id, 'quickPost');
       const pg = v.pronGen;
-      chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':q' + from, payload: {
+      chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: keyOf(id, 'q' + from, q.target), payload: {
         id, desc: d.desc, hashtags: d.hashtags, ...authorPayload(d), durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
         quick: true, urgent: true, rank: 0, lyrics: q.lyrics, stream: workerStream, target: q.target, ...pronFor(v, q.target), aac: toBase64(aac) } })
         .then((r) => { mark(id, 'quickReply'); r = r && r.status ? r : { status: 'error', error: (r && r.error) || 'không có phản hồi', unreachable: true }; noteReply(r); done(r, pg); })
@@ -1225,12 +1233,19 @@
         const next = upcoming().indexOf(id);
         Object.assign(entry, { sent: true, sentAt: Date.now(), from, to, urgent: urgentChunk(id, k, plan0), lyrics: lyricsOn(), target: targetLang() });
         const pg = v.pronGen;
-        const r = await tryRetarget(id, id + ':' + k, { id, desc: d.desc, hashtags: d.hashtags, ...authorPayload(d), durationMs: d.durationMs, from, to,
+        // Không chờ trả lời trong hàng tải (verifier 4/11, F3: chờ thì giữ chỗ của hàng suốt lúc server dịch). need_audio: bỏ mục
+        // này, nhớ needAudio; schedule() xin lại đoạn, lần đó tải và gửi âm thanh.
+        tryRetarget(id, keyOf(id, k, entry.target), { id, desc: d.desc, hashtags: d.hashtags, ...authorPayload(d), durationMs: d.durationMs, from, to,
           prev: k > 0 ? plan0[k - 1] : null, urgent: entry.urgent, prefetch: id !== currentId, lyrics: entry.lyrics, stream: workerStream,
-          target: entry.target, ...pronFor(v, entry.target), rank: id === currentId ? 0 : next >= 0 ? next + 1 : PREFETCH });
-        if (entry.ctl.signal.aborted || v.chunks.get(k) !== entry) { if (v.chunks.get(k) === entry) v.chunks.delete(k); return; }
-        if (r) return done({ ...r, from, to }, true, pg);
-        entry.sent = false;
+          ...(workerCondense ? { condenseLater: true } : {}), target: entry.target, ...pronFor(v, entry.target), rank: id === currentId ? 0 : next >= 0 ? next + 1 : PREFETCH })
+          .then((r) => {
+            if (v.chunks.get(k) !== entry) return;
+            if (r) return done({ ...r, from, to }, true, pg);
+            v.needAudio.add(entry.target + ':c' + k);
+            v.chunks.delete(k);
+            if (entry.partial) mergeCues(v);
+          });
+        return;
       }
       const media = await ensureMedia(id);
       const plan = planFor(id);
@@ -1278,7 +1293,7 @@
       Object.assign(entry, { sent: true, sentAt: Date.now(), from, to, urgent: urgentChunk(id, k, plan), lyrics: lyricsOn(), target: targetLang() });
       if (entry.head) mark(id, 'chunkPost');
       const pg = v.pronGen;
-      chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: id + ':' + k, payload: {
+      chrome.runtime.sendMessage({ type: 'subtitles', server: settings.server, key: keyOf(id, k, entry.target), payload: {
         id, desc: d.desc, hashtags: d.hashtags, ...authorPayload(d), durationMs: d.durationMs, from, to, audioStart: Math.round(w.startTime * 1000) / 1000,
         prev: k > 0 ? plan[k - 1] : null, urgent: entry.urgent, prefetch: id !== currentId, lyrics: entry.lyrics, stream: workerStream,
         ...(workerCondense ? { condenseLater: true } : {}), target: entry.target, ...pronFor(v, entry.target),
@@ -1675,15 +1690,18 @@
         }
         return out;
       };
+      // Lỗi tải không phụ thuộc ngôn ngữ (đoạn bỏ vì tải chậm, đang nghỉ sau 429): mang sang, khỏi tải lại ngay (verifier 4/11, F8).
+      const carry = [...v.chunks].filter(([, x]) => x.status === 'error' && (x.slow || x.rateLimited));
       const old = { chunks: keep(v.chunks), quick: keep(v.quick) };
       v.stash.set(v.tgt, old);
       const got = v.stash.get(t);
       v.stash.delete(t);
       v.chunks = got ? got.chunks : new Map();
       v.quick = got ? got.quick : new Map();
+      for (const [k, x] of carry) if (!v.chunks.has(k)) v.chunks.set(k, x);
       v.tgt = t;
       mergeCues(v);
-      if (id === currentId && headOf === id) {
+      if (settings.enabled && act && id === currentId && headOf === id) {
         for (const [from, q] of old.quick) if (q.status === 'ok' && playhead >= from - 1 && playhead < q.to && !v.quick.has(from)) runQuick(id, from, q.to, true);
       }
     }
@@ -1692,11 +1710,12 @@
     // Dòng dịch xong trước của một yêu cầu còn ở server (background.js chuyển từ NDJSON): giữ ở đoạn/mẩu nhanh đó (partial,
     // đủ các dòng tới lúc đó), hiện tạm (mergeCues). key như lúc gửi: "<id>:<k>" (đoạn) hay "<id>:q<from>" (mẩu nhanh).
     if (msg && msg.type === 'partial') {
-      const m = typeof msg.key === 'string' && /^(\d+):(q?)(\d+)$/.exec(msg.key);
+      const m = typeof msg.key === 'string' && /^(\d+):(q?)(\d+)(?:@([a-z]{2}))?$/.exec(msg.key);
       const v = m && vids.get(m[1]);
       const x = v && (m[2] ? v.quick.get(Number(m[3])) : v.chunks.get(Number(m[3])));
-      // Dòng tạm của yêu cầu gửi theo ngôn ngữ khác (vừa đổi ngôn ngữ, cùng khoá): bỏ. Tin không ghi target: tiếng Việt.
-      if (x && x.status === 'pending' && x.sent && Array.isArray(msg.cues) && (typeof msg.target === 'string' ? msg.target : 'vi') === (x.target || 'vi')) {
+      // Dòng tạm của yêu cầu gửi theo ngôn ngữ khác (vừa đổi ngôn ngữ): bỏ. Ngôn ngữ lấy từ khoá (keyOf), và target của tin nếu có.
+      const kt = m && (m[4] || 'vi');
+      if (x && x.status === 'pending' && x.sent && Array.isArray(msg.cues) && kt === (x.target || 'vi') && (typeof msg.target !== 'string' || msg.target === kt)) {
         if (!x.partial) mark(m[1], m[2] ? 'quickPartial' : (x.head ? 'chunkPartial' : 'partial'));   // mốc: dòng tạm đầu tiên
         x.partial = msg.cues.filter(c => c && typeof c.start === 'number' && typeof c.end === 'number' && c.end > c.start && typeof c.vi === 'string' && c.vi)
           .slice(0, 200).map(c => ({ start: c.start, end: c.end, se: typeof c.se === 'number' ? c.se : c.end, vi: c.vi.slice(0, 300),
@@ -1712,11 +1731,14 @@
     // kết quả mới. Sai số dòng hay lệch mốc dù một dòng: bỏ cả tin. Đoạn chưa có kết quả (tin tới trước câu trả lời, gần như không
     // xảy ra: rút gọn mất cả giây) thì bỏ qua.
     if (msg && msg.type === 'condensed') {
-      const m = typeof msg.key === 'string' && /^(\d+):(\d+)$/.exec(msg.key);
+      const m = typeof msg.key === 'string' && /^(\d+):(\d+)(?:@([a-z]{2}))?$/.exec(msg.key);
       const v = m && vids.get(m[1]);
       const k = m && Number(m[2]);
-      const c = v && v.chunks.get(k);
-      if (c && c.status === 'ok' && (typeof msg.target === 'string' ? msg.target : 'vi') === replyTarget(c) && Array.isArray(c.cues) && Array.isArray(msg.cues) && msg.cues.length === c.cues.length
+      // Đoạn của ngôn ngữ đã cất (vừa đổi ngôn ngữ): thay trong bảng đã cất, đổi lại là có bản rút gọn (verifier 4/11, F7).
+      const kt = m && (m[3] || 'vi');
+      const map = v && (kt === v.tgt ? v.chunks : (v.stash.get(kt) || {}).chunks);
+      const c = map && map.get(k);
+      if (c && c.status === 'ok' && kt === replyTarget(c) && (typeof msg.target !== 'string' || msg.target === kt) && Array.isArray(c.cues) && Array.isArray(msg.cues) && msg.cues.length === c.cues.length
         && msg.cues.every((y, i) => y && y.start === c.cues[i].start)) {
         const t = m[1] === currentId && headOf === currentId ? playhead - (Number(settings.delay) || 0) + 0.25 : -Infinity;
         let n = 0;
@@ -1726,7 +1748,7 @@
           n++;
           return { ...x, vi: y.vi.slice(0, 300) };
         });
-        if (n) { v.chunks.set(k, { ...c, cues, condensed: (c.condensed || 0) + n }); mergeCues(v); }
+        if (n) { map.set(k, { ...c, cues, condensed: (c.condensed || 0) + n }); mergeCues(v); }
       }
       return false;
     }

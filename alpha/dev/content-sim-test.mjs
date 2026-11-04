@@ -1770,7 +1770,7 @@ await t('Ngôn ngữ đích: mặc định gửi target vi; đổi sang en giữ
   for (let i = 0; i < 2; i++) await e.tick();
   assert.deepEqual(e.cancels().slice(cancelled), [], 'đổi ngôn ngữ không huỷ gì');
   assert.equal(e.subText(), null, 'không hiện chữ tiếng Việt khi đã chọn tiếng Anh');
-  const re = subsOf(e, A + ':0').slice(1);
+  const re = subsOf(e, A + ':0@en');   // khoá của yêu cầu tiếng Anh có hậu tố @en
   assert.equal(re.length, 1, JSON.stringify(re.map((m) => m.payload)));
   assert.equal(re[0].payload.retarget, true);
   assert.equal(re[0].payload.target, 'en');
@@ -1780,12 +1780,13 @@ await t('Ngôn ngữ đích: mặc định gửi target vi; đổi sang en giữ
   e.onMsg({ type: 'partial', key: A + ':0', target: 'vi', cues: [C(2.2, 4, 'Tạm tiếng Việt')] }, {}, () => {});
   await e.tick();
   assert.equal(e.subText(), null);
-  e.onMsg({ type: 'partial', key: A + ':0', target: 'en', cues: [C(2.2, 4, 'Hello (partial)')] }, {}, () => {});
+  // Worker bản cũ (0.2.44) chuyển dòng tạm không có target: ngôn ngữ lấy từ khoá (verifier 4/11, F1).
+  e.onMsg({ type: 'partial', key: A + ':0@en', cues: [C(2.2, 4, 'Hello (partial)')] }, {}, () => {});
   await e.tick();
   assert.equal(e.subText(), 'Hello (partial)');
   // Việc cũ (gửi theo tiếng Việt) trả về sau khi đã đổi: bỏ.
   for (const k of pending) await e.reply(k, { status: 'ok', label: 'speech', target: 'vi', sung: 0, cues: [C(2.2, 4, 'Cũ tiếng Việt')] });
-  await e.reply(A + ':0', { status: 'ok', label: 'speech', target: 'en', sung: 0, cues: [C(2.2, 4, 'Hello')] });
+  await e.reply(A + ':0@en', { status: 'ok', label: 'speech', target: 'en', sung: 0, cues: [C(2.2, 4, 'Hello')] });
   await e.tick();
   assert.equal(e.subText(), 'Hello');
   assert.equal(e.badge(), 'EN');
@@ -1798,7 +1799,6 @@ await t('Ngôn ngữ đích: mặc định gửi target vi; đổi sang en giữ
   assert.equal(subsOf(e, A + ':0').length, before);
   assert.equal(e.subText(), 'Xin chào');
   assert.equal(e.badge(), 'VI');
-  // Lần gửi sau theo tiếng Việt lại kèm bảng xưng hô.
 });
 
 await t('Ngôn ngữ đích: server trả need_audio cho yêu cầu không âm thanh thì tải và gửi âm thanh như thường, theo ngôn ngữ mới', async () => {
@@ -1809,13 +1809,13 @@ await t('Ngôn ngữ đích: server trả need_audio cho yêu cầu không âm t
   await e.reply(A + ':0', { status: 'ok', label: 'speech', target: 'vi', sung: 0, cues: [C(2.2, 4, 'Xin chào')] });
   e.onChanged({ settings: { newValue: { target: 'en' } } }, 'local');
   for (let i = 0; i < 2; i++) await e.tick();
-  await e.reply(A + ':0', { id: A, status: 'need_audio', target: 'en' });
+  await e.reply(A + ':0@en', { id: A, status: 'need_audio', target: 'en' });
   for (let i = 0; i < 4; i++) await e.tick();
-  const s0 = subsOf(e, A + ':0');
-  assert.equal(s0.length, 3, JSON.stringify(s0.map((m) => m.payload)));
-  assert.equal(s0[2].payload.target, 'en');
-  assert.ok(typeof s0[2].payload.audioStart === 'number' && !s0[2].payload.retarget, 'gửi kèm âm thanh');
-  await e.reply(A + ':0', { status: 'ok', label: 'speech', target: 'en', sung: 0, cues: [C(2.2, 4, 'Hello')] });
+  const s0 = subsOf(e, A + ':0@en');
+  assert.equal(s0.length, 2, JSON.stringify(s0.map((m) => m.payload)));
+  assert.equal(s0[1].payload.target, 'en');
+  assert.ok(typeof s0[1].payload.audioStart === 'number' && !s0[1].payload.retarget, 'gửi kèm âm thanh');
+  await e.reply(A + ':0@en', { status: 'ok', label: 'speech', target: 'en', sung: 0, cues: [C(2.2, 4, 'Hello')] });
   v.currentTime = 2.5; await e.tick();
   assert.equal(e.subText(), 'Hello');
 });
@@ -1831,6 +1831,54 @@ await t('Ngôn ngữ đích: đang chọn en mà server cũ trả kết quả kh
   v.currentTime = 2.5; await e.tick();
   assert.equal(e.subText(), null);
   assert.match(e.badge() || '', /^EN · lỗi: server cũ chỉ dịch tiếng Việt/);
+});
+
+await t('Ngôn ngữ đích: worker bản cũ (dòng tạm không có target): đổi en → vi lúc việc tiếng Anh còn ở server, dòng tạm tiếng Anh không hiện ở yêu cầu tiếng Việt cùng đoạn', async () => {
+  const e = makeEnv({ settings: { ...OLD, target: 'en' } });
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  assert.ok(subsOf(e, A + ':0@en').length === 1);
+  e.onChanged({ settings: { newValue: { target: 'vi' } } }, 'local');
+  for (let i = 0; i < 3; i++) await e.tick();
+  assert.equal(subsOf(e, A + ':0').length, 1, 'yêu cầu tiếng Việt của đoạn 0');
+  e.onMsg({ type: 'partial', key: A + ':0@en', cues: [C(2.2, 4, 'Hello from old EN job')] }, {}, () => {});
+  v.currentTime = 2.5; await e.tick();
+  assert.equal(e.subText(), null);
+  e.onMsg({ type: 'partial', key: A + ':0', cues: [C(2.2, 4, 'Tạm tiếng Việt')] }, {}, () => {});
+  await e.tick();
+  assert.equal(e.subText(), 'Tạm tiếng Việt');
+});
+
+await t('Ngôn ngữ đích: server cũ trả lỗi cho yêu cầu không âm thanh (HTTP 400, không có target): gửi lại kèm âm thanh, rồi báo server cũ', async () => {
+  const e = makeEnv({ settings: OLD });
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':0', { status: 'ok', label: 'speech', sung: 0, cues: [C(2.2, 4, 'Xin chào')] });   // server cũ: không có target
+  e.onChanged({ settings: { newValue: { target: 'en' } } }, 'local');
+  for (let i = 0; i < 2; i++) await e.tick();
+  await e.reply(A + ':0@en', { status: 'error', error: 'need id (digits) and aac or b64' });
+  for (let i = 0; i < 4; i++) await e.tick();
+  const s0 = subsOf(e, A + ':0@en');
+  assert.deepEqual(s0.map((m) => [!!m.payload.retarget, typeof m.payload.audioStart]), [[true, 'undefined'], [false, 'number']]);
+  await e.reply(A + ':0@en', { status: 'ok', label: 'speech', sung: 0, cues: [C(2.2, 4, 'Xin chào')] });
+  v.currentTime = 2.5; await e.tick();
+  assert.equal(e.subText(), null);
+  assert.match(e.badge() || '', /server cũ chỉ dịch tiếng Việt/);
+});
+
+await t('Ngôn ngữ đích: đổi en → vi → en nhanh lúc yêu cầu không âm thanh còn chờ: không giữ hàng tải, xin lại ngay', async () => {
+  const e = makeEnv({ settings: OLD });
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; const v = e.video(A, 2); v.paused = true;
+  for (let i = 0; i < 3; i++) await e.tick();
+  await e.reply(A + ':0', { status: 'ok', label: 'speech', target: 'vi', sung: 0, cues: [C(2.2, 4, 'Xin chào')] });
+  for (const t2 of ['en', 'vi', 'en']) { e.onChanged({ settings: { newValue: { target: t2 } } }, 'local'); for (let i = 0; i < 2; i++) await e.tick(); }
+  assert.equal(subsOf(e, A + ':0@en').length, 2, 'yêu cầu tiếng Anh lần hai đã gửi mà không chờ lần một');
+  await e.reply(A + ':0@en', { status: 'ok', label: 'speech', target: 'en', sung: 0, cues: [C(2.2, 4, 'Hello')] });
+  v.currentTime = 2.5; await e.tick();
+  assert.equal(e.subText(), 'Hello');
 });
 
 await t('Ngôn ngữ đích: nhãn lệch sub (phím ]) ghi mã ngôn ngữ đang chọn', async () => {
