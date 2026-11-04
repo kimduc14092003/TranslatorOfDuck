@@ -1492,6 +1492,49 @@ Chủ dự án chọn làm cả 4 hướng.
   - bỏ dòng nối liền dòng trước, sau khi tự thấy Δ 340 ms giả ở "…您对" + "得起当年…".
   Verifier kiểm: âm thanh các đoạn khớp nhau (tương quan ≥ 0,994, lệch ≤ 0,81 ms); mốc so với trình phát dựa trên lần đo 30/10 (§5).
 
+## 6as. Chọn ngôn ngữ đích: tiếng Việt hoặc tiếng Anh (4/11, extension 0.2.45, server; giai đoạn 1)
+
+- **Hợp đồng dữ liệu (khác bản ROADMAP gốc, verifier 4/11):** không đổi tên trường: `zh` là chữ gốc, `vi` là chữ dịch ở **mọi** ngôn ngữ đích. Không tăng `PIPELINE_VERSION` (vẫn `alpha-8`). Lý do: server cũ hay nhánh `main` đọc chung cache vẫn chạy, `cues.js`, bộ công cụ đo, các test cũ không phải đổi.
+  - Yêu cầu có `target` (thiếu thì `vi`; mã lạ trả 400 `unsupported_target`). `/health` có `targets: ['vi','en']`.
+  - Mọi trả lời mang `target`: kết quả, kết quả từ cache, dòng tạm NDJSON `{ partial, target }`, `{ condensed, target }`, huỷ, lỗi, `need_audio`.
+  - File cache: `<id>.<đoạn>.<target>[.lyr].<phiên bản>.json`. File tiếng Việt giữ tên cũ (`.vi.`, `.vi.lyr.`). File nhận dạng `.asr.<băm>.` dùng chung mọi ngôn ngữ.
+- **Gói ngôn ngữ** `alpha/server/langs.mjs` (`TARGETS.vi`, `TARGETS.en`): câu lệnh lượt đầu, dịch lại, rút gọn, gợi ý người đăng, schema, khoá JSON (`vi` / `text`), `cps` (cả hai 17), có bảng xưng hô không. Câu lệnh tiếng Việt giữ nguyên từng chữ: `dev/prompt-golden-test.mjs` so với `dev/golden/prompts-vi.json`.
+  - Tiếng Anh: không bảng xưng hô (bỏ bảng extension gửi), không có câu lệnh rút gọn, ngữ cảnh gửi model dùng khoá `text`.
+  - Kiểm sai ngôn ngữ (`wrongLang`): chỉ đếm chữ riêng của tiếng Việt (ă â đ ê ô ơ ư, dấu nặng, dấu hỏi), ≥ 2 từ và ≥ 30% số từ. Café, Pokémon, tên pinyin có dấu thanh không bị bắt. Dòng bị bắt vào lượt dịch lại; vẫn sai thì **vẫn giữ** (log `wrong_lang`), không bỏ. Dòng tạm sai ngôn ngữ thì không gửi. Câu ngắn kiểu "Em yêu anh" không bị bắt (verifier: chấp nhận).
+- **`source` trong file cache** (không gửi extension): dòng gốc kèm id, mốc, `sung`; `before`; các trường chung. Ngôn ngữ đích khác cho cùng đoạn dịch từ đó (`retranslate` trong `pipeline.mjs`): không nhận dạng lại, mốc giống hệt. Áp cả khi yêu cầu có âm thanh.
+  - `retarget: true` không kèm âm thanh: có `source` thì dịch, không có thì trả `need_audio`. Kết quả bỏ qua (nhạc, không lời) dùng lại cho ngôn ngữ kia (`reused`), trừ `untranslated`.
+  - Ngôn ngữ kia đang chạy cho đoạn đó (đổi ngôn ngữ lúc đoạn đang dịch): chờ việc đó rồi dịch từ `source` của nó, không nhận dạng hai lần.
+  - Chưa có ngữ cảnh cùng ngôn ngữ đích: dòng gốc cuối của đoạn trước (ngôn ngữ khác) làm "lời nói ngay trước".
+- **Extension 0.2.45:**
+  - Popup: ô "Dịch sang" (Tiếng Việt, English); "Bật sub"; `save()` chỉ ghi cài đặt đã lưu cộng ô vừa đổi (không ghi giá trị mặc định); server không có `targets` thì báo "server cũ chỉ dịch tiếng Việt".
+  - Khoá yêu cầu của ngôn ngữ khác tiếng Việt có hậu tố `@en` (`<id>:<k>@en`, `<id>:q<from>@en`); khoá tiếng Việt như cũ. Dòng tạm, bản rút gọn chỉ nhận khi ngôn ngữ trong khoá khớp yêu cầu. Nhờ vậy worker bản cũ (không chuyển `target`) vẫn không làm lẫn ngôn ngữ (verifier 4/11, F1).
+  - Đổi ngôn ngữ: kết quả cuối cất theo ngôn ngữ (`v.stash`), đổi lại là có ngay; lượt tải chưa gửi thì dừng; việc đã ở server không huỷ. Đoạn, mẩu nhanh đã có ở ngôn ngữ kia: gửi yêu cầu không âm thanh (không giữ chỗ hàng tải); `need_audio` hay server cũ trả 400 thì gửi kèm âm thanh.
+  - Bảng xưng hô chỉ gửi khi dịch sang tiếng Việt. Nhãn ghi `VI`/`EN` ở cả 4 chỗ. Trả lời không có `target` khi đang chọn tiếng Anh: báo lỗi "server cũ", không hiện chữ Việt.
+- **Test:** `dev/target-test.mjs` (19 kiểm tra, chạy với `TOD_DUMP=1` như server đo), `prompt-golden-test.mjs`; sim thêm 7 ca, popup 4, background 1. e2e thêm ca đổi sang English: 32 / 39 / 33 / 40 kiểm tra (mặc định, `E2E_FIRST10=1`, `E2E_MT=openai`, cả hai). e2e cần `NODE_PATH=alpha/dev/real/node_modules` và ffmpeg trên PATH.
+- **Bộ công cụ đo:** `run.mjs`/`watch.mjs --target en`, `--switch-at <giây>` (đổi sang ngôn ngữ kia lúc phát tới đó); `report.mjs` chấm riêng phần trước và sau khi đổi; giới hạn tốc độ đọc lấy từ gói ngôn ngữ.
+- **Hai đợt verifier:** server (1 blocker: `TOD_DUMP=1` làm mọi đoạn mới lỗi 500 vì đọc biến trước khi khai báo; đã sửa) và extension (1 major: worker cũ làm mất dòng tạm tiếng Anh; đã sửa bằng khoá). Các điểm nhỏ đã sửa, trừ: cache dùng chung với server cũ thì server cũ gửi cả `source` cho extension cũ (chỉ nặng hơn, không hỏng).
+- **Đo trên Douyin thật (4/11, server 8788, Chromium 9334, khách, 1×):**
+
+  | Video | Ngôn ngữ | Vế cần duyệt | Đúng dòng | Sub đầu | Đọc ≤ 17 | Tiếng Việt trước đây (đúng dòng) |
+  |---|---|---|---|---|---|---|
+  | 7701192992614370560 vlog nói nhanh, 3 phút | en | 0 | 97,0% | 5,9 s | 25% | 98,4–98,8% |
+  | 7696833663460553073 tiểu phẩm | en | 0 | 97,5% | 1,9 s | 71,9% | 95,5–98,3% |
+  | 7672279659249290548 kể chuyện | en | 0 | 97,4% | 4,4 s | 40,4% | 98,1–99,8% |
+  | 7675579923955846410 vlog, 0–60 s | vi | 0 | 98,3% | 5,4 s | 55,2% | 99,4–99,7% |
+  | cùng video, 60–120 s sau khi đổi | en | 0 | 92,8% | — | 51,9% | — |
+
+  - 0 vế mất, 0 lỗi, 0 lần chờ dịch. 241 dòng tiếng Anh: 0 dòng tiếng Việt, 0 còn chữ Hán, 0 dòng trống.
+  - Lúc đổi ngôn ngữ (giây 60): dòng tiếng Việt còn một lần chụp, rồi ~1 s "EN · đang dịch" (server dịch lại từ dòng gốc, không nhận dạng), rồi tiếng Anh. Phần lớn mức 92,8% là khoảnh khắc này trên một quãng ngắn.
+  - **Fun-ASR đã hết hạn mức miễn phí** (`AllocationQuota.FreeTierOnly`): mọi lượt hôm nay dùng `qwen-audio-3.1-asr-flash`, kể cả server hằng ngày. Số tiếng Việt trước đây có thể đo với Fun-ASR, nên so en với vi lẫn cả việc đổi model nhận dạng.
+  - Tốc độ đọc tiếng Anh thấp hơn (câu tiếng Anh dài hơn, rút gọn đang tắt). Chỉ theo dõi, theo quyết định 4/11.
+  - Đúng dòng tiếng Anh 97,0–97,5%, dưới mốc 98% một chút. **Chưa xác định** do ngôn ngữ hay do model nhận dạng; cần một lượt tiếng Việt cùng ngày (cùng qwen) để so.
+- **Còn chờ chủ dự án:** đọc bản tiếng Anh (`alpha/server/work/p1-en-lines.md`, chỉ trên máy, xoá sau khi đọc cùng `node alpha/dev/real/run.mjs --clean p1-en` và `--clean p1-switch`).
+- **Cài 0.2.45 vào Chromium của chủ dự án:** Chromium lúc đó đang tắt; đã dời `~/.tod-profile/Default/Service Worker` thành `Service Worker.prev-0244`. Lần mở sau sẽ nạp worker mới. **Chưa kiểm** worker đang chạy (`node alpha/dev/real/sw-source.mjs` khi Chromium mở).
+
+## 6at. Thử nhanh nền tảng thứ hai (4/11, giai đoạn 2, chỉ đọc)
+
+Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt: Bilibili trước (khách xem được, âm thanh DASH tách sẵn, phụ đề cần đăng nhập nên tự nhận dạng như Douyin); YouTube sau (phụ đề có sẵn nhưng cần PO token, âm thanh qua SABR; hướng là đọc phụ đề trình phát đã tải, cần thử có cửa sổ); TikTok để cuối.
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).

@@ -156,6 +156,8 @@ Tới khi chọn model nhận dạng cuối (giai đoạn 3), bảng điểm dù
 
 ### Giai đoạn 1: Chọn ngôn ngữ đích
 
+> **Trạng thái 4/11:** đã làm cho tiếng Anh (extension 0.2.45, HANDOFF §6as). Khác mục 2 bên dưới: không đổi tên `zh`/`vi`, không tăng `PIPELINE_VERSION`, khoá cache chưa có nền tảng và ngôn ngữ nguồn (để giai đoạn 3–5). Chưa làm: mục 7 (chuẩn Netflix theo ngôn ngữ, tiếng Anh tạm 17 ký tự/giây), mục 9 (chọn model theo cặp). Đo thật: 0 vế mất, đúng dòng 97,0–97,5% (dưới 98%, đo cùng lúc Fun-ASR hết hạn mức). Còn chờ bạn duyệt bản tiếng Anh.
+
 **Mục tiêu:** người xem chọn dịch sang tiếng Việt, tiếng Anh hay vài ngôn ngữ khác; chất lượng như tiếng Việt hiện nay.
 
 **Việc cần làm:**
@@ -190,6 +192,8 @@ Tới khi chọn model nhận dạng cuối (giai đoạn 3), bảng điểm dù
 **Xong khi:** tiếng Trung sang tiếng Anh đạt bảng điểm trên bộ video thử; tiếng Việt không kém đi.
 
 ### Giai đoạn 2: Thử nhanh nền tảng khác
+
+> **Trạng thái 4/11:** đã thử, chỉ đọc, không đăng nhập: [`docs/PLATFORMS.md`](PLATFORMS.md). Đề xuất: Bilibili trước, YouTube sau (đọc phụ đề trình phát đã tải), TikTok để cuối.
 
 **Mục tiêu:** biết nền tảng nào làm tiếp, và bằng cách nào. Nền tảng có phụ đề sẵn không cần nhận dạng giọng nói, có chữ của cả video từ đầu, nhiều ngôn ngữ. Đó là đường rẻ nhất tới "mọi ngôn ngữ, cả video" (PLAN §5.7, §7.2).
 
@@ -302,9 +306,11 @@ Một ngoại lệ có thể kéo sớm: cho vài người ngoài dùng thử mi
 4. Tốc độ đọc: giữ sub ra sớm. Không bật lại lượt rút gọn ở đoạn gấp và đoạn dịch sẵn, vì nó làm sub ra chậm hơn khoảng 2 s. Mốc 85% vẫn là đích, nhưng chỉ theo đuổi bằng cách không làm sub ra chậm hơn (ví dụ: lượt dịch đầu tự viết ngắn; hay rút gọn chạy sau, rồi thay những dòng chưa hiện).
 5. Tốc độ đọc xếp sau sub đầy đủ: tắt hẳn lượt rút gọn (cả "rút gọn sau"; server bật lại được bằng `TOD_CONDENSE=1`), không ghép dòng kề. Mốc 85% dòng ≤ 17 ký tự/giây chỉ còn để theo dõi. Câu lệnh dịch đầu vẫn có max_chars ("chỉ rút gọn khi bản dịch đủ ý dài hơn"): bạn quyết giữ (4/11).
 6. Đoạn chỉ có tiếng kêu có nghĩa (诶？, 哎呀！, 哇): giữ, vẫn dịch. Chỉ bỏ đoạn toàn tiếng đệm 嗯, 啊, 呃, 额.
+7. Giai đoạn 1 đợt này chỉ thêm tiếng Anh; bạn tự đọc bản tiếng Anh của 3 video thật.
+8. Giai đoạn 2: thử YouTube, Bilibili và TikTok (TikTok chỉ đọc vài video, không tải âm thanh, không cookie); không đăng nhập, phụ đề cần đăng nhập thì ghi lại.
 
 **Còn mở:**
-1. Nền tảng thử ở giai đoạn 2 (đề xuất: YouTube với phụ đề sẵn, và Bilibili), và có thử TikTok không.
+1. Nền tảng thứ hai cho giai đoạn 5 (đề xuất sau lượt thử 4/11: Bilibili; xem `docs/PLATFORMS.md`).
 2. Ngôn ngữ nguồn đầu tiên ngoài tiếng Trung (đề xuất: tiếng Anh).
 3. Video đã nói đúng ngôn ngữ đích thì ẩn sub hay vẫn hiện.
 4. Ai duyệt bản dịch ở những ngôn ngữ bạn không đọc được.
