@@ -1527,7 +1527,16 @@ Chủ dự án chọn làm cả 4 hướng.
   - Lúc đổi ngôn ngữ (giây 60): dòng tiếng Việt còn một lần chụp, rồi ~1 s "EN · đang dịch" (server dịch lại từ dòng gốc, không nhận dạng), rồi tiếng Anh. Phần lớn mức 92,8% là khoảnh khắc này trên một quãng ngắn.
   - **Fun-ASR đã hết hạn mức miễn phí** (`AllocationQuota.FreeTierOnly`): mọi lượt hôm nay dùng `qwen-audio-3.1-asr-flash`, kể cả server hằng ngày. Số tiếng Việt trước đây có thể đo với Fun-ASR, nên so en với vi lẫn cả việc đổi model nhận dạng.
   - Tốc độ đọc tiếng Anh thấp hơn (câu tiếng Anh dài hơn, rút gọn đang tắt). Chỉ theo dõi, theo quyết định 4/11.
-  - Đúng dòng tiếng Anh 97,0–97,5%, dưới mốc 98% một chút. **Chưa xác định** do ngôn ngữ hay do model nhận dạng; cần một lượt tiếng Việt cùng ngày (cùng qwen) để so.
+  - Đúng dòng tiếng Anh 97,0–97,5%, dưới mốc 98% một chút. **So cùng ngày, cùng qwen** (lượt `p1-vi`, tiếng Việt, cùng 3 video):
+
+    | Video | en | vi (cùng ngày, qwen) |
+    |---|---|---|
+    | vlog nói nhanh, 3 phút | 97,0% | 96,9% |
+    | tiểu phẩm | 97,5% | 99,1% |
+    | kể chuyện | 97,4% | 98,8% |
+
+    - Vlog: như nhau. Mức thấp hơn các lần trước (98,4–98,8%) đi cùng model nhận dạng qwen, không phải ngôn ngữ đích.
+    - Tiểu phẩm, kể chuyện: tiếng Anh thấp hơn do lần chụp **trống** (8 so với 2, 14 so với 6). Tra từng lần chụp: gần như tất cả nằm ở 0–4 s đầu video, lúc nhãn còn "đang dịch" (chờ sub đầu). Sau khi sub đầu hiện: tiểu phẩm 2 lần trống, kể chuyện 0. Nghĩa là chênh lệch nằm ở sub đầu của lượt đó, không ở cách hiện dòng tiếng Anh. Sub đầu phụ thuộc lúc trang tải, cùng cơ chế cho mọi ngôn ngữ (giai đoạn 0). Đây là suy luận từ mẫu chụp, chưa đo lặp nhiều lần.
 - **Còn chờ chủ dự án:** đọc bản tiếng Anh (`alpha/server/work/p1-en-lines.md`, chỉ trên máy, xoá sau khi đọc cùng `node alpha/dev/real/run.mjs --clean p1-en` và `--clean p1-switch`).
 - **Cài 0.2.45 vào Chromium của chủ dự án:** Chromium lúc đó đang tắt; đã dời `~/.tod-profile/Default/Service Worker` thành `Service Worker.prev-0244`. Lần mở sau sẽ nạp worker mới. **Chưa kiểm** worker đang chạy (`node alpha/dev/real/sw-source.mjs` khi Chromium mở).
 
