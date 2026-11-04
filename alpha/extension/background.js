@@ -6,7 +6,7 @@ const pending = new Map();   // "tab:key" -> AbortController
 // để biết service worker đang chạy có phải bản cũ không (Chrome có thể giữ background.js bản trước: content.js, workerReady)
 // và có đọc được NDJSON không (ndjson: gửi stream: true được), có chuyển bản rút gọn sau không (condensed: gửi condenseLater: true
 // được, từ 0.2.42).
-const BUILD = '0.2.44';
+const BUILD = '0.2.45';
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   const tab = sender.tab ? sender.tab.id : -1;
   if (msg && msg.type === 'hello') { reply({ build: BUILD, ndjson: true, condensed: true }); return false; }
@@ -40,8 +40,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   const answer = (o) => { if (!answered) { answered = true; reply(o); } };
   fetch(base + '/v1/subtitles', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(msg.payload), signal: ctl.signal })
     .then(async (res) => {
-      // Server trả NDJSON (payload stream: true): các dòng { partial: [dòng…] } (dòng dịch xong trước) chuyển ngay cho tab
-      // qua tin { type: 'partial', key, cues }; dòng có status là kết quả: trả ngay cho tab như trước. Sau nó có thể còn một
+      // Server trả NDJSON (payload stream: true): các dòng { partial: [dòng…], target } (dòng dịch xong trước) chuyển ngay cho tab
+      // qua tin { type: 'partial', key, cues, target } (target: ngôn ngữ đích, content.js bỏ dòng của ngôn ngữ cũ); dòng có status là kết quả: trả ngay cho tab như trước. Sau nó có thể còn một
       // dòng { condensed: [dòng…] } (rút gọn sau, payload condenseLater: true): chuyển qua tin { type: 'condensed', key, cues }.
       // Server cũ, hay kết quả có sẵn trong cache: JSON một lần.
       const result = (body) => answer(res.ok ? body : { ...body, status: 'error', error: body.error || 'HTTP ' + res.status });
@@ -51,8 +51,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
         const line = (s) => {
           let o;
           try { o = JSON.parse(s); } catch (_) { return; }
-          if (o && Array.isArray(o.partial)) { if (tab >= 0) chrome.tabs.sendMessage(tab, { type: 'partial', key: msg.key, cues: o.partial }).catch(() => {}); }
-          else if (o && Array.isArray(o.condensed)) { if (answered && tab >= 0) chrome.tabs.sendMessage(tab, { type: 'condensed', key: msg.key, cues: o.condensed }).catch(() => {}); }
+          if (o && Array.isArray(o.partial)) { if (tab >= 0) chrome.tabs.sendMessage(tab, { type: 'partial', key: msg.key, cues: o.partial, ...(typeof o.target === 'string' ? { target: o.target } : {}) }).catch(() => {}); }
+          else if (o && Array.isArray(o.condensed)) { if (answered && tab >= 0) chrome.tabs.sendMessage(tab, { type: 'condensed', key: msg.key, cues: o.condensed, ...(typeof o.target === 'string' ? { target: o.target } : {}) }).catch(() => {}); }
           else result(o || {});
         };
         for (;;) {

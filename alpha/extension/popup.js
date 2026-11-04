@@ -1,15 +1,20 @@
 'use strict';
 const $ = (id) => document.getElementById(id);
-const DEFAULTS = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0, lyrics: true, first10: true };
+const DEFAULTS = { enabled: true, server: 'http://127.0.0.1:8787', position: 'bottom', size: 'm', delay: 0, lyrics: true, first10: true, target: 'vi' };
 
-async function load() {
+async function stored() {
   const { settings = {} } = await chrome.storage.local.get('settings');
-  return { ...DEFAULTS, ...settings };
+  return settings;
 }
+async function load() {
+  return { ...DEFAULTS, ...(await stored()) };
+}
+// Chỉ ghi cài đặt đã lưu cộng phần vừa đổi, không ghi giá trị mặc định: trước đây đổi một ô là ghi cả first10: true… vào
+// storage, mặc định đổi sau này không tới được người xem (verifier 4/11, F16).
 async function save(patch) {
-  const s = { ...(await load()), ...patch };
+  const s = { ...(await stored()), ...patch };
   await chrome.storage.local.set({ settings: s });
-  return s;
+  return { ...DEFAULTS, ...s };
 }
 async function checkServer() {
   const s = await load();
@@ -30,6 +35,12 @@ async function checkServer() {
     $('health').textContent = !ok ? 'Server chạy nhưng thiếu OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env.'
       : !h.asr ? `Server chạy nhưng chưa nhận dạng được giọng nói (sẽ không có sub): thiếu DASHSCOPE_API_KEY (Fun-ASR) hoặc GEMINI_API_KEY trong alpha/server/.env. Dịch: ${mt}.`
       : `Server chạy. Nhận dạng: ${asr}, dịch: ${mt}.`;
+    // Server trước giai đoạn 1 không có targets: chỉ dịch tiếng Việt.
+    const targets = Array.isArray(h.targets) ? h.targets : ['vi'];
+    if (ok && h.asr && !targets.includes(s.target)) {
+      $('health').className = 'bad';
+      $('health').textContent += Array.isArray(h.targets) ? ` Server chưa dịch được sang ${s.target}.` : ' Server cũ chỉ dịch tiếng Việt: cập nhật alpha/server rồi chạy lại "npm start".';
+    }
   } catch (_) {
     $('health').className = 'bad';
     // Server chạy cả trên Mac lẫn Windows (đang dùng trên Mac, HANDOFF §7): không chỉ nói PowerShell.
@@ -52,6 +63,7 @@ async function showStats() {
   $('enabled').checked = s.enabled;
   $('lyrics').checked = s.lyrics !== false;
   $('first10').checked = s.first10 !== false || !s.first10Set;
+  $('target').value = ['vi', 'en'].includes(s.target) ? s.target : 'vi';
   $('position').value = s.position;
   $('size').value = s.size;
   $('server').value = s.server;
@@ -59,6 +71,7 @@ async function showStats() {
   $('lyrics').addEventListener('change', (e) => save({ lyrics: e.target.checked }));
   // first10Set: chính người xem đã chọn (content.js: first10 false do popup cũ tự lưu thì không tính).
   $('first10').addEventListener('change', (e) => save({ first10: e.target.checked, first10Set: true }));
+  $('target').addEventListener('change', async (e) => { await save({ target: e.target.value }); checkServer(); });
   $('position').addEventListener('change', (e) => save({ position: e.target.value }));
   $('size').addEventListener('change', (e) => save({ size: e.target.value }));
   $('server').addEventListener('change', (e) => save({ server: e.target.value.trim() || DEFAULTS.server }));

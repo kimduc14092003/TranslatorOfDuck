@@ -11,11 +11,12 @@ const EXT = path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)),
 const SRC = fs.readFileSync(path.join(EXT, 'popup.js'), 'utf8');
 
 // health: câu trả lời của /health, hoặc null khi không kết nối được server.
-async function run(health) {
+// stored: cài đặt đã lưu (chrome.storage.local); writes: các lần popup ghi.
+async function run(health, stored = {}, writes = []) {
   const els = {};
-  const document = { getElementById: (id) => (els[id] ||= { id, checked: false, value: '', textContent: '', className: '', addEventListener() {} }) };
+  const document = { getElementById: (id) => (els[id] ||= { id, checked: false, value: '', textContent: '', className: '', listeners: {}, addEventListener(t, f) { this.listeners[t] = f; } }) };
   const chrome = {
-    storage: { local: { get: async () => ({}), set: async () => {} } },
+    storage: { local: { get: async () => ({ settings: { ...stored } }), set: async (o) => { writes.push(o.settings); stored = o.settings; } } },
     tabs: { query: async () => [{ id: 1 }], sendMessage: async () => { throw new Error('no tab'); } },
   };
   const fetch = async () => {
@@ -24,7 +25,7 @@ async function run(health) {
   };
   vm.runInContext(SRC, vm.createContext({ document, chrome, fetch }));
   for (let i = 0; i < 50 && (!els.health || els.health.textContent === 'Đang kiểm tra…' || !els.health.textContent); i++) await new Promise((r) => setImmediate(r));
-  return { text: els.health.textContent, cls: els.health.className };
+  return { text: els.health.textContent, cls: els.health.className, els };
 }
 
 const FUN = 'fun-asr-flash-2026-06-15', QWEN = 'qwen-audio-3.1-asr-flash';
@@ -49,17 +50,36 @@ const CASES = [
   ['chưa có key nào', { ok: true, asr: null, mt: null },
     'bad', (t) => t === 'Server chạy nhưng thiếu OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env.'],
   ['không kết nối được server', null,
-    'bad', (t) => /^Không kết nối được\./.test(t)],
+    'bad', (t) => /^Không kết nối được\./.test(t)],  // Ngôn ngữ đích (giai đoạn 1): server cũ không có targets.
+  ['đang chọn English, server cũ (không có targets): báo server cũ chỉ dịch tiếng Việt', [{ ok: true, asr: 'funasr', asrModel: FUN, asrModels: [FUN, QWEN], mt: 'openai' }, { target: 'en' }],
+    'bad', (t) => /^Server chạy\. Nhận dạng: Fun-ASR, dịch: OpenAI\. Server cũ chỉ dịch tiếng Việt/.test(t)],
+  ['đang chọn English, server mới có targets: bình thường', [{ ok: true, asr: 'funasr', asrModel: FUN, asrModels: [FUN, QWEN], mt: 'openai', targets: ['vi', 'en'] }, { target: 'en' }],
+    'ok', (t) => t === 'Server chạy. Nhận dạng: Fun-ASR, dịch: OpenAI.'],
+  ['tiếng Việt với server cũ: bình thường', [{ ok: true, asr: 'funasr', asrModel: FUN, asrModels: [FUN, QWEN], mt: 'openai' }, {}],
+    'ok', (t) => t === 'Server chạy. Nhận dạng: Fun-ASR, dịch: OpenAI.'],
 ];
 
 let pass = 0, fail = 0;
-for (const [name, health, cls, ok] of CASES) {
-  const got = await run(health);
+for (const [name, h, cls, ok] of CASES) {
+  const [health, stored] = Array.isArray(h) ? h : [h, {}];
+  const got = await run(health, stored);
   try {
     assert.equal(got.cls, cls, 'className');
     assert.ok(ok(got.text), 'text: ' + got.text);
     pass++; console.log('ok  ', name);
   } catch (e) { fail++; console.log('FAIL', name, '→', e.message); }
+}
+// Đổi một ô chỉ ghi cài đặt đã lưu cộng ô đó, không ghi giá trị mặc định (verifier 4/11, F16); ô "Dịch sang" ghi target.
+{
+  const writes = [];
+  const got = await run(null, { lyrics: false }, writes);
+  try {
+    assert.equal(got.els.target.value, 'vi', 'mặc định tiếng Việt');
+    got.els.target.listeners.change({ target: { value: 'en' } });
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    assert.equal(JSON.stringify(writes[0]), JSON.stringify({ lyrics: false, target: 'en' }));
+    pass++; console.log('ok   ô Dịch sang ghi target, không ghi giá trị mặc định');
+  } catch (e) { fail++; console.log('FAIL ô Dịch sang →', e.message); }
 }
 console.log(`${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

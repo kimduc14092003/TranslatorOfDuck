@@ -165,5 +165,25 @@ await t('hello: trả bản của background.js, bằng version trong manifest.j
   assert.deepEqual(s.got, []);
 });
 
+await t('ngôn ngữ đích: dòng { partial, target } và { condensed, target } chuyển cho tab kèm target; dòng không có target (server cũ) thì không thêm', async () => {
+  const fin = { status: 'ok', target: 'en', cues: [{ start: 1, end: 2, vi: 'Hello' }] };
+  const srv = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8' });
+      res.write(JSON.stringify({ partial: fin.cues, target: 'en' }) + '\n' + JSON.stringify({ partial: fin.cues }) + '\n' + JSON.stringify(fin) + '\n');
+      setTimeout(() => res.end(JSON.stringify({ condensed: fin.cues, target: 'en' }) + '\n'), 30);
+    });
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const toTab = [];
+  const send = load(toTab);
+  const r = send({ type: 'subtitles', server: 'http://127.0.0.1:' + srv.address().port, key: '7500000000000000007:0', payload: { id: '7500000000000000007', stream: true, target: 'en' } });
+  for (let i = 0; i < 100 && !toTab.some((m) => m.type === 'condensed'); i++) await new Promise((res) => setTimeout(res, 10));
+  await new Promise((res) => srv.close(res));
+  assert.deepEqual(toTab.map((m) => [m.type, 'target' in m ? m.target : '-']), [['partial', 'en'], ['partial', '-'], ['condensed', 'en']]);
+  assert.equal(r.replies[0].target, 'en');
+});
+
 console.log(failed ? `\n${failed} kiểm tra trượt, ${n} đạt.` : `\n${n} kiểm tra đều đạt.`);
 if (failed) process.exit(1);
