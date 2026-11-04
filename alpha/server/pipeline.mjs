@@ -773,7 +773,9 @@ export function pronounChanges(prev, next) {
   return b.pairs.filter(p => { const o = old.get(pronounKey(p)); return o && (o.self !== p.self || o.other !== p.other); })
     .map(p => { const o = old.get(pronounKey(p)); return `${p.who}: ${o.self}/${o.other} → ${p.self}/${p.other}`; });
 }
-const budget = (c) => Math.floor(Math.min(84, 17 * (c.end - c.start)));
+// Số ký tự tối đa của một dòng: tốc độ đọc của ngôn ngữ đích (gói ngôn ngữ, langs.mjs) nhân thời lượng, tối đa 84.
+const budgetAt = (cps, c) => Math.floor(Math.min(84, cps * (c.end - c.start)));
+const budget = (c) => budgetAt(17, c);
 // Các object đã đóng trong mảng "cues" của JSON đang nhận dở ({"pronouns":…,"cues":[{"id":1,"vi":"…"},{"id":2,"vi":"…).
 export function completedCues(text) {
   const at = text.indexOf('"cues"');
@@ -800,7 +802,7 @@ export const tooLong = (c) => String(c.vi || '').length > 1.1 * budget(c);
 export async function condenseCues(long, pronouns, signal, target = 'vi') {
   const pack = TARGETS[target] || TARGETS.vi;
   const out = new Map();
-  if (!long.length) return out;
+  if (!long.length || !pack.condense) return out;   // gói chưa có câu lệnh rút gọn (tiếng Anh)
   try {
     const cs = AbortSignal.any([signal, AbortSignal.timeout(2 * MT_TIMEOUT_MS)].filter(Boolean));
     const r = await mtJson(pack.condense({ pronouns, long, budget }), pack.cueSchema, 0.2, cs);
@@ -823,6 +825,7 @@ export async function condenseCues(long, pronouns, signal, target = 'vi') {
 // cùng dạng dòng như kết quả cuối, chưa rút gọn. Extension hiện tạm, kết quả cuối thay.
 export async function translate(meta, cues, context = [], signal, { far = false, before = [], condense = true, onPartial = null, target = 'vi' } = {}) {
   const pack = TARGETS[target] || TARGETS.vi;
+  const budget = (c) => budgetAt(pack.cps, c);
   const sung = cues.some(c => c.sung);
   let shown = 0;
   const byId = new Map(cues.map(c => [c.id, c]));
@@ -831,18 +834,18 @@ export async function translate(meta, cues, context = [], signal, { far = false,
     if (done.length <= shown) return;
     shown = done.length;
     const part = done.map(x => ({ c: byId.get(x.id), vi: fixViText(String(x[pack.key] || '')) }))
-      .filter(x => x.c && x.vi && !(x.vi.match(HAN) || []).length)
+      .filter(x => x.c && x.vi && !(x.vi.match(HAN) || []).length && !(pack.wrongLang && pack.wrongLang(x.vi)))
       .map(({ c, vi }) => ({ start: c.start, end: c.end, se: c.se, vi, zh: c.zh, ...(c.sung ? { sung: true } : {}) }));
     if (part.length) onPartial(part);
   });
   if (!mtProvider()) throw new Error('Chưa có OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env');
-  const known = normalizePronouns(meta.pronouns);
+  const known = pack.pronouns ? normalizePronouns(meta.pronouns) : null;   // bảng xưng hô chỉ có ở tiếng Việt
   const author = pack.author(meta.author);
   const first = await mtJson(pack.first({ meta, known, author, context, far, before, sung, cues, budget, round, PRONOUN_PAIRS }), pack.firstSchema, 0.2, signal, onText);
-  const pronouns = mergePronouns(first.pronouns, known);
+  const pronouns = pack.pronouns ? mergePronouns(first.pronouns, known) : null;
   const vi = new Map((first.cues || []).map(c => [c.id, fixViText(c[pack.key])]));
   const flagsOf = (c, text) => [...(!text ? ['missing'] : []), ...((text.match(HAN) || []).length ? ['han_left'] : []),
-    ...(text.length > 1.1 * budget(c) ? ['too_long'] : [])];
+    ...(text.length > 1.1 * budget(c) ? ['too_long'] : []), ...(text && pack.wrongLang && pack.wrongLang(text) ? ['wrong_lang'] : [])];
   const out = cues.map(c => { const text = vi.get(c.id) || ''; return { ...c, vi: text, flags: flagsOf(c, text) }; });
   // Dòng bị bỏ trống hay còn chữ Hán: trước đây bỏ cả dòng, mà thường là câu chốt (đo 3/11 trên cache: 18 vế câu mất ở 8
   // video: tên riêng "B站", câu nói về cách viết chữ 辫, câu hỏi "陀螺 nghĩa là gì"). Dịch lại riêng các dòng đó một lần,
@@ -859,7 +862,8 @@ export async function translate(meta, cues, context = [], signal, { far = false,
   const keep = (c) => !!c.vi && !mostlyHan(c);
   // Dòng còn ít chữ Hán (câu nói về chính chữ đó, tên chưa phiên được) vẫn hiện: mất cả câu thoại tệ hơn. Chỉ bỏ dòng trống
   // hay gần như toàn chữ Hán (model chép lại câu gốc); file cache ghi lại các dòng bỏ (debug.mtFix), server ghi log.
-  const bad = out.filter(c => c.flags.includes('missing') || c.flags.includes('han_left'));
+  // Tiếng Anh: dòng trả về bằng tiếng Việt (wrong_lang) cũng dịch lại; vẫn sai thì vẫn giữ, không bỏ (verifier 4/11, F5).
+  const bad = out.filter(c => c.flags.includes('missing') || c.flags.includes('han_left') || c.flags.includes('wrong_lang'));
   let retryOk = false;
   const changed = new Set();
   if (bad.length) {
@@ -881,16 +885,17 @@ export async function translate(meta, cues, context = [], signal, { far = false,
         if (!v || (c.vi && hanOut(v) > hanOut(c.vi))) continue;
         // Không đổi một dòng hiện được thành dòng phải bỏ (bản dịch lại chép cả câu Hán vào ngoặc; verifier 3/11).
         if (keep(c) && !keep({ ...c, vi: v })) continue;
+        if (pack.wrongLang && pack.wrongLang(v) && !(c.vi && pack.wrongLang(c.vi))) continue;   // không đổi dòng đúng ngôn ngữ thành sai
         if (v !== c.vi) changed.add(c);
         c.vi = v; c.flags = flagsOf(c, v);
       }
     } catch (_) { /* giữ bản đầu nếu lượt dịch lại lỗi */ }
   }
-  if (condense) {
+  if (condense && pack.condense) {
     const short = await condenseCues(out.filter(c => c.flags.includes('too_long')), pronouns, signal, target);
     for (const c of out) if (short.has(c)) { c.vi = short.get(c); c.flags = flagsOf(c, c.vi).concat(['condensed']); }
   }
-  const fix = bad.length ? { retried: bad.length, ok: retryOk, fixed: [...changed].filter(keep).length, keptHan: out.filter(c => keep(c) && c.flags.includes('han_left')).length,
+  const fix = bad.length ? { retried: bad.length, ok: retryOk, fixed: [...changed].filter(keep).length, keptHan: out.filter(c => keep(c) && c.flags.includes('han_left')).length, ...(pack.wrongLang ? { wrongLang: out.filter(c => keep(c) && c.flags.includes('wrong_lang')).length } : {}),
     dropped: out.filter(c => !keep(c)).map(c => ({ zh: c.zh, why: c.vi ? 'han' : 'missing' })) } : null;
   return { cues: out.filter(keep), pronouns, ...(fix ? { fix } : {}) };
 }
@@ -963,12 +968,21 @@ export async function makeSubtitles(meta, buf, opts = {}) {
     ...(song ? { song: true } : {}), debug: { features: cls, sentences: split.sentences, net } };
   const skip = (label) => ({ status: 'skipped', label, ...base, timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio } });
   if (prep.skip) return skip(prep.skip);
+  // source: đủ để dựng lại kết quả ở ngôn ngữ đích khác mà không nhận dạng lại (retranslate, server.mjs: yêu cầu retarget).
+  const { debug: _dbg, asrCached: _ac, ...srcBase } = base;
+  const source = { cues, before, base: srcBase, debug: { features: cls, sentences: split.sentences } };
+  return finishSubtitles(meta, { cues, before, base, source, t0, tAudio, tAsr, net }, opts);
+}
+// Phần cuối chung: ngữ cảnh, dịch, kết quả. Dùng cho makeSubtitles và retranslate.
+async function finishSubtitles(meta, { cues, before, base, source, t0, tAudio, tAsr, net }, opts) {
   // opts.context có thể là hàm: server chờ đoạn trước (đang chạy) dịch xong rồi mới lấy ngữ cảnh. Trả về mảng dòng,
   // hoặc { lines, far, pronouns } (far: lấy từ đoạn đã dịch gần nhất phía trước, không phải đoạn liền trước; pronouns:
   // bảng xưng hô trong file cache của đoạn đó).
   const ctxRaw = typeof opts.context === 'function' ? await opts.context(opts.signal) : (opts.context || []);
   const context = Array.isArray(ctxRaw) ? ctxRaw : (ctxRaw.lines || []);
   const far = !Array.isArray(ctxRaw) && !!ctxRaw.far;
+  // Không có ngữ cảnh cùng ngôn ngữ đích (vừa đổi ngôn ngữ): server đưa dòng gốc đoạn trước làm lời nói ngay trước.
+  if (!before.length && !Array.isArray(ctxRaw) && Array.isArray(ctxRaw.before)) before = ctxRaw.before;
   // Bảng xưng hô trong file cache của đoạn lấy ngữ cảnh (server đọc cùng lúc với 3 dòng): đoạn gửi cùng lúc với đoạn
   // trước (tua tới; mẩu nhanh song song đoạn 0) hay sau khi tải lại extension không có bảng từ extension. Bảng
   // extension gửi đứng trước (đợt soát 1/11, F2).
@@ -977,15 +991,25 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   base.debug.pronounsIn = normalizePronouns(tmeta.pronouns);
   base.debug.pronounsCtx = ctxPronouns ? ctxPronouns.pairs.length : 0;
   opts.signal?.throwIfAborted();
-  const tr = cues.length ? await netCtx.run({ calls: net.mt }, () => translate(tmeta, cues, context, opts.signal, { far, before: context.length && !far ? [] : before, condense: opts.condense !== false, onPartial: opts.onPartial })) : { cues: [], pronouns: null };
+  const tr = cues.length ? await netCtx.run({ calls: net.mt }, () => translate(tmeta, cues, context, opts.signal, { far, before: context.length && !far ? [] : before, condense: opts.condense !== false, onPartial: opts.onPartial, target: opts.target || 'vi' })) : { cues: [], pronouns: null };
   opts.signal?.throwIfAborted();   // huỷ giữa lượt rút gọn (lượt đó tự bắt lỗi): không trả kết quả dở
   const tMt = Date.now();
   const vi = tr.cues;
   if (tr.fix) base.debug.mtFix = tr.fix;
   // pronouns: bảng xưng hô sau đoạn này (cũng lưu trong file cache); extension giữ theo video, gửi lại ở request sau.
-  return { status: vi.length ? 'ok' : 'skipped', label: vi.length ? 'speech' : 'untranslated', ...base, context: context.length,
+  return { status: vi.length ? 'ok' : 'skipped', label: vi.length ? 'speech' : 'untranslated', target: opts.target || 'vi', ...base, context: context.length,
     contextFar: far, before: context.length && !far ? 0 : before.length, ...(opts.lyrics ? { lyrics: true } : {}),
     ...(vi.length && tr.pronouns ? { pronouns: tr.pronouns } : {}),
     cues: vi.map(c => ({ start: c.start, end: c.end, se: c.se, vi: c.vi, zh: c.zh, ...(c.sung ? { sung: true } : {}) })),
-    timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio, mtMs: tMt - tAsr, totalMs: tMt - t0 } };
+    timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio, mtMs: tMt - tAsr, totalMs: tMt - t0 }, ...(vi.length ? { source } : {}) };
 }
+// Dịch một đoạn sang ngôn ngữ đích khác từ `source` đã lưu (makeSubtitles): không nhận dạng lại, mốc giống hệt.
+export async function retranslate(meta, source, opts = {}) {
+  const paused = pausedError(mtService());
+  if (paused) throw paused;
+  const t0 = Date.now();
+  const net = { asr: [], mt: [] };
+  const base = { ...source.base, debug: { ...(source.debug || {}), net } };
+  return finishSubtitles(meta, { cues: source.cues, before: source.before || [], base, source, t0, tAudio: t0, tAsr: t0, net }, opts);
+}
+
