@@ -7,7 +7,7 @@ import net from 'node:net';
 import path from 'node:path';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const ALPHA = path.resolve(HERE, '..', '..');
@@ -16,6 +16,9 @@ export const SERVER_DIR = path.join(ALPHA, 'server');
 // alpha/server/.gitignore bỏ qua work/, nên kết quả đo không bao giờ lọt vào commit.
 export const OUT_ROOT = process.env.TOD_REAL_OUT ? path.resolve(process.env.TOD_REAL_OUT) : path.join(SERVER_DIR, 'work', 'real');
 // Phiên bản kết quả trong cache: đọc từ chữ của pipeline.mjs, không import (import thì pipeline nạp alpha/server/.env).
+// Gói ngôn ngữ của server (chỉ đọc câu lệnh, tốc độ đọc; không nạp .env): cps của ngôn ngữ đích cho readingSpeed.
+export const { TARGETS } = await import(pathToFileURL(path.join(SERVER_DIR, 'langs.mjs')).href);
+export const cpsOf = (target) => (TARGETS[target] || TARGETS.vi).cps;
 export const PIPELINE_VERSION = (/PIPELINE_VERSION = '([^']+)'/.exec(fs.readFileSync(path.join(SERVER_DIR, 'pipeline.mjs'), 'utf8')) || [])[1];
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const require = createRequire(import.meta.url);
@@ -220,8 +223,9 @@ export function outcomeOf(got) {
 }
 
 // ---------------------------------------------------------------- cache của server
-// Tên file: <id>.<q?><from>-<to>.<loại>.<phiên bản>.json; loại vi | vi.lyr | asr.<băm> (server.mjs cacheFile).
-const FILE = /^(\d+)\.(q?)(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)\.(vi\.lyr|vi|asr\.[0-9a-f]+)\.(.+)\.json$/;
+// Tên file: <id>.<q?><from>-<to>.<loại>.<phiên bản>.json; loại <ngôn ngữ đích> | <ngôn ngữ đích>.lyr (vi, vi.lyr, en, en.lyr) |
+// asr.<băm> (server.mjs cacheFile).
+const FILE = /^(\d+)\.(q?)(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)\.([a-z]{2}(?:\.lyr)?|asr\.[0-9a-f]+)\.(.+)\.json$/;
 export function cacheFiles(dir, version = PIPELINE_VERSION) {
   let names = [];
   try { names = fs.readdirSync(dir); } catch (_) { return []; }
@@ -237,8 +241,9 @@ const stale = (x) => x && x.status === 'skipped' && (x.label === 'too_short' || 
 // không có kết quả (dịch ra 0 dòng, lỗi, bị huỷ giữa chừng) trả về với status 'none'; kết quả cũ server sẽ làm lại: stale.
 // version: phiên bản kết quả cần đọc; null thì lấy phiên bản đang chạy nếu thư mục có, không thì phiên bản của file mới nhất
 // (lượt đo cũ chạy lại sau khi pipeline tăng phiên bản).
-export function chunksOf(dir, id, lyrics = true, version = PIPELINE_VERSION) {
-  const want = lyrics ? 'vi.lyr' : 'vi', other = lyrics ? 'vi' : 'vi.lyr';
+// target: ngôn ngữ đích (mặc định tiếng Việt).
+export function chunksOf(dir, id, lyrics = true, version = PIPELINE_VERSION, target = 'vi') {
+  const want = lyrics ? target + '.lyr' : target, other = lyrics ? target : target + '.lyr';
   const mine = cacheFiles(dir, null).filter((f) => f.id === id);
   if (version == null) version = mine.some((f) => f.version === PIPELINE_VERSION) ? PIPELINE_VERSION
     : (mine.map((f) => ({ v: f.version, t: fs.statSync(f.file).mtimeMs })).sort((a, b) => b.t - a.t)[0] || {}).v;

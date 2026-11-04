@@ -1,7 +1,7 @@
 // Chạy bộ video thử (videos.json) và chấm bảng điểm (docs/ROADMAP.md §3). Mỗi video: một server đo riêng với cache trống
 // (cổng 8788, giữ file nhận dạng để chạy lại offline), một proxy ghi yêu cầu (8789), một Chromium riêng (9334); xem lần
 // lượt ở tốc độ 1×. Xong mỗi video thì xoá dữ liệu của nó (âm thanh, chữ), chỉ giữ điểm số trong summary.json và history.jsonl.
-//   node run.mjs [--items 1,3] [--ids id1,id2] [--rate 1] [--throttle KB/s] [--lyrics off] [--name tên] [--keep]
+//   node run.mjs [--items 1,3] [--ids id1,id2] [--rate 1] [--throttle KB/s] [--lyrics off] [--target vi|en] [--switch-at giây] [--name tên] [--keep]
 //   node run.mjs --clean <tên>      xoá dữ liệu của một lượt đã chạy với --keep
 // --items: số thứ tự mục trong videos.json (một id có thể có hai mục). Không có --items, --ids: chạy cả videos.json.
 // Mục có "from"/"to" thì tua tới "from" và xem tới "to". TỐN TIỀN nhận dạng và dịch: cả bộ khoảng 29 phút âm thanh.
@@ -25,6 +25,7 @@ const set = readJson(path.join(HERE, 'videos.json')) || { videos: [] };
 const list = a.items ? String(a.items).split(',').map((i) => set.videos[Number(i) - 1]).filter(Boolean)
   : a.ids ? String(a.ids).split(',').map((id) => set.videos.find((v) => v.id === id) || { id }) : set.videos;
 const rate = Number(a.rate || 1), throttle = Number(a.throttle || 0), lyrics = a.lyrics == null ? null : a.lyrics !== 'off';
+const target = a.target || null, switchAt = a['switch-at'] != null ? Number(a['switch-at']) : null;   // watch.mjs
 const name = String(a.name || new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-'));
 const root = path.join(OUT_ROOT, name);
 fs.mkdirSync(root, { recursive: true });
@@ -47,7 +48,7 @@ for (const [i, v] of list.entries()) {
     // Thời lượng thật: durationMs extension gửi kèm yêu cầu dịch đầu tiên của video này (qua proxy).
     let duration = null;
     const durationOf = () => duration || (duration = ((readJsonl(proxy.log).find((x) => x.meta && x.meta.id === v.id && x.meta.durationMs) || {}).meta || {}).durationMs / 1000 || null);
-    await watchVideo({ id: v.id, out: dir, server: proxy.url, rate, from: v.from || 0, to: v.to ?? Infinity, throttle, lyrics, durationOf });
+    await watchVideo({ id: v.id, out: dir, server: proxy.url, rate, from: v.from || 0, to: v.to ?? Infinity, throttle, lyrics, durationOf, target, switchAt });
   } catch (e) { error = e.message; console.log('LỖI', e.message); }
   finally { if (proxy) await proxy.close(); if (server) await server.stop(); }
   let r = null;
@@ -69,7 +70,7 @@ const total = { videos: rows.length, errors: rows.length - ok.length, unapproved
   readingMedian: med(ok.map((r) => r.readingWithin)), cancelled: ok.reduce((s, r) => s + r.cancelled, 0),
   // Đúng nhịp gộp mọi video (mỗi video ít dòng đo được): hiển thị, nhận dạng, Δin.
   timing: Object.fromEntries(['render', 'asr', 'in'].map((k) => [k, quant(ok.flatMap((r) => (r.timing && r.timing.values && r.timing.values[k]) || []))])) };
-const summary = { name, at: new Date().toISOString(), rate, throttle: throttle || null, lyrics, total, rows };
+const summary = { name, at: new Date().toISOString(), rate, throttle: throttle || null, lyrics, target, switchAt, total, rows };
 fs.writeFileSync(path.join(root, 'summary.json'), JSON.stringify(summary, null, 1));
 fs.appendFileSync(path.join(OUT_ROOT, 'history.jsonl'), JSON.stringify(summary) + '\n');
 const cell = (x, w) => String(x ?? '-').padStart(w);

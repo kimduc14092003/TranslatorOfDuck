@@ -1,6 +1,9 @@
 // Xem một video Douyin thật trong Chromium riêng (cổng 9334, hồ sơ tạm, tắt tiếng, chế độ khách) và ghi lại: giây đang
 // phát, tốc độ, nhãn, sub đang hiện. Ghi mỗi 100 ms trong 10 s đầu (để đo sub đầu tiên), sau đó mỗi 250 ms.
 //   node watch.mjs <id> [--rate 1] [--from 0] [--to giây] [--server http://127.0.0.1:8788] [--throttle KB/s] [--out thư mục]
+//                  [--target vi|en] [--switch-at giây]
+// --target: ngôn ngữ đích (ghi vào cài đặt extension). --switch-at: tới giây này thì đổi sang ngôn ngữ kia (vi ↔ en), như
+// người xem đổi ở popup; report.mjs chấm riêng phần trước và sau.
 // Không có --server thì extension gọi server mặc định (8787). Đo có cache trống, có proxy: dùng run.mjs.
 // Hết video: tới --to, hay gần cuối video. Thời lượng lấy từ durationOf() (run.mjs đọc durationMs extension gửi qua proxy);
 // không có thì chỉ tin thời lượng của thẻ <video> khi nó đứng yên 5 s: trình phát MSE của Douyin báo thời lượng tăng dần.
@@ -10,7 +13,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { OUT_ROOT, PAGE_STATE, args, extStatus, launchChromium, rmrf, setSettings, sleep } from './lib.mjs';
 
-export async function watchVideo({ id, out, server = null, rate = 1, from = 0, to = Infinity, throttle = 0, lyrics = null, maxMin = 30, port = 9334, durationOf = null }) {
+export async function watchVideo({ id, out, server = null, rate = 1, from = 0, to = Infinity, throttle = 0, lyrics = null, maxMin = 30, port = 9334, durationOf = null, target = null, switchAt = null }) {
   fs.mkdirSync(out, { recursive: true });
   const runLog = path.join(out, 'run.log');
   const log = (...a) => { const s = new Date().toISOString().slice(11, 19) + ' ' + a.join(' '); console.log(s); fs.appendFileSync(runLog, s + '\n'); };
@@ -21,7 +24,7 @@ export async function watchVideo({ id, out, server = null, rate = 1, from = 0, t
   try {
     br = await launchChromium({ profile, port });
     meta.extension = await br.sw.evaluate(() => chrome.runtime.getManifest().version);
-    const patch = { ...(server ? { server } : {}), ...(lyrics == null ? {} : { lyrics }) };
+    const patch = { ...(server ? { server } : {}), ...(lyrics == null ? {} : { lyrics }), ...(target ? { target } : {}) };
     if (Object.keys(patch).length) meta.settings = await setSettings(br.sw, patch);
     log('extension', meta.extension, server ? 'server ' + server : 'server mặc định');
     const page = br.ctx.pages()[0] || await br.ctx.newPage();
@@ -56,6 +59,12 @@ export async function watchVideo({ id, out, server = null, rate = 1, from = 0, t
       if (Date.now() - movedAt > 60000) { meta.error = s.t == null ? 'không thấy video đang phát' : `video đứng ở ${s.t} s`; log('LỖI', meta.error); break; }
       if (s.t != null && seeked) {
         if (s.t > maxT) maxT = s.t;
+        if (switchAt != null && !meta.switch && s.t >= switchAt) {
+          const was = (meta.settings && meta.settings.target) || 'vi', to2 = was === 'en' ? 'vi' : 'en';
+          meta.switch = { at: +s.t.toFixed(2), wall: Date.now() - t0, from: was, to: to2 };
+          await setSettings(br.sw, { target: to2 });
+          log('đổi ngôn ngữ', was, '→', to2, 'ở', s.t);
+        }
         // Hết: tới mốc cần xem, gần cuối video, hay video phát lại từ đầu sau khi đã qua 90%.
         if (s.t >= to || (known && (s.t >= known - 0.6 || (maxT > 0.9 * known && s.t < 5)))) { log('xong ở', s.t, 'trên', known || dur, 's'); meta.duration = known; break; }
       }
@@ -82,7 +91,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   if (!/^\d{6,25}$/.test(id || '')) { console.log('Cần id video Douyin: node watch.mjs <id> [--rate 1] [--from 0] [--to giây] [--server URL]'); process.exit(1); }
   const out = a.out ? path.resolve(a.out) : path.join(OUT_ROOT, 'watch', id + '-' + Date.now());
   await watchVideo({ id, out, server: a.server || null, rate: Number(a.rate || 1), from: Number(a.from || 0), to: a.to ? Number(a.to) : Infinity,
-    throttle: Number(a.throttle || 0), lyrics: a.lyrics == null ? null : a.lyrics !== 'off' });
+    throttle: Number(a.throttle || 0), lyrics: a.lyrics == null ? null : a.lyrics !== 'off', target: a.target || null, switchAt: a['switch-at'] != null ? Number(a['switch-at']) : null });
   console.log('Kết quả:', out, '\nTrong đó có chữ sub của video: xem xong thì xoá thư mục này.');
   process.exit(0);
 }

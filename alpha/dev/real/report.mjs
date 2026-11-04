@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { SERVER_DIR, args, chunksOf, cuesLib, drops, mergedCues, platformError, readJson, readJsonl, readingSpeed, silentGaps, stateOf } from './lib.mjs';
+import { SERVER_DIR, args, chunksOf, cpsOf, cuesLib, drops, mergedCues, platformError, readJson, readJsonl, readingSpeed, silentGaps, stateOf } from './lib.mjs';
 
 const clean = (s) => String(s || '').replace(/^♪\s*/, '').trim();
 // Mẫu theo lưới 0,25 s như ROADMAP §3 định nghĩa: 10 s đầu watch.mjs chụp mỗi 100 ms, nếu tính cả thì 10 s đầu nặng gấp 2,5 lần.
@@ -158,22 +158,30 @@ export function proxyFacts(proxy, { id, endWall } = {}) {
   return { cancelled: closed.filter((x) => !id || x.id === id), cancelledOther: closed.filter((x) => id && x.id !== id).length, failed };
 }
 
-export function report(dir) {
+// Lượt có đổi ngôn ngữ giữa chừng (watch.mjs --switch-at; meta.switch { at, from, to }): chấm riêng từng khoảng theo ngôn ngữ
+// đang chọn lúc đó. Kết quả là phần sau khi đổi, kèm before (phần trước) và switch.
+export function report(dir, part = null) {
   const meta = readJson(path.join(dir, 'meta.json')) || { error: 'không có meta.json (lượt xem không chạy được)' };
+  if (!part && meta.switch) {
+    const before = report(dir, { target: meta.switch.from, upTo: meta.switch.at });
+    return { ...report(dir, { target: meta.switch.to, startAt: meta.switch.at }), before, switch: meta.switch };
+  }
+  const target = (part && part.target) || (meta.settings && meta.settings.target) || 'vi';
   const proxy = readJsonl(path.join(dir, 'proxy.jsonl'));
-  const samples = readJsonl(path.join(dir, 'samples.jsonl'));
+  const upTo = part && part.upTo != null ? part.upTo : Infinity;
+  const samples = readJsonl(path.join(dir, 'samples.jsonl')).filter((s) => s.t == null || s.t < upTo);
   const lyrics = !(meta.settings && meta.settings.lyrics === false);
   // Chỉ xét phần đã thực sự xem: từ from (lượt có tua) tới chỗ xa nhất đã phát. Đoạn bị huỷ vì tua đi, đoạn dịch sẵn phía
   // sau chỗ dừng xem không tính.
-  const from = meta.from || 0, ts = samples.map((s) => s.t).filter((t) => t != null && t >= from - 2);
+  const from = part && part.startAt != null ? part.startAt : meta.from || 0, ts = samples.map((s) => s.t).filter((t) => t != null && t >= from - 2);
   const range = ts.length ? [from, Math.max(...ts)] : null;
   const inRange = (a, b) => !range || (b > range[0] && a < range[1] + 0.5);
   const spanIn = (sp) => { const m = /(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)/.exec(sp || ''); return !m || inRange(+m[1], +m[2]); };
   // Đoạn không có kết quả mà bắt đầu ngay chỗ dừng xem: đoạn dịch sẵn phía trước, bị huỷ lúc đóng trình duyệt, không tính.
-  const chunks = (meta.id ? chunksOf(path.join(dir, 'server', 'cache'), meta.id, lyrics, null) : [])
+  const chunks = (meta.id ? chunksOf(path.join(dir, 'server', 'cache'), meta.id, lyrics, null, target) : [])
     .filter((c) => inRange(c.from, c.to) && !(c.status === 'none' && range && c.from >= range[1] - 1));
   const cues = mergedCues(chunks);
-  const { seen: _seen, ...rest } = samplesScore(samples, cues, { from });
+  const { seen: _seen, ...rest } = samplesScore(samples.filter((s) => s.t == null || s.t >= from - 2), cues, { from });
   const sc = { seen: _seen };
   const d = drops(chunks, { lyrics });
   const p0 = proxyFacts(proxy, meta);
@@ -183,14 +191,14 @@ export function report(dir) {
   for (const c of chunks.filter((x) => !x.quick)) { const k = c.status + (c.status === 'ok' ? '' : '/' + (c.label || '-')); byStatus[k] = (byStatus[k] || 0) + 1; }
   const durMs = ((proxy.find((x) => x.meta && x.meta.id === meta.id && x.meta.durationMs) || {}).meta || {}).durationMs;
   return {
-    id: meta.id || null, error: meta.error || null, lyrics, rate: meta.rate, from: meta.from, to: meta.to, throttle: meta.throttle, extension: meta.extension, watched: range,
+    id: meta.id || null, error: meta.error || null, target, lyrics, rate: meta.rate, from: meta.from, to: meta.to, throttle: meta.throttle, extension: meta.extension, watched: range,
     duration: durMs ? durMs / 1000 : meta.duration || null,
     chunks: byStatus, asrModels: [...new Set(chunks.map((c) => c.asrModel || c.asr).filter(Boolean))],
     clauses: d.clauses, lost: d.lost, coverage: d.coverage, unapproved: d.unapproved, staleChunks: d.stale, noResult: d.noResult, drops: d.items, failed: p.failed,
     cues: cues.length, sung: cues.filter((c) => c.sung).length,
     // Tốc độ đọc theo chữ đã hiện: dòng rút gọn sau chỉ tính bản ngắn khi lúc xem thấy bản ngắn nhiều hơn; chưa chụp được hay
     // hoà thì tính bản đầy đủ (cho chắc, verifier 4/11).
-    readingSpeed: readingSpeed(cues.map((c) => (c.full && !((sc.seen.get(c) || 0) > 0) ? { ...c, vi: c.full } : c))),
+    readingSpeed: readingSpeed(cues.map((c) => (c.full && !((sc.seen.get(c) || 0) > 0) ? { ...c, vi: c.full } : c)), cpsOf(target)),
     condensedLater: { lines: cues.filter((c) => c.full).length, shownShort: [...sc.seen.values()].filter((x) => x > 0).length, shownFull: [...sc.seen.values()].filter((x) => x < 0).length },
     ...rest,
     cancelled: p.cancelled, cancelledOther: p.cancelledOther, silentGaps: silentGaps(chunks),
@@ -211,9 +219,10 @@ const timingLine = (t) => !t ? '  Đúng nhịp: -' : `  Đúng nhịp (dương 
   `Δin ${ms(t.in.median)}, P90 ${ms(t.in.p90)}, sớm nhất ${ms(t.in.min)}, P90 của |Δin| ${ms(t.inAbsP90)}, ${t.in.within83ms ?? '-'}% trong ±83 ms (${t.in.n} dòng)`;
 const mmss = (x) => `${Math.floor(x / 60)}:${String(Math.round(x % 60)).padStart(2, '0')}`;
 export function print(r) {
+  if (r.switch) return [`Đổi ngôn ngữ ${r.switch.from} → ${r.switch.to} ở ${mmss(r.switch.at)}.`, '— Trước khi đổi (' + r.switch.from + '):', print(r.before), '— Sau khi đổi (' + r.switch.to + '):', print({ ...r, switch: null })].join('\n');
   const lines = [
     `Video ${r.id || '?'}${r.duration ? ' (' + mmss(r.duration) + ')' : ''}: ${Object.entries(r.chunks).map(([k, v]) => `${k} ${v}`).join(', ') || 'chưa có đoạn nào'}; ` +
-      `nhận dạng: ${r.asrModels.join(', ') || '-'}; lời bài hát ${r.lyrics ? 'bật' : 'tắt'}`,
+      `nhận dạng: ${r.asrModels.join(', ') || '-'}; lời bài hát ${r.lyrics ? 'bật' : 'tắt'}; dịch sang ${r.target || 'vi'}`,
     ...(r.error ? [`  LỖI khi xem: ${r.error}`] : []),
     `  Không mất câu vì luật của ta: ${r.unapproved} vế cần duyệt${r.failed.length ? `; ${r.failed.length} đoạn lỗi hay dịch ra 0 dòng` : ''}${r.staleChunks ? `; ${r.staleChunks} đoạn là kết quả cũ (server sẽ làm lại)` : ''}`,
     ...r.failed.map((x) => `    ${x.span} ${x.status}${x.label ? '/' + x.label : ''}`),

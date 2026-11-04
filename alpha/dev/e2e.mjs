@@ -34,7 +34,7 @@ const MEDIA = { speech12: video(12, 440), song6: video(6, 300), long100: video(1
 //   "走吧" 2 chữ thì server bỏ cả đoạn là "quá ít lời"); ở cách cũ nó không trùng chỗ nào các kiểm tra đọc sub.
 const MT = process.env.E2E_MT === 'openai' ? 'openai' : 'gemini';
 const F10 = process.env.E2E_FIRST10 === '1';
-const providerHits = { funasr: 0, gemini: 0, withContext: 0, longChunks: [], rateLimited: 0, pronIn: 0, authorIn: 0, streamed: 0 };
+const providerHits = { en: 0, funasr: 0, gemini: 0, withContext: 0, longChunks: [], rateLimited: 0, pronIn: 0, authorIn: 0, streamed: 0 };
 // Bảng xưng hô model giả trả trong mọi lần dịch (không có trong lượt rút gọn): extension phải gửi lại ở yêu cầu sau.
 const PRON = { pairs: [{ who: 'người kể → người xem', self: 'mình', other: 'các bạn' }] };
 const sentence = (text, b, e) => {
@@ -77,9 +77,14 @@ const providers = http.createServer((req, res) => {
       if (text.includes('Các dòng ngay trước')) providerHits.withContext++;
       if (text.includes('Bảng xưng hô đã dùng') && text.includes(JSON.stringify(PRON.pairs))) providerHits.pronIn++;
       if (text.includes('小李旅行')) providerHits.authorIn++;
-      const lines = JSON.parse(text.match(/Các dòng: (.*)$/m)[1]);
+      // Câu lệnh tiếng Anh (ngôn ngữ đích en): dòng 'Lines: ', khoá text, không có bảng xưng hô.
+      const en = /^Lines: /m.test(text);
+      if (en) providerHits.en++;
+      const lines = JSON.parse(text.match(en ? /^Lines: (.*)$/m : /Các dòng: (.*)$/m)[1]);
       const vi = { '大家好，今天我们去吃火锅。': 'Chào cả nhà, hôm nay đi ăn lẩu.', '走吧！': 'Đi thôi!', '我们出发了。': 'Mình xuất phát nào.' };
-      const out = JSON.stringify({ ...(/^Rút gọn/.test(text) ? {} : { pronouns: PRON }), cues: lines.map(l => ({ id: l.id, vi: vi[l.zh] || 'Dòng ' + l.id })) });
+      const EN = { '大家好，今天我们去吃火锅。': 'Hi everyone, we are going for hotpot today.', '走吧！': "Let's go!", '我们出发了。': "We're off." };
+      const out = JSON.stringify(en ? { cues: lines.map(l => ({ id: l.id, text: EN[l.zh] || 'Line ' + l.id })) }
+        : { ...(/^Rút gọn/.test(text) ? {} : { pronouns: PRON }), cues: lines.map(l => ({ id: l.id, vi: vi[l.zh] || 'Dòng ' + l.id })) });
       if (gem) return json({ candidates: [{ content: { parts: [{ text: out }] } }] });
       if (!b.stream) return json({ choices: [{ message: { role: 'assistant', content: out } }] });
       // SSE: 6 mẩu cách nhau 60 ms, để server gửi dòng tạm trước kết quả cuối.
@@ -385,6 +390,27 @@ search.prefetchedNext = playRequested.has(SIDS[1]);
 // Số đếm của dịch vụ AI giả tới hết các ca trên: kiểm tra của các ca đó đọc ở đây (ca phát liên tục bên dưới gọi thêm).
 const hits0 = { ...providerHits, longChunks: [...providerHits.longChunks] };
 
+// ---- Ngôn ngữ đích (giai đoạn 1): chọn English trong popup lúc video trang tìm kiếm đã có sub tiếng Việt. Extension xin bản dịch
+// không kèm âm thanh, server dịch từ dòng gốc đã lưu (không nhận dạng lại); nhãn EN. Chọn lại Tiếng Việt: sub tiếng Việt có ngay.
+const searchSub = (t) => spage.evaluate(async (t) => {
+  const v = document.querySelector('#modal video');
+  if (!v) return {};
+  v.pause(); v.currentTime = t;
+  await new Promise(r => setTimeout(r, 300));
+  const host = [...document.querySelectorAll('div')].find(d => d.shadowRoot && d.shadowRoot.querySelector('.sub'));
+  if (!host) return {};
+  const sub = host.shadowRoot.querySelector('.sub'), badge = host.shadowRoot.querySelector('.badge');
+  return { sub: sub.style.display === 'block' ? sub.textContent : null, badge: badge.style.display === 'block' ? badge.textContent : null };
+}, t);
+const english = {};
+await spage.bringToFront();
+await pop.selectOption('#target', 'en');
+for (let i = 0; i < 60; i++) { english.en = await searchSub(1.2); if (english.en.sub === 'Hi everyone, we are going for hotpot today.') break; await spage.waitForTimeout(250); }
+english.saved = await pop.evaluate(async () => (await chrome.storage.local.get('settings')).settings.target);
+await pop.selectOption('#target', 'vi');
+await spage.waitForTimeout(400);
+english.back = await searchSub(1.2);
+
 // ---- Cách dịch sẵn 10 s, phát liên tục như người xem (chỉ E2E_FIRST10=1). Tab mới ở feed /jingxuan; không bao giờ dừng video
 // để đọc: đọc sub và nhãn trong shadow DOM mỗi 250 ms lúc đang phát. Lúc server xong một đoạn: lúc dòng log của nó tới.
 //   1. Lướt nhanh: PA[0..3], mỗi video phát ~2 s (cửa chờ 4 s vì video trước chỉ xem ~2 s).
@@ -451,7 +477,7 @@ if (play) {
     preEarly: [[PP, play.p], [PN, play.n]].every(([id, s]) => { const x = get(id, '0:00–0:10'); return !!x && !!s.length && x.at < s[0].wall; }),
     reqs: Object.fromEntries(PIDS.map(id => [id, r[id].map(x => `${x.quick ? 'nhanh ' : ''}${x.range} ${x.status} ${x.seconds} s`)])) };
 }
-console.log({ health, first, atGap, atSecond, delayed, savedDelay, status, song, songOff, long, search, providerHits, hits0, cdnSongGapsMs: cdnSong.map(t => t - cdnSong[0]) });
+console.log({ english, health, first, atGap, atSecond, delayed, savedDelay, status, song, songOff, long, search, providerHits, hits0, cdnSongGapsMs: cdnSong.map(t => t - cdnSong[0]) });
 if (f10) console.log('first10 play scenario:', JSON.stringify(f10, null, 1));
 console.log('server log:\n' + alphaLog.trim());
 // Yêu cầu ~12 s âm thanh: đoạn [0,10) gửi dư 2 s phía sau (F10_POST).
@@ -503,6 +529,10 @@ const checks = {
   'search page: video opened from chunked search/stream results is translated (request sent, badge shown, sub at 1.2 s)':
     new RegExp(SIDS[0] + '( \\[[^\\]]+\\])? ok').test(alphaLog) && !!search.badge && search.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.',
   'search page: next search result (later JSON block of search/stream) prefetched': search.prefetchedNext,
+  'target language: choosing English in the popup re-translates the shown video from stored source lines (no new ASR), badge EN; back to Vietnamese at once':
+    english.saved === 'en' && english.en.sub === 'Hi everyone, we are going for hotpot today.' && /^EN/.test(english.en.badge || '')
+    && new RegExp(SIDS[0] + ' \\[[^\\]]+\\] →EN ok[^\\n]*dịch từ dòng gốc đã có \\(vi\\)').test(alphaLog)
+    && english.back.sub === 'Chào cả nhà, hôm nay đi ăn lẩu.' && /^VI/.test(english.back.badge || ''),
   // Bảng xưng hô (P2): model trả, server trả về, extension gửi lại ở đoạn sau của cùng video, server đưa vào câu lệnh.
   'pronoun table round trip: later chunks of the long video carry the table back into the prompt': hits0.pronIn >= 2,
   'uploader nickname (author.nickname) reaches the translation prompt': hits0.authorIn >= 1,
