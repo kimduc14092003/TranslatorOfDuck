@@ -16,16 +16,18 @@ Mục đích: chọn nền tảng làm tiếp sau Douyin ở giai đoạn 5 (ROA
 |---|---|---|---|
 | Xem không cần đăng nhập | Được (4/4) | Được (7/7) | Được (4/4) |
 | Phụ đề có sẵn trong trang | Có danh sách track (`captionTracks`) trên 4/4 video; cả 4 có track tiếng Trung do người đăng làm | Không: danh sách phụ đề rỗng cho khách; API trình phát trả `need_login_subtitle: true`, 0 phụ đề (3/3) | `subtitleInfos` có ở 1/4 video (ASR của TikTok, WebVTT, tiếng Việt); 3 video ngắn còn lại không có |
-| Đọc phụ đề mà không tự ký yêu cầu | Khó: URL trong `captionTracks` không có `pot`; yêu cầu phụ đề của chính trình phát có `pot` (mã PO token), nhưng trả 0 byte khi chạy headless (3/4) | Không áp dụng: phải đăng nhập (đã chốt không đăng nhập, ghi lại) | Trang không tự tải file phụ đề; đọc nó là yêu cầu của ta tới URL CDN có chữ ký |
+| Đọc phụ đề mà không tự ký yêu cầu | Được, nếu chỉ nghe yêu cầu của trình phát: trên trình duyệt thật nó trả JSON đủ cả video. Trình duyệt tự động thì YouTube trả rỗng. Tự gọi URL trong `captionTracks` thì thiếu `pot` | Không áp dụng: phải đăng nhập (đã chốt không đăng nhập, ghi lại) | Trang không tự tải file phụ đề; đọc nó là yêu cầu của ta tới URL CDN có chữ ký |
 | Âm thanh trước chỗ đang xem | Khó: định dạng âm thanh không có URL, trình phát dùng SABR (`serverAbrStreamingUrl`) | Có: `__playinfo__` có 3 track âm thanh DASH riêng (m4s), trình phát tự tải bằng yêu cầu theo khoảng byte, giống cách extension làm với Douyin | Chỉ có một file video gộp (`playAddr`), không có track âm thanh riêng; phải tải cả video |
 | Nội dung tiếng Trung | Phải tìm; feed chung không phải tiếng Trung | Có, gần như toàn bộ | Theo vùng: ở Việt Nam trang khám phá ra video tiếng Việt |
 
 ### YouTube
 - `ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.captionTracks` có trên cả 4 video, mỗi video 2–4 track (zh, zh-Hans, en…), kèm hơn 150 ngôn ngữ dịch máy của YouTube.
 - URL track có `exp`, `expire`, `sparams`, `signature`, không có `pot`. Tài liệu tháng 6/2026 nói YouTube đòi PO token cho phụ đề; thiếu thì trả rỗng. Yêu cầu do chính trình phát gửi khi bật phụ đề (phím `c`) có `pot`, `potc`, `fmt`: thấy ở 3/4 video, cả 3 trả 200 mà 0 byte trong lần chạy headless.
-- **Thử lại có cửa sổ (4/11, 5 video):** vẫn 200 và 0 byte. Nút phụ đề đang bật mà trình phát vẽ 0 dòng phụ đề; `navigator.webdriver` là `true`. Nghĩa là YouTube trả phụ đề rỗng cho trình duyệt điều khiển tự động, không phải lỗi cách đọc. Tự động hoá không trả lời được câu này; cần kiểm chỉ đọc trên trình duyệt thật (Chromium của chủ dự án, `rec.mjs` ở cổng 9333) khi bạn mở một video có phụ đề.
+- **Thử lại có cửa sổ (4/11, 5 video):** vẫn 200 và 0 byte. Nút phụ đề đang bật mà trình phát vẽ 0 dòng phụ đề; `navigator.webdriver` là `true`. Nghĩa là YouTube trả phụ đề rỗng cho trình duyệt điều khiển tự động, không phải lỗi cách đọc. Tự động hoá không trả lời được câu này.
+- **Kiểm trên trình duyệt thật (4/11, Chromium của chủ dự án, cổng 9333, chưa đăng nhập YouTube, `navigator.webdriver` = false, 1 video):** trình phát tự tải phụ đề `fmt=json3` có `pot`, trả 200, `application/json`. Track chính 221 sự kiện, đủ cả video trong một lần tải (40 KB), có mốc thời gian từng dòng, không có mốc từng chữ. Trên màn hình phụ đề hiện bình thường. Track được tải là track trình phát chọn (lần này `en`, vì phụ đề đã bật sẵn theo cài đặt), không phải track tiếng Trung.
+- Kết luận: với người xem thật, câu trả lời phụ đề của trình phát đọc được, và có chữ của cả video ngay từ đầu. Extension có thể nghe chính yêu cầu đó (như `tap.main.js` đang nghe API của Douyin), không gửi yêu cầu riêng. Việc còn phải giải: chọn track ngôn ngữ gốc (chỉ dùng nút của trình phát), và video không có phụ đề.
 - Âm thanh: 12 định dạng âm thanh mỗi video, không cái nào có URL hay `signatureCipher`; trình phát dùng SABR. Tải âm thanh trước chỗ đang xem như với Douyin là không làm được nếu không giả lập giao thức của trình phát.
-- Hướng khả dĩ: đọc chính câu trả lời phụ đề trình phát đã tải (extension chỉ nghe, không gửi gì) rồi dịch chữ đó, không cần nhận dạng giọng nói. Cần kiểm trên trình duyệt thật như trên.
+- Hướng khả dĩ: đọc chính câu trả lời phụ đề trình phát đã tải (extension chỉ nghe, không gửi gì) rồi dịch chữ đó, không cần nhận dạng giọng nói. Đã kiểm trên trình duyệt thật: đọc được.
 
 ### Bilibili
 - Khách xem được, không bị chặn. `window.__playinfo__` có DASH với 3 track âm thanh riêng trên CDN (`*.akamaized.net`, `bilivideo`); trình phát tự tải các khúc m4s bằng xhr.
@@ -57,10 +59,10 @@ Mục đích: chọn nền tảng làm tiếp sau Douyin ở giai đoạn 5 (ROA
 ## Đề xuất cho giai đoạn 5
 
 1. **Bilibili trước.** Nội dung tiếng Trung, khách xem được, âm thanh tách sẵn: dùng lại gần như nguyên đường ống Douyin (tải âm thanh theo khoảng byte, nhận dạng, dịch). Phụ đề có sẵn cần đăng nhập nên không trông vào nó. Việc chính: đọc `__playinfo__`, chia đoạn theo DASH, xử lý video nhiều phần (`p=`).
-2. **YouTube sau**, theo hướng khác: đọc phụ đề trình phát đã tải (khi video có phụ đề) rồi chỉ dịch, không nhận dạng. Cần một lần thử có cửa sổ để xác nhận đọc được câu trả lời phụ đề của trình phát; video không có phụ đề thì chưa có đường lấy âm thanh.
+2. **YouTube sau**, theo hướng khác: đọc phụ đề trình phát đã tải (khi video có phụ đề) rồi chỉ dịch, không nhận dạng. Đã xác nhận trên trình duyệt thật là đọc được, và có chữ cả video ngay từ đầu (rẻ: không tốn tiền nhận dạng). Video không có phụ đề thì chưa có đường lấy âm thanh. Không kiểm được bằng bộ công cụ đo tự động (YouTube trả phụ đề rỗng cho trình duyệt tự động): đo phần này phải theo cách chỉ đọc trên trình duyệt thật.
 3. **TikTok để cuối.** Phụ đề có ở một phần video, media gộp, nội dung ở Việt Nam ít tiếng Trung.
 
-Chưa làm: kiểm phụ đề YouTube trên trình duyệt thật (cần bạn mở Chromium của bạn với một video có phụ đề); TikTok tiếng Trung khi có đăng nhập (đã chốt không đăng nhập).
+Chưa làm: TikTok tiếng Trung khi có đăng nhập (đã chốt không đăng nhập).
 
 ## Nguồn
 

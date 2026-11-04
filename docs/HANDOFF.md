@@ -1538,12 +1538,12 @@ Chủ dự án chọn làm cả 4 hướng.
     - Vlog: như nhau. Mức thấp hơn các lần trước (98,4–98,8%) đi cùng model nhận dạng qwen, không phải ngôn ngữ đích.
     - Tiểu phẩm, kể chuyện: tiếng Anh thấp hơn do lần chụp **trống** (8 so với 2, 14 so với 6). Tra từng lần chụp: gần như tất cả nằm ở 0–4 s đầu video, lúc nhãn còn "đang dịch" (chờ sub đầu). Sau khi sub đầu hiện: tiểu phẩm 2 lần trống, kể chuyện 0. Nghĩa là chênh lệch nằm ở sub đầu của lượt đó, không ở cách hiện dòng tiếng Anh. Sub đầu phụ thuộc lúc trang tải, cùng cơ chế cho mọi ngôn ngữ (giai đoạn 0). Đây là suy luận từ mẫu chụp, chưa đo lặp nhiều lần.
 - **Còn chờ chủ dự án:** đọc bản tiếng Anh (`alpha/server/work/p1-en-lines.md`, chỉ trên máy, xoá sau khi đọc cùng `node alpha/dev/real/run.mjs --clean p1-en` và `--clean p1-switch`).
-- **Cài 0.2.45 vào Chromium của chủ dự án:** Chromium lúc đó đang tắt; đã dời `~/.tod-profile/Default/Service Worker` thành `Service Worker.prev-0244`. Lần mở sau sẽ nạp worker mới. **Chưa kiểm** worker đang chạy (`node alpha/dev/real/sw-source.mjs` khi Chromium mở).
+- **Cài 0.2.45 vào Chromium của chủ dự án:** Chromium lúc đó đang tắt; đã dời `~/.tod-profile/Default/Service Worker` thành `Service Worker.prev-0244`. Lần mở sau sẽ nạp worker mới. Đã mở lại bằng lệnh thường dùng và kiểm: worker chạy BUILD 0.2.45, giống hệt `alpha/extension/background.js` (`sw-source.mjs`, 4/11).
 
 ## 6at. Thử nhanh nền tảng thứ hai (4/11, giai đoạn 2, chỉ đọc)
 
 Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt: Bilibili trước (khách xem được, âm thanh DASH tách sẵn, phụ đề cần đăng nhập nên tự nhận dạng như Douyin); YouTube sau (phụ đề có sẵn nhưng cần PO token, âm thanh qua SABR; hướng là đọc phụ đề trình phát đã tải, cần thử có cửa sổ); TikTok để cuối.
-- Thêm cùng ngày: YouTube thử có cửa sổ vẫn nhận phụ đề rỗng (trình phát bật phụ đề mà vẽ 0 dòng, `navigator.webdriver` là `true`), nên phải kiểm trên trình duyệt thật. TikTok: trang thẻ và trang tìm kiếm không hiện video cho khách. Đọc điều khoản: cả ba có điều về dịch hay sửa nội dung, cùng loại rủi ro với Douyin; bảng tóm tắt ở PLATFORMS.md.
+- Thêm cùng ngày: YouTube thử có cửa sổ vẫn nhận phụ đề rỗng (trình phát bật phụ đề mà vẽ 0 dòng, `navigator.webdriver` là `true`), nên phải kiểm trên trình duyệt thật. Đã kiểm trong Chromium của chủ dự án (chưa đăng nhập YouTube): trình phát tự tải phụ đề `json3` có `pot`, đủ cả video trong một lần (221 dòng); đọc được bằng cách chỉ nghe yêu cầu đó. TikTok: trang thẻ và trang tìm kiếm không hiện video cho khách. Đọc điều khoản: cả ba có điều về dịch hay sửa nội dung, cùng loại rủi ro với Douyin; bảng tóm tắt ở PLATFORMS.md.
 - Tiếng Anh dùng 20 ký tự/giây (chuẩn Netflix English cho người lớn, 42 ký tự/dòng; trẻ em 17), tiếng Việt giữ 17. Chấm lại 3 video tiếng Anh đã đo với giới hạn 20: 43%, 78,1%, 63,2% dòng đạt (với 17: 25%, 71,9%, 40,4%); các dòng đó viết theo gợi ý độ dài cũ (17).
 
 ## 7. Việc tiếp theo trên Mac
