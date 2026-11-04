@@ -96,10 +96,10 @@ export const TARGETS = {
   },
   // Tiếng Anh (chủ dự án chốt 3/11). Câu lệnh viết bằng tiếng Anh; khoá JSON trung tính 'text' (khoá 'vi' dễ kéo model sang
   // tiếng Việt: verifier 4/11, F2). Không có bảng xưng hô. Chưa có câu lệnh rút gọn: rút gọn đang tắt (ROADMAP §6 mục 5).
-  // cps 17 như tiếng Việt, chưa đối chiếu chuẩn Netflix tiếng Anh. Dấu mốc cho dịch vụ giả trong test: dòng 'Lines: ' và lượt
+  // cps 20: chuẩn Netflix English (USA) cho chương trình người lớn (tối đa 20 ký tự/giây, 42 ký tự/dòng; trẻ em 17). Dấu mốc cho dịch vụ giả trong test: dòng 'Lines: ' và lượt
   // dịch lại mở đầu bằng 'Translate again'.
   en: {
-    code: 'en', label: 'EN', cps: 17, key: 'text', pronouns: false,
+    code: 'en', label: 'EN', cps: 20, key: 'text', pronouns: false,
     firstSchema: TEXT_SCHEMA, cueSchema: TEXT_SCHEMA,
     first: ({ meta, author, context, far, before, sung, cues, budget, round }) => [
       'Translate these Douyin video subtitles from Chinese into natural English, like professional subtitles.',

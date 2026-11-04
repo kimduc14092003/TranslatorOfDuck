@@ -143,6 +143,11 @@ try {
     assert.doesNotMatch(p, /mình|xưng hô|Các dòng/);
     assert.equal(counts().asr - c0.asr, 1);
   });
+  t('tiếng Anh: max_chars theo 20 ký tự/giây (chuẩn Netflix English cho người lớn), tiếng Việt vẫn 17', () => {
+    const lines = JSON.parse(mtBodies[c0.mt].match(/^Lines: (.*)$/m)[1]);
+    assert.deepEqual(lines.map(l => l.max_chars), a.last.cues.map(c => Math.floor(Math.min(84, 20 * (c.end - c.start)))));
+    assert.equal(TARGETS.vi.cps, 17);
+  });
   t('tiếng Anh: dòng tạm có target en', () => {
     const parts = a.lines.filter(l => l.partial);
     assert.ok(parts.length >= 1, 'không có dòng tạm');

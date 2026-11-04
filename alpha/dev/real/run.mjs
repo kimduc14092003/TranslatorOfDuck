@@ -74,14 +74,14 @@ const summary = { name, at: new Date().toISOString(), rate, throttle: throttle |
 fs.writeFileSync(path.join(root, 'summary.json'), JSON.stringify(summary, null, 1));
 fs.appendFileSync(path.join(OUT_ROOT, 'history.jsonl'), JSON.stringify(summary) + '\n');
 const cell = (x, w) => String(x ?? '-').padStart(w);
-console.log('\nid                  | vế cần duyệt | đoạn lỗi | độ phủ | đúng dòng | chờ | lỗi | sub đầu | đọc ≤17 | huỷ');
+console.log('\nid                  | vế cần duyệt | đoạn lỗi | độ phủ | đúng dòng | chờ | lỗi | sub đầu | đọc đạt | huỷ');
 for (const r of rows) {
   if (r.error && r.correct == null) { console.log(`${r.id.padEnd(19)} | LỖI: ${r.error}`); continue; }
   console.log([r.id.padEnd(19), cell(r.unapproved, 12), cell(r.failed, 8), cell(r.coverage, 6), cell(r.correct, 9), cell(r.waitRuns, 3), cell(r.errorRuns, 3), cell(r.ttfsS, 7),
     cell(r.readingWithin, 7), cell(r.cancelled, 4)].join(' | ') + (r.error ? '  LỖI: ' + r.error : ''));
 }
 console.log(`tổng: ${total.videos} mục, ${total.errors} lỗi, ${total.unapproved} vế cần duyệt, ${total.failedChunks} đoạn lỗi hay dịch ra 0 dòng, đúng dòng thấp nhất ${total.correctMin ?? '-'}%, ` +
-  `chờ ${total.waitRuns} lần, lỗi ${total.errorRuns} lần, sub đầu trung vị ${total.ttfsMedian ?? '-'} s (cao nhất ${total.ttfsMax ?? '-'} s), đọc ≤17 trung vị ${total.readingMedian ?? '-'}%`);
+  `chờ ${total.waitRuns} lần, lỗi ${total.errorRuns} lần, sub đầu trung vị ${total.ttfsMedian ?? '-'} s (cao nhất ${total.ttfsMax ?? '-'} s), đọc đạt chuẩn (17 ký tự/giây tiếng Việt, 20 tiếng Anh) trung vị ${total.readingMedian ?? '-'}%`);
 const T = total.timing, ms = (x) => (x == null ? '-' : Math.round(x * 1000) + ' ms');
 console.log(`đúng nhịp gộp: hiển thị trung vị ${ms(T.render.median)} (${T.render.n} dòng); nhận dạng trung vị ${ms(T.asr.median)}, P90 ${ms(T.asr.p90)} (${T.asr.n} dòng); ` +
   `Δin trung vị ${ms(T.in.median)}, P90 ${ms(T.in.p90)}, sớm nhất ${ms(T.in.min)}, ${T.in.within83ms ?? '-'}% trong ±83 ms (${T.in.n} dòng)`);
