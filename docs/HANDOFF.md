@@ -1450,6 +1450,27 @@ Chủ dự án chọn làm cả 4 hướng.
   - Công cụ đo đã chỉ chấp nhận 嗯/啊/呃/额 từ trước, không đổi luật, chỉ sửa chú thích.
 - **Test:** `test.mjs` (isFiller với QUIET_FILLER), `lyrics-test` (đoạn 诶。哎呀。 được dịch; cache cũ nhãn filler có 诶 thì làm lại). Hai ca mới trượt trên code cũ. `npm test`: 11 bộ đều đạt.
 
+## 6aq. Ghép sub ở chỗ nối hai đoạn: so chữ gốc trước khi bỏ dòng (4/11, extension 0.2.44)
+
+- **Vấn đề (cache hằng ngày):** hai luật của `cues.js` bỏ dòng chỉ theo giờ. Quét các chỗ nối: 31 dòng đầu đoạn sau nằm gọn trong thời gian dòng trước, 15 lần bỏ dòng trước vì dòng sau bắt đầu sát nó. So với chữ của mọi dòng đã gộp quanh đó, chỉ 2 ca mất chữ thật:
+  - "哭" trong bài hát chỉ đoạn sau nghe được, bị bỏ (7649415147513375994, 21,4 s);
+  - "我只有一台相机，" bị bỏ vì dòng sau "相机，还有一个很…" bắt đầu sau nó 0,7 s, mất "我只有一台" (7701687665833315593, 19,4 s).
+- **Lỗi "dòng cuối đoạn trước bị cắt còn ~1 s" (ROADMAP giai đoạn 0, việc 5):** cache hiện không còn ca nào; 3 ca cắt, dòng trước đều còn từ 2,1 s. Không sửa thêm.
+- **Sửa (`cues.js`, `merge`):**
+  - dòng nằm gọn trong thời gian dòng trước: chỉ bỏ khi chữ gốc (zh, bỏ dấu câu, NFKC) đã có trong các dòng đã gộp quanh nó (khớp nguyên, hay khác một chữ với vế từ 4 chữ). Có chữ mới thì nối (cả bản dịch) vào dòng trùng giờ nhiều nhất; khác loại hát / nói thì bỏ như cũ;
+  - dòng trước chỉ bị bỏ khi chữ của nó có trong dòng mới và các dòng tiếp theo của cùng đoạn (bắt đầu tới 2 s sau lúc dòng trước dứt lời). Không có thì giữ dòng trước, dòng mới bắt đầu lúc dòng trước dứt lời, giữ ít nhất 0,8 s lời của dòng mới; không còn chỗ thì bỏ như cũ;
+  - dòng không có zh: như cũ.
+- **Đo trên cache** (so với bản trước): "bỏ khi ghép sub" 1 → 0. Chỉ 2 video đổi, đúng hai ca trên. Dòng chồng nhau 8 → 8, dòng có giờ cuối không sau giờ đầu 0 → 0, sai thứ tự 0 → 0, dòng dưới 0,5 s 8 → 8. Ca 2 còn lặp "相机，" ở hai dòng; dòng sau còn 0,8 s.
+- **Soát:** verifier (accept_with_fixes, 5 phát hiện nhẹ). Đã sửa:
+  - nối vào dòng trùng giờ nhiều nhất thay vì dòng cuối;
+  - không nối câu nói vào dòng hát;
+  - không để dòng có giờ cuối trước giờ đầu;
+  - NFKC.
+  Để lại:
+  - lúc dòng đang tới dần (mỗi dòng tạm là một mục riêng khi gộp) thì không thấy các dòng sau, nên có thể tạm giữ dòng trước và lặp chữ tới khi đoạn xong;
+  - chữ mới lẫn chữ đã có thì nối cả: lặp vài chữ, chủ dự án ưu tiên sub đầy đủ.
+- **Test:** `cues-test` 8 (2 ca mới từ hai ca thật, trượt trên bản cũ; thêm ca dòng trùng giờ, dòng hát, chữ toàn khổ, không còn chỗ). Mọi test extension đạt.
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).

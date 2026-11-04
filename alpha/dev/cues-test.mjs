@@ -48,6 +48,44 @@ t('tua tới trước (mới có đoạn sau), rồi đoạn trước xong: gộ
   assert.equal(onlyB[0].start, 655.271);          // không sửa vào cues gốc của đoạn
   assert.equal(b.cues[0].end, 659.091);
 });
+t('dòng đầu đoạn sau nằm gọn trong thời gian dòng trước mà có chữ mới (chỉ đoạn sau nghe được): nối vào dòng trước, không bỏ; chữ đã có thì vẫn bỏ', () => {
+  // cache 4/11, bài hát: đoạn [0,20) "脆弱的她选择了逃脱，" 17,64–23,46 s; đoạn [20,50) nghe thêm "哭，" 21,39–22,73 s.
+  const Z = (start, se, vi, zh) => ({ ...C(start, se, vi), zh });
+  const out = merge([{ cues: [Z(15.2, 17.5, 'A1', '把叶子吹落，'), Z(17.64, 23.46, 'A2', '脆弱的她选择了逃脱，')] },
+    { cues: [Z(21.39, 22.73, 'Khóc đi,', '哭，'), Z(24.27, 27.53, 'B2', '别叹息去交错，')] }]);
+  assert.deepEqual(texts(out), ['A1', 'A2 Khóc đi,', 'B2']);
+  assert.equal(out[1].start, 17.64);
+  const dup = merge([{ cues: [Z(17.64, 23.46, 'A2', '脆弱的她选择了逃脱，')] }, { cues: [Z(19, 22, 'A2 lặp', '她选择了逃脱')] }]);
+  assert.deepEqual(texts(dup), ['A2']);
+  // Nối vào dòng trùng giờ nhiều nhất, không mặc định dòng cuối (verifier 4/11): X 19–20,5 s nằm chủ yếu trong A (15–20 s).
+  const host = merge([{ cues: [Z(15, 20, 'A', '今天我们去'), Z(20.2, 23, 'B', '吃火锅吧')] }, { cues: [Z(19, 20.5, 'X', '真的'), Z(25, 27, 'C', '好')] }]);
+  assert.deepEqual(texts(host), ['A X', 'B', 'C']);
+  // Câu nói không nối vào dòng hát (dòng hát hiện "♪").
+  const sung = merge([{ cues: [{ ...Z(17.64, 23.46, 'A2', '脆弱的她选择了逃脱，'), sung: true }] }, { cues: [Z(21.39, 22.73, 'Nói', '你好')] }]);
+  assert.deepEqual(texts(sung), ['A2']);
+  // Chữ toàn khổ: "５.５元" là "5.5元".
+  assert.deepEqual(texts(merge([{ cues: [Z(10, 14, 'A', '花了5.5元')] }, { cues: [Z(11, 13, 'B', '５.５元')] }])), ['A']);
+  const noZh = merge([{ cues: [C(17.64, 23.46, 'A2')] }, { cues: [C(21.39, 22.73, 'X')] }]);
+  assert.deepEqual(texts(noZh), ['A2'], 'không có zh: như cũ');
+});
+t('dòng đầu đoạn sau bắt đầu sát dòng trước (dưới 0,8 s) mà không có chữ của dòng trước: giữ dòng trước, dòng sau bắt đầu lúc dòng trước dứt lời; có chữ thì vẫn bỏ dòng trước', () => {
+  // cache 4/11: "我只有一台相机，" 19,4–21,1 s (đoạn trước) và "相机，还有一个很" 20,1–21,7 s (đoạn sau): trước đây mất "我只有一台".
+  const Z = (start, se, vi, zh) => ({ ...C(start, se, vi), zh });
+  const out = merge([{ cues: [Z(16, 19, 'A1', '后来呢，'), Z(19.4, 21.1, 'Tôi chỉ có một máy ảnh,', '我只有一台相机，')] },
+    { cues: [Z(20.1, 21.7, 'máy ảnh, còn một', '相机，还有一个很'), Z(21.8, 24, 'B2', '简单的方法去认识')] }]);
+  assert.deepEqual(texts(out), ['A1', 'Tôi chỉ có một máy ảnh,', 'máy ảnh, còn một', 'B2']);
+  // Dòng sau bắt đầu muộn lại, tới lúc dòng trước dứt lời (21,1 s), nhưng giữ ít nhất 0,8 s lời của nó: 20,9 s.
+  assert.ok(Math.abs(out[2].start - 20.9) < 1e-6, 'dòng sau bắt đầu: ' + out[2].start);
+  assert.ok(out[1].end <= out[2].start && out[1].end - out[1].start >= 1.4, 'dòng trước hiện ' + (out[1].end - out[1].start) + ' s, không chồng dòng sau');
+  // Không còn chỗ cho dòng trước (dòng mới 0,8 s phải bắt đầu ngay đầu nó): bỏ như cũ, không để dòng có giờ cuối trước giờ đầu.
+  const tight = merge([{ cues: [Z(15, 19.8, 'A', '我们走吧'), Z(20, 20.5, 'B', '好的')] }, { cues: [Z(19.5, 20.7, 'X', '出发了')] }]);
+  for (const c of tight) assert.ok(c.end > c.start, JSON.stringify(Array.from(tight, (x) => [x.vi, x.start, x.end])));
+  for (let i = 1; i < tight.length; i++) assert.ok(tight[i].start >= tight[i - 1].start);
+  // "花了5.5元。" / "花了5.5块买了…": dòng sau có đủ chữ (khác một chữ) → bỏ dòng trước như cũ.
+  const same = merge([{ cues: [Z(651.8, 655.09, 'A1', '我去超市，'), Z(655.251, 656.011, 'A2 ngắn', '花了5.5元。')] },
+    { cues: [Z(655.271, 658.591, 'B1 đầy đủ', '花了5.5块买了一把鞋刷子和一块肥皂，')] }]);
+  assert.deepEqual(texts(same), ['A1', 'B1 đầy đủ']);
+});
 t('dòng nhiều chữ hơn đọc kịp (17 ký tự/giây): hiện lâu hơn vào quãng lặng, tối đa 1,5 s sau lúc dứt lời, không đè dòng kế; dòng đọc kịp giữ nguyên; đầu dòng không đổi; dòng chưa biết dòng kế thì không kéo dài', () => {
   const long = 'x'.repeat(68);   // cần 4 s
   // 'a\u0301': chữ á viết tách dấu (NFD), hai mã một ký tự hiển thị: đếm theo mã thì ra 68 (verifier 4/11).

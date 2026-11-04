@@ -141,7 +141,7 @@ Tới khi chọn model nhận dạng cuối (giai đoạn 3), bảng điểm dù
 4. **Nhận dạng: chưa làm gì thêm.** Không bật lại Fun-ASR, không so sánh model lúc này (quyết định 3/11). Chỉ sửa khi model dự phòng làm mất câu, như các sửa ngày 3/11.
 5. **Sửa các lỗi đã biết:**
    - đoạn đầu bị huỷ lúc mở video: gặp 1 lần, mở lại 5 lần trên 4 video không gặp lại (§6aj); chạy bộ video thử qua proxy để bắt;
-   - khi ghép sub, dòng cuối đoạn trước có lúc bị cắt còn khoảng 1 s, và chữ lặp giữa hai dòng liền nhau tăng từ 11 lên 18 sau bản sửa §6ak; sửa trong `cues.js`;
+   - khi ghép sub, dòng cuối đoạn trước có lúc bị cắt còn khoảng 1 s, và chữ lặp giữa hai dòng liền nhau tăng từ 11 lên 18 sau bản sửa §6ak; sửa trong `cues.js`. *(4/11: cache không còn ca cắt dưới 2,1 s; đã sửa hai ca mất chữ ở chỗ nối, HANDOFF §6aq, extension 0.2.44.)*
    - đoạn chỉ có 诶？, 哎呀！ bị coi là tiếng đệm và bỏ (§6ai): bạn quyết giữ (4/11); đã sửa, chỉ bỏ đoạn toàn 嗯/啊/呃/额 (HANDOFF §6ap);
    - tải thừa khi tua lúc lượt tải đầu video còn chạy, ở video 25–26 s (R2, §6af);
    - phép kiểm "file đã đổi" bị bỏ khi không biết cỡ file (F3, §6af; mới là suy luận);
