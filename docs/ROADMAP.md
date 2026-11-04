@@ -142,7 +142,7 @@ Tới khi chọn model nhận dạng cuối (giai đoạn 3), bảng điểm dù
 5. **Sửa các lỗi đã biết:**
    - đoạn đầu bị huỷ lúc mở video: gặp 1 lần, mở lại 5 lần trên 4 video không gặp lại (§6aj); chạy bộ video thử qua proxy để bắt;
    - khi ghép sub, dòng cuối đoạn trước có lúc bị cắt còn khoảng 1 s, và chữ lặp giữa hai dòng liền nhau tăng từ 11 lên 18 sau bản sửa §6ak; sửa trong `cues.js`;
-   - đoạn chỉ có 诶？, 哎呀！ bị coi là tiếng đệm và bỏ (§6ai): chờ bạn quyết có giữ không;
+   - đoạn chỉ có 诶？, 哎呀！ bị coi là tiếng đệm và bỏ (§6ai): bạn quyết giữ (4/11); đã sửa, chỉ bỏ đoạn toàn 嗯/啊/呃/额 (HANDOFF §6ap);
    - tải thừa khi tua lúc lượt tải đầu video còn chạy, ở video 25–26 s (R2, §6af);
    - phép kiểm "file đã đổi" bị bỏ khi không biết cỡ file (F3, §6af; mới là suy luận);
    - trang video dài có chương, và video xem trước khi rê chuột lên thanh tiến trình, chưa thử (HANDOFF §5 điểm 4).
@@ -300,14 +300,14 @@ Một ngoại lệ có thể kéo sớm: cho vài người ngoài dùng thử mi
 
 **Đã chốt ngày 4/11:**
 4. Tốc độ đọc: giữ sub ra sớm. Không bật lại lượt rút gọn ở đoạn gấp và đoạn dịch sẵn, vì nó làm sub ra chậm hơn khoảng 2 s. Mốc 85% vẫn là đích, nhưng chỉ theo đuổi bằng cách không làm sub ra chậm hơn (ví dụ: lượt dịch đầu tự viết ngắn; hay rút gọn chạy sau, rồi thay những dòng chưa hiện).
-5. Tốc độ đọc xếp sau sub đầy đủ: tắt hẳn lượt rút gọn (cả "rút gọn sau"; server bật lại được bằng `TOD_CONDENSE=1`), không ghép dòng kề. Mốc 85% dòng ≤ 17 ký tự/giây chỉ còn để theo dõi. Câu lệnh dịch đầu vẫn có max_chars ("chỉ rút gọn khi bản dịch đủ ý dài hơn").
+5. Tốc độ đọc xếp sau sub đầy đủ: tắt hẳn lượt rút gọn (cả "rút gọn sau"; server bật lại được bằng `TOD_CONDENSE=1`), không ghép dòng kề. Mốc 85% dòng ≤ 17 ký tự/giây chỉ còn để theo dõi. Câu lệnh dịch đầu vẫn có max_chars ("chỉ rút gọn khi bản dịch đủ ý dài hơn"): bạn quyết giữ (4/11).
+6. Đoạn chỉ có tiếng kêu có nghĩa (诶？, 哎呀！, 哇): giữ, vẫn dịch. Chỉ bỏ đoạn toàn tiếng đệm 嗯, 啊, 呃, 额.
 
 **Còn mở:**
 1. Nền tảng thử ở giai đoạn 2 (đề xuất: YouTube với phụ đề sẵn, và Bilibili), và có thử TikTok không.
 2. Ngôn ngữ nguồn đầu tiên ngoài tiếng Trung (đề xuất: tiếng Anh).
 3. Video đã nói đúng ngôn ngữ đích thì ẩn sub hay vẫn hiện.
-4. Đoạn chỉ có tiếng kêu như 诶？, 哎呀！ thì bỏ hay giữ.
-5. Ai duyệt bản dịch ở những ngôn ngữ bạn không đọc được.
+4. Ai duyệt bản dịch ở những ngôn ngữ bạn không đọc được.
 
 ## Phụ lục: phản biện ngày 3/11
 

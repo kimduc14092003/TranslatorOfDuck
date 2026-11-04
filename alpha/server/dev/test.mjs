@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { classifySpeech, segmentCues, fixViText, splitSung, extractAudio, windowAsr, resplitSentences, speechBefore, lyricCues, isFiller } from '../pipeline.mjs';
+import { classifySpeech, segmentCues, fixViText, splitSung, extractAudio, windowAsr, resplitSentences, speechBefore, lyricCues, isFiller, QUIET_FILLER } from '../pipeline.mjs';
 
 const W = (text, start, end) => ({ text, start, end });
 let n = 0;
@@ -89,6 +89,9 @@ t('chế độ lời bài hát, vlog có một câu hát: chỉ dòng hát đư�
 t('chế độ lời bài hát: dòng hát chỉ có tiếng đệm (kể cả ASR ghi bằng chữ Latin) thì bỏ, dòng có lời thì giữ', () => {
   for (const zh of ['耶耶耶耶。', 'yeah yeah', 'Oh, oh, oh!', 'lalala', '啦啦啦 la la', 'ooh~', 'Ｙｅａｈ ｙｅａｈ', 'uh huh', 'yeahyeah']) assert.ok(isFiller(zh), zh);
   for (const zh of ['我爱你', 'I love you', 'oh baby', 'mama', '耶 love you', '2025', '', 'oh no', '哈哈 so funny']) assert.ok(!isFiller(zh), zh);
+  // Bỏ cả đoạn chỉ khi toàn tiếng đệm im lặng (4/11): 嗯, 啊, 呃, 额, tiếng đệm chữ Latin. 诶, 哎呀, 哇 thì dịch.
+  for (const zh of ['嗯。', '啊啊', '呃，额', 'yeah']) assert.ok(isFiller(zh, QUIET_FILLER), zh);
+  for (const zh of ['诶？', '哎呀！', '哇', '嗯，诶？']) assert.ok(!isFiller(zh, QUIET_FILLER), zh);
   const t0 = Date.now(); isFiller('o'.repeat(5000) + '!' + 'oh'.repeat(3000) + 'x');
   assert.ok(Date.now() - t0 < 200, 'chuỗi dài không làm biểu thức chạy lâu');
 });

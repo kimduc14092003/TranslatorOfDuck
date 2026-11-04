@@ -643,11 +643,14 @@ const FILLER = /^[啊哦呀耶啦嗯哈呜喔哎嘿噢唉哇嘞咯呦哟咿呃�
 // Từng từ một (không lồng lượng từ, khỏi quay lui lâu với chuỗi dài): tiếng đệm, hay một tiếng đệm viết liền nhiều lần.
 const SOUND = /^(?:o+h*|a+h*|uh+|um+|m{2,}|hm+|huh|ye(?:ah?|h)?|hey|wo+w?|woah|whoa|eh|ay|(?:la)+|(?:na)+|(?:da)+|(?:ha)+|(?:ya)+|(?:yo)+)$/i;
 const SOUND_TWICE = /^(yeah|oh|ah|hey|wow|woah|whoa|huh)\1+$/i;
-export function isFiller(zh) {
+// Tiếng đệm im lặng: đoạn chỉ có các chữ này (hay tiếng đệm chữ Latin) thì bỏ cả đoạn. Tiếng kêu có nghĩa (诶？ ngạc nhiên, 哎呀！
+// tiếc, 哇 thán phục) thì vẫn dịch: chủ dự án quyết 4/11 (ROADMAP §6).
+export const QUIET_FILLER = /^[嗯啊呃额]+$/u;
+export function isFiller(zh, set = FILLER) {
   const s = String(zh).normalize('NFKC');
   const han = normalize(s).filter(ch => /\p{Script=Han}/u.test(ch)).join('');
   const words = s.replace(/\p{Script=Han}/gu, ' ').split(/[\p{P}\p{S}\s]+/u).filter(Boolean);
-  return !!(han || words.length) && (!han || FILLER.test(han)) && words.every(w => SOUND.test(w) || SOUND_TWICE.test(w));
+  return !!(han || words.length) && (!han || set.test(han)) && words.every(w => SOUND.test(w) || SOUND_TWICE.test(w));
 }
 // Câu nói nhanh trong đoạn cả bài (≥ 3 chữ Hán, trung vị ≤ 0,20 s/chữ): lời chào, câu hỏi người qua đường, tiêu đề đọc
 // lên ngay trước hay giữa bài hát, không phải lời hát. Đo trên Douyin thật: lô 1 (13 video) có 4 dòng nói bị ♪ chỉ vì
@@ -996,8 +999,8 @@ export function cuesFromAsr(meta, asr, opts = {}) {
   }
   // Đoạn chỉ có tiếng đệm (嗯。, 啊。; verifier 3/11: 12 trên 20 đoạn "quá ít lời" cũ trong cache, ASR nghe ~0,6 s, thường lúc
   // đầu video có nhạc): không dịch thành "Ừm.". Đoạn có lời thật thì giữ cả dòng tiếng đệm như trước. Nhãn riêng, không phải
-  // no_speech: server.mjs làm lại kết quả no_speech có chữ Hán.
-  if (!song && cues.every(c => isFiller(c.zh))) return { ...out, skip: 'filler' };
+  // no_speech: server.mjs làm lại kết quả no_speech có chữ Hán. Đoạn có 诶？, 哎呀！ thì dịch (QUIET_FILLER, 4/11).
+  if (!song && cues.every(c => isFiller(c.zh, QUIET_FILLER))) return { ...out, skip: 'filler' };
   return { ...out, cues };
 }
 

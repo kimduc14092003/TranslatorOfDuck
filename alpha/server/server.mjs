@@ -137,8 +137,10 @@ async function handleSubtitles(req, res) {
   const file = cacheFile(fileSpan, MT);
   const key = file;
   const otherFile = cacheFile(fileSpan, lyrics ? 'vi' : 'vi.lyr');
-  // Kết quả bản cũ bỏ cả đoạn vì "quá ít lời" (dưới 4 chữ Hán), hay coi câu toàn kana, chữ Hàn là không có lời: làm lại.
-  const stale = (x) => x && x.status === 'skipped' && (x.label === 'too_short' || (x.label === 'no_speech' && /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(x.heard || '')));
+  // Kết quả bản cũ bỏ cả đoạn vì "quá ít lời" (dưới 4 chữ Hán), hay coi câu toàn kana, chữ Hàn là không có lời, hay bỏ đoạn chỉ có
+  // tiếng kêu như 诶？, 哎呀！ (từ 4/11 chỉ bỏ đoạn toàn 嗯/啊/呃/额): làm lại.
+  const stale = (x) => x && x.status === 'skipped' && (x.label === 'too_short' || (x.label === 'no_speech' && /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(x.heard || ''))
+    || (x.label === 'filler' && /[^嗯啊呃额\s\p{P}\p{S}\p{Script=Latin}]/u.test(x.heard || '')));
   const fresh = (f) => { const x = readCache(f); return stale(x) ? null : x; };
   const ready = () => { const other = fresh(otherFile); return fresh(file) || (noSinging(other) ? other : null); };
   // full, condensedLater (rút gọn sau): chỉ cho công cụ đo đọc file cache, không gửi extension.

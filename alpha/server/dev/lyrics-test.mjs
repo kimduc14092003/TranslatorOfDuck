@@ -50,6 +50,8 @@ const JA_SHORT = [...chars('断る。', 1.8, 0.4), ...chars('帰れ。', 4, 0.3)
 const KANA_ONLY = chars('そうだね。', 2, 0.25);
 const ONE_HAN = chars('好。', 3, 0.4);
 const FILLER_ONLY = chars('嗯。', 1, 0.6);
+// Chỉ có tiếng kêu có nghĩa (诶 ngạc nhiên, 哎呀 tiếc): từ 4/11 vẫn dịch (chủ dự án quyết), chỉ đoạn toàn 嗯/啊/呃/额 mới bỏ.
+const EXCLAIM = [...chars('诶。', 1, 0.4), ...chars('哎呀。', 3, 0.4)];
 const sentence = (words) => ({ begin_time: words[0].begin_time, end_time: words.at(-1).end_time, text: words.map(w => w.text + w.punctuation).join(''), words });
 
 let asrCalls = 0, asrDelay = 0;
@@ -64,7 +66,7 @@ const providers = http.createServer((req, res) => {
       if (asrDelay) await new Promise(r => setTimeout(r, asrDelay));
       const b64 = JSON.parse(body).input.messages[0].content[0].input_audio.data;
       const seconds = Math.round((Buffer.from(b64.split(',')[1], 'base64').length * 8) / 48000);
-      const words = seconds < 17 ? CHORUS : seconds < 20 ? SONG_TALK : seconds < 24 ? SONG : seconds < 28 ? SPEECH : seconds < 32 ? SPEECH_YEAH : seconds < 36 ? CHORUS_TALK : seconds < 40 ? MERGE_TALK : seconds < 44 ? SHORT_TALK : seconds < 48 ? JA_SHORT : seconds < 52 ? KANA_ONLY : seconds < 56 ? ONE_HAN : FILLER_ONLY;
+      const words = seconds < 17 ? CHORUS : seconds < 20 ? SONG_TALK : seconds < 24 ? SONG : seconds < 28 ? SPEECH : seconds < 32 ? SPEECH_YEAH : seconds < 36 ? CHORUS_TALK : seconds < 40 ? MERGE_TALK : seconds < 44 ? SHORT_TALK : seconds < 48 ? JA_SHORT : seconds < 52 ? KANA_ONLY : seconds < 56 ? ONE_HAN : seconds < 60 ? FILLER_ONLY : EXCLAIM;
       return json({ output: { sentence: sentence(words), text: sentence(words).text } });
     }
     if (req.url.endsWith('/v1/chat/completions')) {
@@ -92,11 +94,11 @@ server.stdout.on('data', d => { log += d; });
 server.stderr.on('data', d => { log += d; });
 while (!/Alpha server/.test(log)) await new Promise(r => setTimeout(r, 50));
 
-const song = aac(22), speech = aac(26), chorus = aac(14), yeah = aac(30), songTalk = aac(18), chorusTalk = aac(34), mergeTalk = aac(38), shortTalk = aac(42), jaShort = aac(46), kanaOnly = aac(50), oneHan = aac(54), fillerOnly = aac(58);
+const song = aac(22), speech = aac(26), chorus = aac(14), yeah = aac(30), songTalk = aac(18), chorusTalk = aac(34), mergeTalk = aac(38), shortTalk = aac(42), jaShort = aac(46), kanaOnly = aac(50), oneHan = aac(54), fillerOnly = aac(58), exclaim = aac(62);
 const ID = new Map([[song, '7500000000000000081'], [speech, '7500000000000000082'], [chorus, '7500000000000000083'], [yeah, '7500000000000000086'],
   [songTalk, '7500000000000000089'], [chorusTalk, '7500000000000000090'], [mergeTalk, '7500000000000000091'], [shortTalk, '7500000000000000092'],
   [jaShort, '7500000000000000093'], [kanaOnly, '7500000000000000094'], [oneHan, '7500000000000000095'],
-  [fillerOnly, '7500000000000000097']]);
+  [fillerOnly, '7500000000000000097'], [exclaim, '7500000000000000098']]);
 const post = (audio, lyrics, extra = {}) => fetch(`http://127.0.0.1:${port}/v1/subtitles`, { method: 'POST', headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ id: ID.get(audio), from: 0, to: 30, audioStart: 0, urgent: true, lyrics, aac: audio, ...extra }) }).then(r => r.json());
 const files = () => fs.readdirSync(path.join(WORK, 'cache')).sort();
@@ -255,6 +257,18 @@ try {
     assert.equal(f1.status, 'skipped', JSON.stringify(f1)); assert.equal(f1.label, 'filler');
     assert.equal(f2.status, 'skipped'); assert.equal(f2.label, 'filler');
     assert.equal(f3.cached, true); assert.equal(mtBodies.length, mtF);
+  });
+  const ex = await post(exclaim, false);
+  t('đoạn chỉ có tiếng kêu 诶, 哎呀: vẫn dịch (4/11), không bỏ như tiếng đệm 嗯', () => {
+    assert.equal(ex.status, 'ok', JSON.stringify(ex)); assert.equal(ex.cues.length >= 1, true);
+  });
+  // Kết quả cũ đã bỏ đoạn chỉ có 诶, 哎呀 (nhãn filler): làm lại. Kết quả filler chỉ có 嗯 thì giữ (f3 ở trên lấy từ cache).
+  const OLDF = '7500000000000000099';
+  for (const mt of ['vi', 'vi.lyr']) fs.writeFileSync(path.join(WORK, 'cache', `${OLDF}.0-30.${mt}.alpha-8.json`),
+    JSON.stringify({ id: OLDF, from: 0, to: 30, status: 'skipped', label: 'filler', asr: 'funasr', seconds: 62, heard: '诶。哎呀。', sung: 0, sentences: 2 }));
+  const redoF = await post(exclaim, false, { id: OLDF });
+  t('cache cũ bỏ đoạn 诶, 哎呀 (filler): làm lại, có sub', () => {
+    assert.equal(redoF.status, 'ok', JSON.stringify(redoF)); assert.ok(!redoF.cached);
   });
   // Kết quả "quá ít lời" của bản cũ đã nằm trong cache (vd. đoạn 8:20 của video đo 3/11): làm lại, không trả kết quả cũ.
   const OLD = '7500000000000000096';

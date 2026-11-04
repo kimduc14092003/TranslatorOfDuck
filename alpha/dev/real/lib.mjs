@@ -280,7 +280,7 @@ export function editInside(a, b) {
 }
 export const norm = (t) => String(t || '').toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
 // Tiếng đệm đã chấp nhận: vế câu chỉ có 嗯, 啊, 呃, 额, hay tiếng đệm chữ Latin (yeah, oh: pipeline bỏ từ 31/10) không tính là
-// mất câu. Tiếng kêu khác (诶, 哎呀, 嘿, 哇) vẫn tính, vì chủ dự án chưa quyết có bỏ không (ROADMAP §6).
+// mất câu. Tiếng kêu khác (诶, 哎呀, 嘿, 哇) vẫn tính: chủ dự án quyết giữ (4/11, ROADMAP §6), server dịch chúng.
 const FILLER_HAN = /^[嗯啊呃额]+$/u;
 const SOUND = /^(?:(?:o+h*|a+h*|uh+|um+|m{2,}|hm+|huh|ye(?:ah?|h)?|hey|wo+w?|woah|whoa|eh|ay|(?:la)+|(?:na)+|(?:da)+|(?:ha)+|(?:ya)+|(?:yo)+))+$/i;
 export const isFillerClause = (p) => FILLER_HAN.test(p) || SOUND.test(p);
@@ -289,7 +289,7 @@ const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hang
 export const clausesOf = (text) => String(text || '').split(/[，。！？；、,.!?;…]+/u).map(norm)
   .filter((p) => p.length >= (CJK.test(p) ? 1 : 2) && !isFillerClause(p));
 // Nhãn bỏ cả đoạn đã chấp nhận: không nghe thấy chữ nào; bài hát khi đã tắt lời bài hát; tiếng đệm 嗯/啊 (docs/ROADMAP.md §3).
-// Tiếng đệm khác (诶, 哎呀, 嘿) còn chờ chủ dự án quyết (ROADMAP §6), nên vẫn là "cần duyệt".
+// Tiếng kêu khác (诶, 哎呀, 嘿): chủ dự án quyết giữ (4/11), nên đoạn bị bỏ chỉ vì chúng vẫn là "cần duyệt".
 const acceptedSkip = (c, lyrics) => (c.label === 'no_speech' && !norm(c.heard)) || (c.label === 'singing' && !lyrics)
   || (c.label === 'filler' && /^[嗯啊呃额]*$/u.test(norm(c.heard)));
 // Vế p có trong chữ của các dòng đã gộp quanh nó (nối liền, vì một vế có thể vắt qua hai dòng: "…三连音在" + "海绵宝宝…")?

@@ -1441,6 +1441,15 @@ Chủ dự án chọn làm cả 4 hướng.
   - Test: mặc định tắt có ca riêng (`stream-test`, `openai-test`). Các ca rút gọn (`stream-test`, `mtfix-test`, `errors-test`, `lyrics-test`, `pronoun-test`) chạy server với `TOD_CONDENSE=1`. `npm test`: 11 bộ đều đạt.
   - Theo số đo 4/11 (§6an), tắt rút gọn làm tốc độ đọc giảm khoảng 5–7 điểm ở video có dòng dài.
 
+## 6ap. Giữ đoạn chỉ có tiếng kêu 诶？, 哎呀！ (4/11, server)
+
+- **Quyết định của chủ dự án (4/11):** đoạn chỉ có tiếng kêu có nghĩa (诶 ngạc nhiên, 哎呀 tiếc, 哇 thán phục) thì giữ, vẫn dịch. Lời dặn max_chars trong câu lệnh dịch đầu: giữ.
+- **Sửa:**
+  - `pipeline.mjs`: bỏ cả đoạn (nhãn `filler`) chỉ khi mọi dòng là tiếng đệm im lặng `QUIET_FILLER` (嗯, 啊, 呃, 额) hay tiếng đệm chữ Latin. Trước đây là tập rộng (诶, 哎, 哇, 嘿…). Bỏ dòng tiếng đệm trong lời bài hát (耶耶耶, 啦啦啦) vẫn như cũ.
+  - `server.mjs`, `stale`: kết quả `filler` cũ trong cache mà chữ nghe được có tiếng kêu khác 嗯/啊/呃/额 thì làm lại.
+  - Công cụ đo đã chỉ chấp nhận 嗯/啊/呃/额 từ trước, không đổi luật, chỉ sửa chú thích.
+- **Test:** `test.mjs` (isFiller với QUIET_FILLER), `lyrics-test` (đoạn 诶。哎呀。 được dịch; cache cũ nhãn filler có 诶 thì làm lại). Hai ca mới trượt trên code cũ. `npm test`: 11 bộ đều đạt.
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).
