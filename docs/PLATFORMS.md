@@ -22,9 +22,10 @@ Mục đích: chọn nền tảng làm tiếp sau Douyin ở giai đoạn 5 (ROA
 
 ### YouTube
 - `ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.captionTracks` có trên cả 4 video, mỗi video 2–4 track (zh, zh-Hans, en…), kèm hơn 150 ngôn ngữ dịch máy của YouTube.
-- URL track có `exp`, `expire`, `sparams`, `signature`, không có `pot`. Tài liệu tháng 6/2026 nói YouTube đòi PO token cho phụ đề; thiếu thì trả rỗng. Yêu cầu do chính trình phát gửi khi bật phụ đề (phím `c`) có `pot`, `potc`, `fmt`: thấy ở 3/4 video, cả 3 trả 200 mà 0 byte trong lần chạy headless. **Chưa rõ** là do headless hay do cách đọc; cần thử lại có cửa sổ trước khi kết luận.
+- URL track có `exp`, `expire`, `sparams`, `signature`, không có `pot`. Tài liệu tháng 6/2026 nói YouTube đòi PO token cho phụ đề; thiếu thì trả rỗng. Yêu cầu do chính trình phát gửi khi bật phụ đề (phím `c`) có `pot`, `potc`, `fmt`: thấy ở 3/4 video, cả 3 trả 200 mà 0 byte trong lần chạy headless.
+- **Thử lại có cửa sổ (4/11, 5 video):** vẫn 200 và 0 byte. Nút phụ đề đang bật mà trình phát vẽ 0 dòng phụ đề; `navigator.webdriver` là `true`. Nghĩa là YouTube trả phụ đề rỗng cho trình duyệt điều khiển tự động, không phải lỗi cách đọc. Tự động hoá không trả lời được câu này; cần kiểm chỉ đọc trên trình duyệt thật (Chromium của chủ dự án, `rec.mjs` ở cổng 9333) khi bạn mở một video có phụ đề.
 - Âm thanh: 12 định dạng âm thanh mỗi video, không cái nào có URL hay `signatureCipher`; trình phát dùng SABR. Tải âm thanh trước chỗ đang xem như với Douyin là không làm được nếu không giả lập giao thức của trình phát.
-- Hướng khả dĩ: đọc chính câu trả lời phụ đề trình phát đã tải (extension chỉ nghe, không gửi gì) rồi dịch chữ đó, không cần nhận dạng giọng nói. Cần thử có cửa sổ.
+- Hướng khả dĩ: đọc chính câu trả lời phụ đề trình phát đã tải (extension chỉ nghe, không gửi gì) rồi dịch chữ đó, không cần nhận dạng giọng nói. Cần kiểm trên trình duyệt thật như trên.
 
 ### Bilibili
 - Khách xem được, không bị chặn. `window.__playinfo__` có DASH với 3 track âm thanh riêng trên CDN (`*.akamaized.net`, `bilivideo`); trình phát tự tải các khúc m4s bằng xhr.
@@ -36,13 +37,22 @@ Mục đích: chọn nền tảng làm tiếp sau Douyin ở giai đoạn 5 (ROA
 - `video.subtitleInfos`: 1/4 video có một track (nguồn ASR, WebVTT, ngôn ngữ theo người nói). Theo tài liệu, TikTok tự sinh phụ đề cho nhiều video từ cuối 2023, không phải tất cả.
 - Trang không tự tải file phụ đề trong lúc thử; đọc file đó là yêu cầu riêng của ta.
 - Media là một file video gộp, không có track âm thanh riêng.
-- Ở Việt Nam trang khám phá ra video tiếng Việt; muốn thử nội dung tiếng Trung phải tìm riêng (chưa làm).
+- Ở Việt Nam trang khám phá ra video tiếng Việt. Thử tìm video tiếng Trung: trang thẻ (`/tag/中国`) và trang tìm kiếm (`/search/video?q=中文vlog`) đều không hiện video nào cho khách (0 video). Không đăng nhập thì không tới được nội dung tiếng Trung theo đường người xem bình thường.
 
 ## Rủi ro điều khoản
 
-Chưa đọc điều khoản chi tiết của từng nền tảng; việc này cần làm trước giai đoạn 5. Điều đã biết từ cách thử:
-- Cả ba đều có chống bot ở API (YouTube: PO token/BotGuard; Bilibili: chữ ký WBI; TikTok: URL có chữ ký). Luật của dự án (không bỏ qua chống bot, không tự ký yêu cầu, chỉ đọc cái trang đã tải) loại bỏ mọi cách gọi API trực tiếp.
-- Bilibili và Douyin: extension chỉ đọc lại khúc âm thanh mà trình phát vốn tải, như hiện nay với Douyin.
+Đọc điều khoản hiện hành ngày 4/11 (tóm tắt bằng lời của tôi, không phải ý kiến pháp lý; nguồn ở cuối):
+
+| | Tự động truy cập, thu thập | Sửa, dịch, tác phẩm phái sinh | Tải, sao chép | Né biện pháp kỹ thuật |
+|---|---|---|---|---|
+| YouTube | Cấm truy cập bằng phương thức tự động (robot, crawler), trừ công cụ tìm kiếm theo robots.txt hay khi được cho phép bằng văn bản | Cấm sửa đổi bất kỳ phần nào của Dịch vụ hay Nội dung, trừ khi Dịch vụ cho phép rõ | Cấm truy cập, tải, phát lại ngoài cách Dịch vụ cho phép; chỉ dùng cá nhân, phi thương mại | Cấm né, vô hiệu, can thiệp tính năng bảo mật hay chống sao chép |
+| Bilibili | Điều 4.3.15: cấm dùng robot, crawler, script lấy dịch vụ, nội dung, dữ liệu nếu không có phép bằng văn bản | Điều 6.2: cấm sửa, cải biên, **dịch** phần mềm, kỹ thuật, tài liệu của nền tảng, cấm tác phẩm phái sinh | Điều 6.3, 6.5: cấm sao chép, phát tán; cấm đăng lại nội dung tự sản xuất, độc quyền | Không có điều riêng; gần nhất là điều 1.2 (cấm tách dịch vụ khỏi nền tảng bằng cách bẻ khoá) |
+| TikTok | Cấm script tự động thu thập thông tin hay tương tác với Dịch vụ | Cấm sửa, **dịch**, tạo tác phẩm dựa trên Dịch vụ hay nội dung | Cấm lưu, sao chép, phát lại nội dung của TikTok nếu không có phép; chỉ dùng cá nhân | Cấm né biện pháp giới hạn truy cập |
+
+Điều rút ra cho dự án:
+- Cả ba đều có điều khoản về **dịch hay sửa nội dung** (Bilibili, TikTok nói thẳng "dịch"; YouTube nói "sửa đổi"). Đây là rủi ro của chính sản phẩm, cùng loại với Douyin (PLAN §12), không riêng nền tảng mới. Trước khi bán cần ý kiến pháp lý; chưa phải việc của giai đoạn này.
+- Luật đang giữ của dự án đi đúng phía các điều khoản về tự động hoá và né kỹ thuật: extension chỉ chạy khi người xem đang xem, chỉ đọc cái trình phát đã tải, không tự ký yêu cầu, không bỏ qua chống bot, server không gọi API của nền tảng.
+- Bilibili và Douyin: extension đọc lại khúc âm thanh trình phát vốn tải (theo khoảng byte), như hiện nay với Douyin. YouTube, nếu làm theo hướng đọc phụ đề trình phát đã tải, cũng không gửi yêu cầu riêng.
 
 ## Đề xuất cho giai đoạn 5
 
@@ -50,10 +60,11 @@ Chưa đọc điều khoản chi tiết của từng nền tảng; việc này c
 2. **YouTube sau**, theo hướng khác: đọc phụ đề trình phát đã tải (khi video có phụ đề) rồi chỉ dịch, không nhận dạng. Cần một lần thử có cửa sổ để xác nhận đọc được câu trả lời phụ đề của trình phát; video không có phụ đề thì chưa có đường lấy âm thanh.
 3. **TikTok để cuối.** Phụ đề có ở một phần video, media gộp, nội dung ở Việt Nam ít tiếng Trung.
 
-Chưa làm: thử có cửa sổ cho YouTube; tìm video tiếng Trung trên TikTok; đọc điều khoản.
+Chưa làm: kiểm phụ đề YouTube trên trình duyệt thật (cần bạn mở Chromium của bạn với một video có phụ đề); TikTok tiếng Trung khi có đăng nhập (đã chốt không đăng nhập).
 
 ## Nguồn
 
 - YouTube PO token cho phụ đề: [DEV Community, 6/2026](https://dev.to/jamhimself/why-your-youtube-transcript-scraper-started-returning-empty-strings-and-how-to-fix-it-in-2026-20ed); [OpenCLI PR #1499](https://github.yxlr123.workers.dev/jackwener/OpenCLI/pull/1499) (đọc URL phụ đề có `pot` của chính trình phát); [youtube-transcript-api issue #592](https://github.com/jdepoix/youtube-transcript-api/issues/592) (`exp=xpe`); [hướng dẫn distube](https://distube.js.org/ytdl-core/guides/captions/) (không ghi ngày, nói chưa cần PO token: có thể đã cũ).
 - Bilibili phụ đề cần đăng nhập: [bilibili-data-mcp](https://pypi.org/project/bilibili-data-mcp), [bilibili-subtitle skill](https://smithery.ai/skills/neversight/bilibili-subtitle), [glama.ai](https://glama.ai/mcp/servers/hm8rgkg2yh).
+- Điều khoản: [YouTube](https://www.youtube.com/static?template=terms) (mục Quyền và hạn chế), [Bilibili 用户协议](https://www.bilibili.com/blackboard/protocal/international_hans.html) (điều 1.2, 4.3.15, 6.2, 6.3, 6.5), [TikTok Terms of Service](https://www.tiktok.com/legal/page/row/terms-of-service/en).
 - TikTok `subtitleInfos`: [commit yt-dlp (bản sao)](https://gitea.smoothnet.org/nhyatt/yt-dlp/commit/2f97779f335ac069ecccd9c7bf81abf4a83cfe7a); phụ đề tự sinh: [Kapwing](https://www.kapwing.com/resources/a-complete-guide-to-tiktok-subtitles/).

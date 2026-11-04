@@ -1543,6 +1543,8 @@ Chủ dự án chọn làm cả 4 hướng.
 ## 6at. Thử nhanh nền tảng thứ hai (4/11, giai đoạn 2, chỉ đọc)
 
 Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt: Bilibili trước (khách xem được, âm thanh DASH tách sẵn, phụ đề cần đăng nhập nên tự nhận dạng như Douyin); YouTube sau (phụ đề có sẵn nhưng cần PO token, âm thanh qua SABR; hướng là đọc phụ đề trình phát đã tải, cần thử có cửa sổ); TikTok để cuối.
+- Thêm cùng ngày: YouTube thử có cửa sổ vẫn nhận phụ đề rỗng (trình phát bật phụ đề mà vẽ 0 dòng, `navigator.webdriver` là `true`), nên phải kiểm trên trình duyệt thật. TikTok: trang thẻ và trang tìm kiếm không hiện video cho khách. Đọc điều khoản: cả ba có điều về dịch hay sửa nội dung, cùng loại rủi ro với Douyin; bảng tóm tắt ở PLATFORMS.md.
+- Tiếng Anh dùng 20 ký tự/giây (chuẩn Netflix English cho người lớn, 42 ký tự/dòng; trẻ em 17), tiếng Việt giữ 17. Chấm lại 3 video tiếng Anh đã đo với giới hạn 20: 43%, 78,1%, 63,2% dòng đạt (với 17: 25%, 71,9%, 40,4%); các dòng đó viết theo gợi ý độ dài cũ (17).
 
 ## 7. Việc tiếp theo trên Mac
 
