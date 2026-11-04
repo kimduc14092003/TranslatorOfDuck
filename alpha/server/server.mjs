@@ -155,7 +155,8 @@ async function handleSubtitles(req, res) {
   const otherFile = cacheFile(fileSpan, kindOf(target, !lyrics));
   // Kết quả bản cũ bỏ cả đoạn vì "quá ít lời" (dưới 4 chữ Hán), hay coi câu toàn kana, chữ Hàn là không có lời, hay bỏ đoạn chỉ có
   // tiếng kêu như 诶？, 哎呀！ (từ 4/11 chỉ bỏ đoạn toàn 嗯/啊/呃/额): làm lại.
-  const stale = (x) => x && x.status === 'skipped' && (x.label === 'too_short' || (x.label === 'no_speech' && /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(x.heard || ''))
+  // not_zh: trước giai đoạn 3 video nói tiếng Anh bị bỏ cả đoạn; nay dịch được nên làm lại.
+  const stale = (x) => x && x.status === 'skipped' && (x.label === 'too_short' || x.label === 'not_zh' || (x.label === 'no_speech' && /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(x.heard || ''))
     || (x.label === 'filler' && /[^嗯啊呃额\s\p{P}\p{S}\p{Script=Latin}]/u.test(x.heard || '')));
   const fresh = (f) => { const x = readCache(f); return stale(x) ? null : x; };
   const ready = () => { const other = fresh(otherFile); return fresh(file) || (noSinging(other) ? other : null); };
@@ -376,6 +377,8 @@ async function handleSubtitles(req, res) {
         + out.debug.mtFix.dropped.map(d => `\n    bỏ dòng (${d.why === 'han' ? 'còn chữ Hán' : 'dịch trống'}): ${d.zh}`).join('') : '') +
       (out.reused && !out.cached ? ` · dùng lại kết quả bỏ qua của ${out.reused}` : '') +
       (out.retargeted && !out.cached ? ` · dịch từ dòng gốc đã có (${out.retargeted}), không nhận dạng lại` : '') +
+      // Giai đoạn 3: video nói tiếng Anh; cùng ngôn ngữ đích thì hiện bản chép lời, không gọi dịch.
+      (out.src === 'en' ? ' · nguồn tiếng Anh' + (out.same ? ', hiện bản chép, không dịch' : '') : '') +
       (job.startedAt - job.at > 300 ? ` · xếp hàng ${job.startedAt - job.at} ms` : '') +
       (out.heard ? `\n    nghe được: ${out.heard}` : '') +
       // Bảng xưng hô (để đo trên Douyin thật xem cặp có giữ qua các đoạn không): số cặp nhận từ extension và lấy từ file

@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { classifySpeech, segmentCues, fixViText, splitSung, extractAudio, windowAsr, resplitSentences, speechBefore, lyricCues, isFiller, QUIET_FILLER } from '../pipeline.mjs';
+import { classifySpeech, segmentCues, fixViText, splitSung, extractAudio, windowAsr, resplitSentences, speechBefore, lyricCues, isFiller, QUIET_FILLER, cuesFromAsr } from '../pipeline.mjs';
 
 const W = (text, start, end) => ({ text, start, end });
 let n = 0;
@@ -218,6 +218,79 @@ t('vlog có hashtag nhạc, nói thưa: không bỏ cả đoạn', () => {
   assert.ok(cls.cps < 2.5 && cls.tagMusic && cls.medCharDur <= 0.33);
   const sp = splitSung(r);
   assert.ok(!(cls.repeat || sp.sung * 2 > sp.total || (cls.tagMusic && cls.medCharDur > 0.33)));
+});
+// Giai đoạn 3 (ROADMAP): lời nói tiếng Anh. Model nhận dạng trả tiếng Anh như Fun-ASR: mỗi từ mang dấu cách đứng trước, dấu câu
+// dính sau (cache 3/11: 34 đoạn tiếng Anh, cả Fun-ASR lẫn model dự phòng). Trước đây cả đoạn bị bỏ là "không phải tiếng Trung".
+const EN = (s, start, per = 0.3) => s.split(/(?= )/).map((w, i) => W(w, +(start + i * per).toFixed(3), +(start + (i + 1) * per - 0.02).toFixed(3)));
+const enWords = (...sentences) => {
+  const out = [];
+  let at = 0.5;
+  for (const s of sentences) { const ws = EN(s, at); out.push(...ws); at = ws.at(-1).end + 0.02; }
+  return out;
+};
+t('lời tiếng Anh: tách câu ở dấu chấm (trừ viết tắt), là lời nói, mỗi câu một dòng', () => {
+  const words = enWords('Hello everyone, my name is Mr. Brown.', ' Today we are going to talk about pandas.', ' Are you ready?');
+  const r = resplitSentences({ provider: 'funasr', text: words.map(w => w.text).join(''), segments: [{ start: 0.5, end: 6, text: '' }], words });
+  assert.deepEqual(r.segments.map(x => x.text.trim()), ['Hello everyone, my name is Mr. Brown.', 'Today we are going to talk about pandas.', 'Are you ready?']);
+  const cls = classifySpeech({}, r);
+  assert.equal(cls.label, 'speech'); assert.equal(cls.src, 'en');
+  assert.deepEqual(segmentCues(r).map(c => c.zh), ['Hello everyone, my name is Mr. Brown.', 'Today we are going to talk about pandas.', 'Are you ready?']);
+  // Viết tắt nhiều chữ cái (U.S.) cũng không phải hết câu.
+  const w2 = enWords('I moved to the U.S. last year.');
+  assert.equal(resplitSentences({ text: '', segments: [], words: w2 }).segments.length, 1);
+  // Tiếng Trung không đổi: phân loại vẫn ra src zh.
+  assert.equal(classifySpeech({}, { text: '大家好今天我们去吃火锅', words: [] }).src, 'zh');
+});
+t('dòng chữ Latin dài không dấu câu: chia theo độ dài (42 ký tự ứng với 16 chữ Hán)', () => {
+  const s = 'so I was walking down the street yesterday and I saw this huge dog running after a tiny cat';
+  const cues = segmentCues({ words: EN(s, 0, 0.25) });
+  assert.ok(cues.length >= 2, JSON.stringify(cues.map(c => c.zh)));
+  for (const c of cues) assert.ok(c.zh.length <= 48, c.zh);
+  assert.equal(cues.map(c => c.zh).join(' '), s);
+});
+t('đoạn tiếng Anh ở cả hai chế độ lời bài hát: có dòng, không bỏ cả đoạn, chưa đánh ♪', () => {
+  const words = enWords('Hello everyone, my name is Mr. Brown.', ' Today we are going to talk about pandas.');
+  const r = resplitSentences({ provider: 'funasr', text: words.map(w => w.text).join(''), segments: [], words });
+  for (const lyrics of [true, false]) {
+    const p = cuesFromAsr({ desc: '', hashtags: ['cover'] }, r, { lyrics });
+    assert.ok(!p.skip, 'bị bỏ: ' + p.skip);
+    assert.equal(p.cls.src, 'en');
+    assert.ok(p.cues.length === 2 && p.cues.every(c => !c.sung), JSON.stringify(p.cues));
+  }
+});
+// Verifier 4/11 (giai đoạn 3): token thật của model nhận dạng có dấu cách SAU dấu chấm (" night. "); câu Trung có một từ tiếng Anh
+// vẫn là tiếng Trung; bài hát tiếng Anh (lặp lời) là bài hát; "Yeah." là câu trả lời, không phải tiếng đệm; "So am I." hết câu.
+t('lời tiếng Anh, token thật: dấu cách sau dấu chấm, "I." cuối câu, ngoặc kép sau dấu chấm', () => {
+  const toks = ['Good', ' night. ', 'See', ' you', ' tomorrow. ', 'So', ' am', ' I. ', 'He', ' said', ' "go."', ' Okay?'];
+  const words = toks.map((x, i) => W(x, 0.5 + i * 0.3, 0.78 + i * 0.3));
+  const r = resplitSentences({ text: '', segments: [], words });
+  assert.deepEqual(r.segments.map(x => x.text.trim()), ['Good night.', 'See you tomorrow.', 'So am I.', 'He said "go."', 'Okay?']);
+});
+t('câu tiếng Trung có một từ tiếng Anh vẫn là nguồn tiếng Trung', () => {
+  for (const text of ['这就是america.', '我今天买了iPhone', 'ready了。']) assert.equal(classifySpeech({}, { text, words: [] }).src, 'zh', text);
+  assert.equal(classifySpeech({}, { text: 'I went to 北京 last summer with my family.', words: [] }).src, 'en');
+});
+t('bài hát tiếng Anh (lặp lời): tắt lời bài hát thì bỏ đoạn, bật thì đánh ♪', () => {
+  // Hát: 0,6 s/từ. Lời nói lặp một câu ở 0,3 s/từ vẫn là lời nói (verifier 4/11, R4).
+  const talk = resplitSentences({ text: '', segments: [], words: enWords('Thank you so much.', ' You are all so kind.', ' Thank you so much.') });
+  assert.equal(classifySpeech({ hashtags: ['cover'] }, talk).label, 'speech');
+  const enSlow = (...ss) => { const out = []; let at = 0.5; for (const x of ss) { const ws = EN(x, at, 0.6); out.push(...ws); at = ws.at(-1).end + 0.02; } return out; };
+  const words = enSlow("I wanna make up right now.", " I wanna make up right now.", " Wish we never broke up.");
+  const r = resplitSentences({ text: '', segments: [], words });
+  assert.equal(cuesFromAsr({ desc: '', hashtags: [] }, r, { lyrics: false }).skip, 'singing');
+  const on = cuesFromAsr({ desc: '', hashtags: [] }, r, { lyrics: true });
+  assert.ok(on.cues.length >= 3 && on.cues.every(c => c.sung), JSON.stringify(on.cues));
+});
+t('tiếng Anh: "Yeah." và "Huh?" là câu có nghĩa, giữ; "Um." thì bỏ', () => {
+  const words = enWords('Did you finish it?', ' Yeah.', ' Huh?', ' Um.', ' Let us go then.');
+  const r = resplitSentences({ text: '', segments: [], words });
+  const p = cuesFromAsr({ desc: '', hashtags: [] }, r, { lyrics: true });
+  const z = p.cues.map(c => c.zh).join(' ');
+  assert.match(z, /Yeah\./); assert.match(z, /Huh\?/);
+  // Dòng chỉ có tiếng ậm ừ thì bỏ (nằm chung dòng với câu khác thì giữ cả dòng, như tiếng Trung).
+  assert.equal(isFiller('Um.', undefined, true), true); assert.equal(isFiller('Uh, hmm.', undefined, true), true);
+  assert.equal(isFiller('Yeah.', undefined, true), false); assert.equal(isFiller('Hey!', undefined, true), false);
+  assert.equal(isFiller('yeah yeah'), true, 'tiếng Trung: như cũ');
 });
 t('sửa khoảng trắng câu tiếng Việt', () => {
   assert.equal(fixViText('  Chào  cả nhà ,hôm nay đi ăn lẩu . '), 'Chào cả nhà, hôm nay đi ăn lẩu.');

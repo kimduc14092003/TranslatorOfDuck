@@ -1546,6 +1546,32 @@ Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt
 - Thêm cùng ngày: YouTube thử có cửa sổ vẫn nhận phụ đề rỗng (trình phát bật phụ đề mà vẽ 0 dòng, `navigator.webdriver` là `true`), nên phải kiểm trên trình duyệt thật. Đã kiểm trong Chromium của chủ dự án (chưa đăng nhập YouTube): trình phát tự tải phụ đề `json3` có `pot`, đủ cả video trong một lần (221 dòng); đọc được bằng cách chỉ nghe yêu cầu đó. TikTok: trang thẻ và trang tìm kiếm không hiện video cho khách. Đọc điều khoản: cả ba có điều về dịch hay sửa nội dung, cùng loại rủi ro với Douyin; bảng tóm tắt ở PLATFORMS.md.
 - Tiếng Anh dùng 20 ký tự/giây (chuẩn Netflix English cho người lớn, 42 ký tự/dòng; trẻ em 17), tiếng Việt giữ 17. Chấm lại 3 video tiếng Anh đã đo với giới hạn 20: 43%, 78,1%, 63,2% dòng đạt (với 17: 25%, 71,9%, 40,4%); các dòng đó viết theo gợi ý độ dài cũ (17).
 
+## 6au. Video nói tiếng Anh: dịch sang tiếng Việt, tiếng Anh thì hiện bản chép (4/11, server; giai đoạn 3, bản thử)
+
+- **Trước đây:** đoạn có chữ Latin chiếm quá nửa bị bỏ cả đoạn, nhãn `not_zh` ("không phải tiếng Trung"). Cache 3/11 có 34 đoạn như vậy (cả Fun-ASR lẫn model dự phòng đều chép tiếng Anh tốt, có dấu cách, dấu câu dù gợi ý ngôn ngữ là `zh`).
+- **Sửa (`pipeline.mjs`, `langs.mjs`, `server.mjs`; extension không đổi, không tăng `PIPELINE_VERSION`):**
+  - Nguồn của đoạn (`src`): `en` khi số từ Latin nhiều hơn số chữ Hán, kana, Hàn; không thì `zh`. "这就是america." vẫn là tiếng Trung. Kết quả và `source` ghi `src: 'en'`.
+  - Tách câu ở dấu chấm ASCII sau chữ Latin (token thật có dấu cách sau dấu chấm: `" night. "`), trừ viết tắt (Mr., U.S., e.g.); ngoặc kép sau `.`, `?`, `!` của câu tiếng Anh. Tiếng Trung không đổi.
+  - Chia dòng chữ Latin theo độ dài: 42 ký tự ứng với 16 chữ Hán.
+  - Bài hát tiếng Anh: trung vị > 0,5 s/từ, hay lặp câu kèm > 0,4 s/từ, hay hashtag nhạc kèm > 0,45 s/từ (lời nói trên cache tối đa 0,33 s/từ). Khi đó cả đoạn là bài hát: tắt lời bài hát thì bỏ, bật thì mọi dòng ♪. Lặp câu mà nói nhanh ("Thank you so much." hai lần) vẫn là lời nói.
+  - Tiếng đệm tiếng Anh: chỉ uh, um, hm, ah, oh, er; "Yeah.", "Hey!", "Huh?" giữ.
+  - Dịch sang tiếng Việt: câu lệnh "từ tiếng Anh", tên riêng giữ nguyên, dòng gốc gửi bằng khoá `en`; dòng trả về vẫn là tiếng Anh (≥ 3 từ, không dấu tiếng Việt) thì dịch lại. Câu lệnh tiếng Trung giữ nguyên từng chữ (`prompt-golden-test`).
+  - Đích tiếng Anh cho video tiếng Anh: hiện chính bản chép lời, không gọi dịch (`same: true`; log "hiện bản chép, không dịch"). Đoạn tiếng Anh mà có dòng chữ Hán, kana, Hàn thì dùng câu lệnh tiếng Trung, không hiện nguyên.
+  - Kết quả cũ `not_zh` trong cache được làm lại (nhận dạng lại một lần).
+- **Còn lại:** gợi ý ngôn ngữ cho nhận dạng vẫn là `zh`; chưa chọn model nhận dạng cuối; chưa có nhận diện ngôn ngữ khác (tiếng Tây Ban Nha... đi như tiếng Anh); ASR Gemini (chỉ có câu, không có từ) dính chữ khi gộp dòng tiếng Anh; ngưỡng bài hát mới chọn theo mốc thời gian ước lượng trên cache, chưa đo trên mốc thật.
+- **Test:** `test.mjs` 30 (7 ca tiếng Anh), `dev/source-test.mjs` mới (9 kiểm tra), các bộ server khác đạt.
+- **Kiểm:** verifier soát hai lượt (accept_with_fixes cả hai; đã sửa: dấu chấm có dấu cách sau, nguồn tính theo từ, bài hát tiếng Anh, tiếng đệm, "I.", lặp câu khi nói nhanh). So code cũ và mới trên 290 file nhận dạng tiếng Trung thật, hai chế độ: 0 khác biệt. Chạy lại 34 đoạn `not_zh`: 33 ra sub.
+- **Đo trên Douyin thật (4/11, server 8788, Chromium 9334, khách, 1×, 2 phút đầu):**
+
+  | Video | Đích | Vế cần duyệt | Độ phủ | Đúng dòng | Chờ | Sub đầu | Đọc đạt |
+  |---|---|---|---|---|---|---|---|
+  | 7681279162377061563 kể chuyện tiếng Anh (trước đây bị bỏ) | vi | 0 | 100% | 96,4% | 0 | 6,4 s | 76,1% |
+  | cùng video | en (bản chép) | 0 | 100% | 97,9% | 0 | 2,2 s | 94% |
+  | 7699966439993675034 Trung xen Anh | vi | 0 | 100% | 99,2% | 0 | 2,6 s | 65,6% |
+
+  - Bản dịch đọc tự nhiên ("If you understand this story," → "Nếu các bạn hiểu câu chuyện này,"). Lượt vi chạy trên code trước bản sửa luật bài hát cuối; lượt en trên code cuối.
+  - Đúng dòng 96,4% (dưới mốc 98%): 15/17 lần chụp sai là trống, chưa tra từng lần.
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).

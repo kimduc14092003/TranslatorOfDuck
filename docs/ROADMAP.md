@@ -208,6 +208,8 @@ Tới khi chọn model nhận dạng cuối (giai đoạn 3), bảng điểm dù
 
 ### Giai đoạn 3: Một ngôn ngữ nguồn mới, làm trọn
 
+> **Trạng thái 4/11 (bản thử):** video nói tiếng Anh dịch sang tiếng Việt; đích tiếng Anh hiện bản chép (HANDOFF §6au). Chưa làm: mục 1 (lớp nhận dạng chung), mục 2 (chọn model nhận dạng cuối), gợi ý ngôn ngữ cho nhận dạng.
+
 **Mục tiêu:** làm trọn một ngôn ngữ nguồn trước khi tổng quát hoá: tiếng Anh (đề xuất) nói trong video, dịch sang tiếng Việt và tiếng Anh, đạt bảng điểm.
 
 **Việc cần làm:**

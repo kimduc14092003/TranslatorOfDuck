@@ -74,6 +74,18 @@ const SPEECH_LETTER = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]
 const SPEECH_LETTERS = new RegExp(SPEECH_LETTER.source, 'gu');
 // Số chữ Hán ngoài ngoặc đơn: bản dịch ghi 'chữ "biện" (辫)' là đúng ý, chữ Hán trong ngoặc chỉ để chú thích.
 const hanOut = (t) => (String(t).replace(/[（(][^）)]*[）)]/g, '').match(HAN) || []).length;
+// Lời nói bằng chữ Latin (ROADMAP giai đoạn 3: tiếng Anh): chữ Latin chiếm quá nửa số chữ Hán, kana, Hàn, Latin.
+const latinShareOf = (t) => {
+  const han = (t.match(HAN) || []).length, other = (t.match(SPEECH_LETTERS) || []).length, latin = (t.match(/[A-Za-z]/g) || []).length;
+  return han + other + latin ? latin / (han + other + latin) : 0;
+};
+// Độ dài một dòng tính theo chữ Hán: dòng chữ Latin lấy 42 ký tự (một dòng chuẩn Netflix) ứng với 16 chữ Hán. Dòng không phải
+// chữ Latin vẫn đếm chữ Hán như trước.
+const unitsOf = (t) => (latinShareOf(t) > 0.5 ? t.trim().length * 16 / 42 : (t.match(HAN) || []).length);
+// Dấu chấm ASCII sau chữ Latin là hết câu (câu tiếng Anh), trừ viết tắt: Mr., Dr., e.g., U.S. Chữ Hán dùng 。 nên không đổi.
+// Token thật có dấu cách sau dấu chấm (" night. ", verifier 4/11), có khi ngoặc kép sau dấu chấm; "I." cuối câu là hết câu.
+const ABBR = /(?:^|[\s(])(?:(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|Prof|vs|etc|e\.g|i\.e|[A-HJ-Za-z])\.|(?:[A-Za-z]\.){2,})$/;
+const latinStop = (t) => { const x = t.trimEnd().replace(/["'”’)]+$/, ''); return /[A-Za-z0-9]\.$/.test(x) && !ABBR.test(x); };
 const normalize = (t) => Array.from(String(t).normalize('NFKC').toLowerCase().replace(/[\p{P}\p{S}\s]/gu, ''));
 
 // ---------------------------------------------------------------- tách âm thanh
@@ -535,7 +547,8 @@ export function resplitSentences(r) {
   for (const w of words) {
     if (cur.length && (w.start - cur[cur.length - 1].end >= 0.8 || w.end - cur[0].start > 12)) flush();
     cur.push(w);
-    if (/[。！？；…!?;]$/.test(w.text) || (/[，、,：:]$/.test(w.text) && w.end - cur[0].start >= 6)) flush();
+    const tx = w.text.trimEnd();
+    if (/[。！？；…!?;]$/.test(tx) || /[!?]["'”’)]$/.test(tx) || latinStop(tx) || (/[，、,：:]$/.test(tx) && w.end - cur[0].start >= 6)) flush();
   }
   flush();
   return { ...r, segments, words, text: segments.map(x => x.text).join('') };
@@ -550,6 +563,19 @@ const repeated = (t, times) => new RegExp(`(.{2,8})\\1{${times - 1},}`, 'u')
 // Lặp lời mà chữ ngắn như nói (≤ 0,25 s/chữ) là nói nhấn mạnh ("投降了，投降了，投降了", "完了完了完了"), không phải hát.
 // Không có mốc từng chữ (Gemini) thì vẫn coi lặp lời là hát.
 const slowChars = (med) => med == null || med > 0.25;
+// Lặp câu tiếng Anh: một câu từ 4 từ lặp ≥ 2 lần, hay từ 3 từ lặp ≥ 3 lần (điệp khúc).
+function latinRepeat(t) {
+  const seen = new Map();
+  for (const x of String(t).split(/(?<=[.!?])\s+/)) {
+    const k = x.toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const n = k ? k.split(' ').length : 0;
+    if (n < 3) continue;
+    const c = (seen.get(k) || 0) + 1;
+    seen.set(k, c);
+    if ((n >= 4 && c >= 2) || c >= 3) return true;
+  }
+  return false;
+}
 export function classifySpeech(meta, r) {
   const text = (r && r.text) || '';
   const han = (text.match(HAN) || []).length;
@@ -572,9 +598,20 @@ export function classifySpeech(meta, r) {
   // Không còn nhãn "quá ít lời" (dưới 4 chữ Hán thì bỏ cả đoạn): lời ngắn có thể là lời quan trọng (đo 3/11 trên Douyin
   // thật: thoại tiếng Nhật 断る。帰れ。てめえ死にてえのか。 có 3 chữ Hán, mất cả ba câu). Không có lời chỉ khi không có chữ nào
   // (Hán, kana, Hàn, Latin): trước đây câu toàn kana cũng bị coi là không có lời.
+  // Lời tiếng Anh (giai đoạn 3; trước đây bỏ cả đoạn, nhãn not_zh): số từ Latin nhiều hơn số chữ Hán, kana, Hàn. Đếm theo từ, không
+  // theo chữ cái: "这就是america." vẫn là tiếng Trung (verifier 4/11). Bài hát tiếng Anh: lặp câu, hay hashtag nhạc kèm từ kéo dài
+  // (trung vị > 0,45 s/từ), hay từ kéo dài hẳn (> 0,5 s/từ); các đặc trưng hát ở dưới chỉ đếm chữ Hán.
+  f.src = (text.match(/[A-Za-z]+/g) || []).length > han + other ? 'en' : 'zh';
+  if (f.src === 'en') {
+    const wd = words.filter(w => w.end > w.start && /[A-Za-z]/.test(w.text)).map(w => w.end - w.start);
+    f.medWordDur = round(pct(wd, 0.5), 3);
+    f.repeat = latinRepeat(text);
+  }
   let label;
   if (!f.han && f.latinShare === 0 && !SPEECH_LETTER.test(text)) label = 'no_speech';
-  else if (f.latinShare > 0.5) label = 'not_zh';
+  // Lời nói tiếng Anh trên cache: trung vị tối đa 0,33 s/từ (verifier 4/11). Lặp câu mà từ nói nhanh ("Thank you so much." hai
+  // lần) vẫn là lời nói.
+  else if (f.src === 'en') label = f.medWordDur > 0.5 || (f.repeat && f.medWordDur > 0.4) || (f.tagMusic && f.medWordDur > 0.45) ? 'singing' : 'speech';
   else if (f.repeat && slowChars(f.medCharDur)) label = 'singing';
   else {
     const score = (f.medCharDur != null && f.medCharDur > 0.33 ? 2 : 0) + (f.tagMusic ? 1 : 0) + (f.cps != null && f.cps < 2.5 ? 1 : 0);
@@ -647,11 +684,13 @@ const SOUND_TWICE = /^(yeah|oh|ah|hey|wow|woah|whoa|huh)\1+$/i;
 // Tiếng đệm im lặng: đoạn chỉ có các chữ này (hay tiếng đệm chữ Latin) thì bỏ cả đoạn. Tiếng kêu có nghĩa (诶？ ngạc nhiên, 哎呀！
 // tiếc, 哇 thán phục) thì vẫn dịch: chủ dự án quyết 4/11 (ROADMAP §6).
 export const QUIET_FILLER = /^[嗯啊呃额]+$/u;
-export function isFiller(zh, set = FILLER) {
+// Tiếng Anh: chỉ tiếng ậm ừ (uh, um, hm, ah, oh, er) là tiếng đệm; "Yeah.", "Hey!", "Huh?" là câu có nghĩa (verifier 4/11).
+const QUIET_SOUND = /^(?:u+h+|u+m+|h+m+|m{2,}|a+h*|o+h+|e+r+m*)$/i;
+export function isFiller(zh, set = FILLER, quiet = false) {
   const s = String(zh).normalize('NFKC');
   const han = normalize(s).filter(ch => /\p{Script=Han}/u.test(ch)).join('');
   const words = s.replace(/\p{Script=Han}/gu, ' ').split(/[\p{P}\p{S}\s]+/u).filter(Boolean);
-  return !!(han || words.length) && (!han || set.test(han)) && words.every(w => SOUND.test(w) || SOUND_TWICE.test(w));
+  return !!(han || words.length) && (!han || set.test(han)) && words.every(w => (quiet ? QUIET_SOUND.test(w) : SOUND.test(w) || SOUND_TWICE.test(w)));
 }
 // Câu nói nhanh trong đoạn cả bài (≥ 3 chữ Hán, trung vị ≤ 0,20 s/chữ): lời chào, câu hỏi người qua đường, tiêu đề đọc
 // lên ngay trước hay giữa bài hát, không phải lời hát. Đo trên Douyin thật: lô 1 (13 video) có 4 dòng nói bị ♪ chỉ vì
@@ -670,7 +709,7 @@ export function lyricCues(r, cls, split) {
   const own = (c) => split.sentences.reduce((best, x) => (!best || overlap(c, x) > overlap(c, best) ? x : best), null);
   const hasHan = (t) => /\p{Script=Han}/u.test(t);
   return segmentCues(r).map(c => ({ ...c, sung: sungShare(c) > 0.5 || (wholeSong && !talkInSong(own(c))) }))
-    .filter(c => !((c.sung || !hasHan(c.zh)) && isFiller(c.zh)));
+    .filter(c => !((c.sung || !hasHan(c.zh)) && isFiller(c.zh, FILLER, cls.src === 'en' && !c.sung)));
 }
 
 // ---------------------------------------------------------------- chia câu, mốc thời gian (§7.3, §7.4)
@@ -678,14 +717,14 @@ const FRAME = 1 / 30;
 export function segmentCues(r) {
   let words = (r.words || []).filter(w => w.text && w.end > w.start);
   if (!words.length) words = (r.segments || []).map(x => ({ text: x.text, start: x.start, end: x.end }));
-  const hanOf = (t) => (t.match(HAN) || []).length;
+  const hanOf = unitsOf;   // chữ Hán, hay 42 ký tự Latin = 16 (dòng tiếng Anh)
   const cues = [];
   let cur = [];
   const textOf = (ws) => ws.map(w => w.text).join('');
   const emit = (ws) => { if (ws.length && textOf(ws).trim()) cues.push({ start: ws[0].start, speechEnd: ws[ws.length - 1].end, zh: textOf(ws) }); };
   const cutPoint = (ws) => {
     if (ws.length < 2) return ws.length;   // một từ: trước đây đọc ws[-1] và báo lỗi (verifier 3/11)
-    for (let k = ws.length - 2; k >= 1; k--) if (/[，、,：:]$/.test(ws[k].text)) return k + 1;
+    for (let k = ws.length - 2; k >= 1; k--) if (/[，、,：:]$/.test(ws[k].text.trimEnd())) return k + 1;
     let best = -1, gap = -1;
     for (let k = Math.floor(ws.length / 2); k < ws.length; k++) {
       const g = ws[k].start - ws[k - 1].end;
@@ -705,8 +744,9 @@ export function segmentCues(r) {
     }
     cur.push(w);
     const dur = w.end - cur[0].start;
-    if (/[。！？；…!?]$/.test(w.text)) { emit(cur); cur = []; }
-    else if (/[，、,：:]$/.test(w.text) && (dur >= 3.5 || hanOf(textOf(cur)) >= 12)) { emit(cur); cur = []; }
+    const tx = w.text.trimEnd();
+    if (/[。！？；…!?]$/.test(tx) || /[!?]["'”’)]$/.test(tx) || latinStop(tx)) { emit(cur); cur = []; }
+    else if (/[，、,：:]$/.test(tx) && (dur >= 3.5 || hanOf(textOf(cur)) >= 12)) { emit(cur); cur = []; }
   }
   emit(cur);
   // Dòng ít chữ mà ASR cho kéo dài rất lâu (một từ そう。 tới hết 25 s âm thanh, verifier 3/11): trước đây đứng trên màn
@@ -823,8 +863,14 @@ export async function condenseCues(long, pronouns, signal, target = 'vi') {
 // Không tăng PIPELINE_VERSION: file cache cũ (không có pronouns) vẫn dùng được, chỉ không mang bảng xưng hô.
 // onPartial(cues): các dòng đã dịch xong trong lúc model còn đang viết (lượt dịch đầu, OpenAI stream), mỗi lần có thêm dòng;
 // cùng dạng dòng như kết quả cuối, chưa rút gọn. Extension hiện tạm, kết quả cuối thay.
-export async function translate(meta, cues, context = [], signal, { far = false, before = [], condense = true, onPartial = null, target = 'vi' } = {}) {
+export async function translate(meta, cues, context = [], signal, { far = false, before = [], condense = true, onPartial = null, target = 'vi', src = 'zh' } = {}) {
   const pack = TARGETS[target] || TARGETS.vi;
+  // Đoạn tiếng Anh mà có dòng chữ Hán, kana, Hàn: dùng câu lệnh "từ tiếng Trung" (model dịch được cả hai), không hiện nguyên
+  // các dòng đó khi đích là tiếng Anh (verifier 4/11).
+  if (src !== 'zh' && cues.some(c => /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(c.zh))) src = 'zh';
+  // Video nói đúng ngôn ngữ đích (tiếng Anh, đích tiếng Anh): hiện chính bản chép lời, không gọi dịch (giai đoạn 3).
+  if (src === pack.code) return { cues: cues.map(c => ({ ...c, vi: fixViText(c.zh), flags: [] })), pronouns: null, same: true };
+  const wrongLang = (text) => !!(pack.wrongLang && pack.wrongLang(text, src));
   const budget = (c) => budgetAt(pack.cps, c);
   const sung = cues.some(c => c.sung);
   let shown = 0;
@@ -834,18 +880,18 @@ export async function translate(meta, cues, context = [], signal, { far = false,
     if (done.length <= shown) return;
     shown = done.length;
     const part = done.map(x => ({ c: byId.get(x.id), vi: fixViText(String(x[pack.key] || '')) }))
-      .filter(x => x.c && x.vi && !(x.vi.match(HAN) || []).length && !(pack.wrongLang && pack.wrongLang(x.vi)))
+      .filter(x => x.c && x.vi && !(x.vi.match(HAN) || []).length && !wrongLang(x.vi))
       .map(({ c, vi }) => ({ start: c.start, end: c.end, se: c.se, vi, zh: c.zh, ...(c.sung ? { sung: true } : {}) }));
     if (part.length) onPartial(part);
   });
   if (!mtProvider()) throw new Error('Chưa có OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env');
   const known = pack.pronouns ? normalizePronouns(meta.pronouns) : null;   // bảng xưng hô chỉ có ở tiếng Việt
   const author = pack.author(meta.author);
-  const first = await mtJson(pack.first({ meta, known, author, context, far, before, sung, cues, budget, round, PRONOUN_PAIRS }), pack.firstSchema, 0.2, signal, onText);
+  const first = await mtJson(pack.first({ meta, known, author, context, far, before, sung, cues, budget, round, PRONOUN_PAIRS, src }), pack.firstSchema, 0.2, signal, onText);
   const pronouns = pack.pronouns ? mergePronouns(first.pronouns, known) : null;
   const vi = new Map((first.cues || []).map(c => [c.id, fixViText(c[pack.key])]));
   const flagsOf = (c, text) => [...(!text ? ['missing'] : []), ...((text.match(HAN) || []).length ? ['han_left'] : []),
-    ...(text.length > 1.1 * budget(c) ? ['too_long'] : []), ...(text && pack.wrongLang && pack.wrongLang(text) ? ['wrong_lang'] : [])];
+    ...(text.length > 1.1 * budget(c) ? ['too_long'] : []), ...(text && wrongLang(text) ? ['wrong_lang'] : [])];
   const out = cues.map(c => { const text = vi.get(c.id) || ''; return { ...c, vi: text, flags: flagsOf(c, text) }; });
   // Dòng bị bỏ trống hay còn chữ Hán: trước đây bỏ cả dòng, mà thường là câu chốt (đo 3/11 trên cache: 18 vế câu mất ở 8
   // video: tên riêng "B站", câu nói về cách viết chữ 辫, câu hỏi "陀螺 nghĩa là gì"). Dịch lại riêng các dòng đó một lần,
@@ -873,7 +919,7 @@ export async function translate(meta, cues, context = [], signal, { far = false,
       const near = new Set(bad.flatMap(c => { const i = out.indexOf(c); return out.slice(Math.max(0, i - 3), i + 4); }));
       const around = out.filter(c => near.has(c) && !bad.includes(c) && c.vi).map(c => ({ zh: c.zh, vi: c.vi }));
       const prior = !far && bad.some(c => out.indexOf(c) < 3) ? context : [];
-      const r = await mtJson(pack.retry({ pronouns, bad, meta, prior, around, budget }), pack.cueSchema, 0.2, rs);
+      const r = await mtJson(pack.retry({ pronouns, bad, meta, prior, around, budget, src }), pack.cueSchema, 0.2, rs);
       // Model trả trùng id: lấy bản ít chữ Hán nhất.
       const again = new Map();
       for (const x of r.cues || []) { const v = fixViText(x[pack.key]); const o = again.get(x.id); if (v && (!o || hanOut(v) < hanOut(o))) again.set(x.id, v); }
@@ -887,7 +933,7 @@ export async function translate(meta, cues, context = [], signal, { far = false,
         if (keep(c) && !keep({ ...c, vi: v })) continue;
         // Không đổi dòng đúng ngôn ngữ thành sai. Dòng đang trống thì nhận cả bản sai ngôn ngữ (gắn wrong_lang, vẫn hiện): mất câu tệ
         // hơn (verifier 4/11, F5).
-        if (pack.wrongLang && pack.wrongLang(v) && c.vi && !pack.wrongLang(c.vi)) continue;
+        if (wrongLang(v) && c.vi && !wrongLang(c.vi)) continue;
         if (v !== c.vi) changed.add(c);
         c.vi = v; c.flags = flagsOf(c, v);
       }
@@ -916,7 +962,7 @@ export function cuesFromAsr(meta, asr, opts = {}) {
   const split = splitSung(asr);
   // Cả đoạn là bài hát khi: lặp lời, hoặc quá nửa số câu là câu hát, hoặc chữ kéo dài kèm hashtag nhạc.
   // Hashtag nhạc cộng nói thưa (vlog có nhạc nền, nhiều khoảng lặng) thì không đủ: chỉ lọc từng câu.
-  const song = cls.label === 'singing' && ((cls.repeat && slowChars(cls.medCharDur)) || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33));
+  const song = cls.label === 'singing' && (cls.src === 'en' || (cls.repeat && slowChars(cls.medCharDur)) || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33));
   const out = { asr, before, cls, split, song };
   if (cls.label !== 'speech' && cls.label !== 'singing') return { ...out, skip: cls.label };
   let cues;
@@ -932,14 +978,14 @@ export function cuesFromAsr(meta, asr, opts = {}) {
   } else {
     // Dòng chỉ có tiếng đệm chữ Latin ("yeah yeah") bỏ như ở chế độ lời bài hát: đoạn không có câu hát thì hai chế độ
     // dùng chung một kết quả (noSinging ở server.mjs), nên phải ra cùng các dòng.
-    cues = segmentCues(split.r).filter(c => /\p{Script=Han}/u.test(c.zh) || !isFiller(c.zh));
+    cues = segmentCues(split.r).filter(c => /\p{Script=Han}/u.test(c.zh) || !isFiller(c.zh, FILLER, cls.src === 'en'));
     // Bỏ câu hát rồi không còn dòng lời nói nào. Trước đây phần lời nói dưới 4 chữ Hán cũng bỏ cả đoạn: mất câu nói ngắn.
     if (!cues.length) return { ...out, skip: split.sung ? 'singing' : 'no_speech' };
   }
   // Đoạn chỉ có tiếng đệm (嗯。, 啊。; verifier 3/11: 12 trên 20 đoạn "quá ít lời" cũ trong cache, ASR nghe ~0,6 s, thường lúc
   // đầu video có nhạc): không dịch thành "Ừm.". Đoạn có lời thật thì giữ cả dòng tiếng đệm như trước. Nhãn riêng, không phải
   // no_speech: server.mjs làm lại kết quả no_speech có chữ Hán. Đoạn có 诶？, 哎呀！ thì dịch (QUIET_FILLER, 4/11).
-  if (!song && cues.every(c => isFiller(c.zh, QUIET_FILLER))) return { ...out, skip: 'filler' };
+  if (!song && cues.every(c => isFiller(c.zh, QUIET_FILLER, cls.src === 'en'))) return { ...out, skip: 'filler' };
   return { ...out, cues };
 }
 
@@ -966,7 +1012,8 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   const cues = prep.cues;
   // song: kết quả của đoạn cả bài khác nhau ở hai chế độ kể cả khi sung = 0 (điệp khúc câu 3 chữ), nên server và
   // extension không dùng chung nó giữa hai chế độ (noSinging, modeFree).
-  const base = { asr: asr.provider, ...(asr.model && asr.model !== FUNASR_MODEL ? { asrModel: asr.model } : {}), ...(saved ? { asrCached: true } : {}), seconds: audio.seconds, heard: (asr.text || '').slice(0, 40), sung: split.sung, sentences: split.total,
+  // src: ngôn ngữ nguồn khi không phải tiếng Trung (giai đoạn 3: 'en'); cũng nằm trong source để đổi ngôn ngữ đích dùng lại.
+  const base = { asr: asr.provider, ...(asr.model && asr.model !== FUNASR_MODEL ? { asrModel: asr.model } : {}), ...(saved ? { asrCached: true } : {}), ...(cls.src === 'en' ? { src: 'en' } : {}), seconds: audio.seconds, heard: (asr.text || '').slice(0, 40), sung: split.sung, sentences: split.total,
     ...(song ? { song: true } : {}), debug: { features: cls, sentences: split.sentences, net } };
   const skip = (label) => ({ status: 'skipped', label, ...base, timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio } });
   if (prep.skip) return skip(prep.skip);
@@ -993,11 +1040,12 @@ async function finishSubtitles(meta, { cues, before, base, source, t0, tAudio, t
   base.debug.pronounsIn = normalizePronouns(tmeta.pronouns);
   base.debug.pronounsCtx = ctxPronouns ? ctxPronouns.pairs.length : 0;
   opts.signal?.throwIfAborted();
-  const tr = cues.length ? await netCtx.run({ calls: net.mt }, () => translate(tmeta, cues, context, opts.signal, { far, before: context.length && !far ? [] : before, condense: opts.condense !== false, onPartial: opts.onPartial, target: opts.target || 'vi' })) : { cues: [], pronouns: null };
+  const tr = cues.length ? await netCtx.run({ calls: net.mt }, () => translate(tmeta, cues, context, opts.signal, { far, before: context.length && !far ? [] : before, condense: opts.condense !== false, onPartial: opts.onPartial, target: opts.target || 'vi', src: base.src || 'zh' })) : { cues: [], pronouns: null };
   opts.signal?.throwIfAborted();   // huỷ giữa lượt rút gọn (lượt đó tự bắt lỗi): không trả kết quả dở
   const tMt = Date.now();
   const vi = tr.cues;
   if (tr.fix) base.debug.mtFix = tr.fix;
+  if (tr.same) base.same = true;   // video nói đúng ngôn ngữ đích: hiện bản chép, không dịch
   // pronouns: bảng xưng hô sau đoạn này (cũng lưu trong file cache); extension giữ theo video, gửi lại ở request sau.
   return { status: vi.length ? 'ok' : 'skipped', label: vi.length ? 'speech' : 'untranslated', target: opts.target || 'vi', ...base, context: context.length,
     contextFar: far, before: context.length && !far ? 0 : before.length, ...(opts.lyrics ? { lyrics: true } : {}),
