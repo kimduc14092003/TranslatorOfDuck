@@ -1351,7 +1351,7 @@ Chủ dự án chọn làm cả 4 hướng.
 - **`alpha/dev/real/`** (README ở đó):
   - `run.mjs` chạy bộ video thử: mỗi video một server đo với cache trống, một proxy ghi yêu cầu, một Chromium riêng (cổng 9334, chế độ khách, tắt tiếng), xem ở 1×, chấm điểm, rồi xoá dữ liệu của video; chỉ giữ điểm số (`summary.json`, `history.jsonl`).
   - `watch`, `report`, `cache-scan`, `window`, `replay` (chạy lại offline bước cắt đoạn, chia dòng), `scroll`, `rec`, `sw-source`, `asr-replay`.
-  - `videos.json`: 13 mục, chỉ có id và thể loại, chờ chủ dự án duyệt; còn thiếu một video dưới 15 s.
+  - `videos.json`: 13 mục, chỉ có id và thể loại; chủ dự án đã duyệt (4/11). Còn thiếu một video dưới 15 s.
 - **Server:**
   - `cuesFromAsr` tách khỏi `makeSubtitles`, hành vi không đổi: verifier gọi bản cũ và bản mới 4.464 lần trên 271 file nhận dạng thật, 0 khác; `replay.mjs` ra đúng từng dòng đã lưu ở 9/9 đoạn.
   - `TOD_KEEP_ASR=1` (chỉ server đo): giữ file nhận dạng kèm vị trí âm thanh, mô tả, hashtag, để chạy lại offline. Không đặt thì như cũ. Test mới `keep-asr-test.mjs` (trượt với server cũ).

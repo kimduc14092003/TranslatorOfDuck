@@ -150,7 +150,7 @@ Tới khi chọn model nhận dạng cuối (giai đoạn 3), bảng điểm dù
 6. **Thử tải riêng luồng âm thanh của Douyin**, như trình phát của trang (§6t), thay vì tải 5–6 MB cho 0,6 MB âm thanh mỗi đoạn 30 s. Giúp mạng chậm và video dài, và là bước chuẩn bị cho nền tảng dùng DASH (Bilibili, YouTube). Thử chỉ đọc, ít video. Trước đây luồng `bit_rate_audio` trả 403 (S1), chưa thử lại.
 7. **Máy Windows:** hướng dẫn cài đã có ([alpha/README.md](../alpha/README.md)). Còn thiếu: chạy test và bộ công cụ đo trên Windows, và nói rõ key nhận dạng bắt buộc (chỉ có key Gemini thì mất mốc từng chữ).
 
-**Bạn cần làm:** duyệt bộ video thử; xem thử và chấm cảm giác sau đợt sửa.
+**Bạn cần làm:** duyệt bộ video thử (đã duyệt 13 mục ngày 4/11; còn gửi id một video dưới 15 s); xem thử và chấm cảm giác sau đợt sửa.
 
 **Xong khi:** bộ công cụ đo chạy được trên Mac và Windows, và ra bảng điểm cho bộ video thử; các lỗi ở việc 5 đã sửa, hoặc có lý do để lại; bạn xem thấy ổn.
 

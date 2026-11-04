@@ -1,5 +1,5 @@
 {
-  "note": "Bộ video thử của giai đoạn 0 (docs/ROADMAP.md §4). Chỉ ghi id và thể loại, không ghi nội dung. from/to: tua tới và xem tới giây đó. Chờ chủ dự án duyệt. Còn thiếu một video ngắn dưới 15 s.",
+  "note": "Bộ video thử của giai đoạn 0 (docs/ROADMAP.md §4). Chỉ ghi id và thể loại, không ghi nội dung. from/to: tua tới và xem tới giây đó. Chủ dự án đã duyệt 13 mục ngày 4/11. Còn thiếu một video ngắn dưới 15 s (chủ dự án gửi id).",
   "videos": [
     { "id": "7703023641964907827", "kind": "phim ngắn dài 21:42, hội thoại", "to": 180 },
     { "id": "7703023641964907827", "kind": "cùng phim, tua tới đoạn thoại tiếng Nhật 8:20", "from": 490, "to": 540 },
