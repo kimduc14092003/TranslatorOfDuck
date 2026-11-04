@@ -10,7 +10,7 @@ Dùng để chấm bảng điểm "ngon" ([`docs/ROADMAP.md`](../../../docs/ROAD
 - **`scroll.mjs` là tự động lướt** (tối đa 10 video, mỗi video ít nhất 3 s): chỉ chạy khi chủ dự án yêu cầu.
 - Kết quả nằm dưới `alpha/server/work/real/`; thư mục `work/` đã nằm ngoài git.
 - Không đụng Chromium bạn dùng hằng ngày: công cụ mở Chromium riêng ở cổng 9334, hồ sơ tạm, tắt tiếng; server đo ở cổng 8788, proxy ở 8789.
-- `replay.mjs`, `asr-replay.mjs` nạp `alpha/server/pipeline.mjs`, nên pipeline tự đọc `alpha/server/.env` (không in ra). Agent phải chạy trên bản sao không có `.env`.
+- `replay.mjs`, `asr-replay.mjs`, `asr-bench.mjs` nạp `alpha/server/pipeline.mjs`, nên pipeline tự đọc `alpha/server/.env` (không in ra). Agent phải chạy trên bản sao không có `.env`.
 
 ## Cài một lần
 
@@ -39,6 +39,7 @@ Server đo dùng key trong `alpha/server/.env`, giống server hằng ngày. Đ�
 | `node rec.mjs [tên]` | Ghi chỉ đọc Chromium bạn đang dùng (cổng 9333) |
 | `node sw-source.mjs` | Kiểm service worker đang chạy có đúng bản trong `alpha/extension` không (cần Node 22 trở lên) |
 | `node asr-replay.mjs <file.aac> <audioStart> <from> <to> [N]` | Gọi lại nhận dạng trên âm thanh đã giữ (`TOD_DUMP=1`). **Tốn tiền**, hỏi trước |
+| `node asr-bench.mjs <tên lượt> [--go]` | So sánh các dịch vụ nhận dạng trên âm thanh của một lượt `run.mjs --keep` (mục dưới). **Tốn tiền**, hỏi trước |
 
 ## Bảng điểm đo được
 
@@ -54,3 +55,37 @@ Server đo dùng key trong `alpha/server/.env`, giống server hằng ngày. Đ�
 Trạng thái nhãn đọc theo màu chấm trên nhãn (`BADGE` trong `alpha/extension/content.js`), không theo chữ.
 
 Chưa đo: **đúng nhịp** (Δin, cần lúc người nói bắt đầu, lấy từ âm thanh) và **♪ đúng** (cần nhãn nói hay hát).
+
+## So sánh nhận dạng giọng nói (`asr-bench.mjs`)
+
+Để chọn model nhận dạng theo chất lượng trên video thật. Dịch vụ có key trong `alpha/server/.env` thì được so, thiếu key thì bỏ qua (chỉ in tên biến thiếu):
+
+| Hàng | Key | Ghi chú |
+|---|---|---|
+| mỗi model trong `ASR_BENCH_DASHSCOPE_MODELS` (mặc định `fun-asr,qwen3-asr-flash,qwen-audio-3.1-asr-flash`) | `DASHSCOPE_API_KEY` | `fun-asr` (và `*-filetrans`, `paraformer-*`) chỉ có dạng bất đồng bộ cần URL công khai, `*-realtime` chỉ có WebSocket: không gọi, chỉ ghi lý do. `qwen3-asr-flash` dạng đồng bộ không trả mốc thời gian |
+| `elevenlabs` (scribe_v2) | `ELEVENLABS_API_KEY` | |
+| `gemini` (gemini-3.5-transcribe) | `GEMINI_API_KEY` | gửi âm thanh base64 thẳng trong mục `audio`; `--gemini-upload` thì tải lên Files API trước (thời gian đo gồm cả lần tải lên, file xoá ngay sau đó) |
+| `azure` (MAI-Transcribe-2) | `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` | mặc định gọi `<vùng>.api.cognitive.microsoft.com`; không được thì đặt `AZURE_SPEECH_BASE=https://<tên resource>.cognitiveservices.azure.com` |
+
+```bash
+node run.mjs --items 2,4 --keep --name so-asr     # server đo giữ âm thanh từng đoạn (TOD_DUMP)
+node asr-bench.mjs so-asr                         # chỉ in kế hoạch: số đoạn, dịch vụ, số lần gọi
+node asr-bench.mjs so-asr --go                    # gọi thật; chạy lại thì chỉ gọi lại chỗ lỗi (--fresh: gọi lại hết)
+node asr-bench.mjs --clean so-asr && node run.mjs --clean so-asr    # xem xong: xoá chữ nhận dạng và âm thanh
+```
+
+Tham số: `--lang zh` gợi ý ngôn ngữ cho mọi dịch vụ (mặc định để dịch vụ tự nhận; server hằng ngày luôn gợi ý zh), `--providers dashscope,gemini` chỉ so vài dịch vụ, `--limit N` số đoạn, `--top N` số đoạn chênh nhau in ra, `--timeout ms` hạn mỗi lần gọi (mặc định 60 s). Lỗi in đủ câu dịch vụ trả về. Đầu vào cũng có thể là thư mục hay file `.aac`; cùng âm thanh giữ hai lần chỉ tính một lần. Mỗi đoạn tách mp3 16 kHz mono một lần (`extractAudio`), gửi song song cho các dịch vụ; 429 hay 5xx thì gọi lại một lần, quá hạn thì tính lỗi.
+
+Bảng in ra, mỗi dịch vụ một hàng (cũng ghi ở `metrics.json`, không có chữ):
+- **đoạn ok / lỗi / gọi lại**, **p50, p95 ms** (thời gian một lần gọi, kể cả gọi lại);
+- **có dấu câu**, **có mốc từ**: phần trăm đoạn có chữ;
+- **đoạn có từ > 2 s**: từ bị kéo dài (lỗi đã gặp với qwen-audio); **từ trung vị**: thời lượng trung vị một từ (dịch vụ chia từ khác nhau: Fun-ASR theo từ, có dịch vụ theo chữ, nên chỉ so cùng dịch vụ giữa các lượt);
+- **báo ngôn ngữ đúng**: ngôn ngữ dịch vụ báo khớp hệ chữ của bản đồng thuận (bản gần các bản khác nhất); Fun-ASR, Gemini không báo ngôn ngữ; **chữ đúng hệ**: chữ trả về cùng hệ chữ đó (bắt dịch vụ dịch sang tiếng Anh thay vì chép);
+- **trống khi bên khác có chữ**: bỏ sót cả đoạn;
+- **CER TB** và bảng **CER từng cặp**: tỉ lệ lỗi ký tự khi lấy dịch vụ kia làm chuẩn (bỏ dấu câu, dấu cách, NFKC, chữ thường; không có OpenCC nên phồn thể và giản thể tính là khác). Không có bản chuẩn do người chép, nên đây là **độ đồng thuận**, không phải độ đúng.
+
+Cuối cùng là **các đoạn chênh nhau nhất**: id, khoảng thời gian trong video, chữ của từng dịch vụ, để bạn mở video nghe lại chỗ đó và biết bên nào đúng. Chỉ chỗ này in chữ ra màn hình.
+
+Dữ liệu: âm thanh và chữ nhận dạng có bản quyền. Kết quả chỉ nằm ở `alpha/server/work/asr-bench/<tên>` (ngoài git): `chunks.jsonl` (có chữ, để chạy lại không tốn tiền) và `metrics.json` (chỉ số). Xem xong thì `--clean`.
+
+Kiểm tra (không cần key, không gọi dịch vụ thật; bốn dịch vụ giả trên máy): `node asr-bench-test.mjs`. Agent chạy trên bản sao không có `alpha/server/.env`.
