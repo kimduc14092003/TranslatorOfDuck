@@ -1471,6 +1471,27 @@ Chủ dự án chọn làm cả 4 hướng.
   - chữ mới lẫn chữ đã có thì nối cả: lặp vài chữ, chủ dự án ưu tiên sub đầy đủ.
 - **Test:** `cues-test` 8 (2 ca mới từ hai ca thật, trượt trên bản cũ; thêm ca dòng trùng giờ, dòng hát, chữ toàn khổ, không còn chỗ). Mọi test extension đạt.
 
+## 6ar. Báo cáo đúng nhịp (Δin) trong bộ công cụ đo (4/11)
+
+- **Cách đo** (`report.mjs`, `timing`; dương là sub muộn, theo giờ video):
+  - hiển thị: bộ ghi trong trang (`PAGE_STATE`, mỗi khung hình) ghi giờ video lúc chữ sub đổi; trừ đầu dòng trong cache. Mỗi dòng ghép với lần hiện chưa dùng, từ 0,1 s trước đầu dòng tới 3 s sau. Dòng hiện muộn hơn 0,1 s là dòng tới muộn (dòng đầu lúc mở video, vừa tua): đếm riêng. Phần này chỉ là độ trễ theo khung hình, chưa tính thời gian vẽ ra màn hình, nên Δin là cận dưới;
+  - nhận dạng: đầu dòng − lúc tiếng nói bắt đầu trong âm thanh server nhận. Server đo nay bật `TOD_DUMP=1`, âm thanh nằm trong thư mục lượt đo và xoá cùng nó; `scroll.mjs` không bật. `onsetNear`: nền là trung vị năng lượng 0,9–0,5 s trước đầu dòng; đỉnh trong 0,5 s sau phải gấp 4 lần nền; lúc bắt đầu là khung đầu tiên trong ±0,5 s mà 3 khung liền vượt ngưỡng; 0,35 s trước đó phải lặng. Chỉ dòng mà dòng trước đã dứt lời ít nhất 0,3 s (nói liền thì không dò được);
+  - Δin của một dòng = hai phần cộng lại. Báo trung vị, P90, sớm nhất, P90 của |Δin|, % trong ±83 ms. `run.mjs` gộp mọi video (mỗi video chỉ vài dòng đo được nhận dạng).
+- **Đo thật** (lượt `timing-0411`, 2 video, 1×, extension 0.2.44, rút gọn tắt):
+  - hiển thị trung vị 12 ms và 7 ms (55 + 31 dòng);
+  - nhận dạng trung vị 10 ms và 0 ms (4 + 10 dòng);
+  - Δin gộp 14 dòng: trung vị 10 ms, P90 70 ms, sớm nhất −48 ms, 92,9% trong ±83 ms. Đạt mốc PLAN (trung vị ≤ 80 ms, P90 ≤ 200 ms) trên mẫu nhỏ này.
+  - Cả hai video: 0 vế cần duyệt, 0 chờ, 0 lỗi; hiện đúng dòng 99,3% và 98,3%; đọc ≤ 17 ký tự/giây 49,1% và 75% (rút gọn tắt).
+  - "Sub đầu tiên 0,4 s" của video 1 không sai: trang mất ~9 s mới có thẻ video, extension đã dịch xong đoạn đầu trong lúc đó.
+- **Soát:** verifier (accept_with_fixes). Hai lỗi lớn của bản đầu đã sửa:
+  - đòi lặng ngay trước đầu dòng, nên không bao giờ thấy mốc muộn quá 0,15 s;
+  - ngưỡng theo cả file, nên chỗ nói nhỏ bị bắt nhầm sớm. "Sớm nhất −180 ms" là giả.
+  Sửa thêm:
+  - ghép lần hiện chưa dùng, đếm dòng không thấy hiện;
+  - P90 của |Δin|;
+  - bỏ dòng nối liền dòng trước, sau khi tự thấy Δ 340 ms giả ở "…您对" + "得起当年…".
+  Verifier kiểm: âm thanh các đoạn khớp nhau (tương quan ≥ 0,994, lệch ≤ 0,81 ms); mốc so với trình phát dựa trên lần đo 30/10 (§5).
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).

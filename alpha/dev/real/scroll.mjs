@@ -17,7 +17,7 @@ fs.mkdirSync(out, { recursive: true });
 let server = null, br = null;
 const arrivals = [];
 try {
-  if (a.fresh) server = await startServer({ work: path.join(out, 'server') });
+  if (a.fresh) server = await startServer({ work: path.join(out, 'server'), dump: false });   // không giữ âm thanh: scroll không đo đúng nhịp
   br = await launchChromium({ profile: path.join(out, 'profile') });
   const url = server ? server.url : a.server;
   if (url) await setSettings(br.sw, { server: url });

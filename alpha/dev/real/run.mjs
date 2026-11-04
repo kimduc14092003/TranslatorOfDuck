@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { HERE, OUT_ROOT, args, readJson, readJsonl, rmrf, startProxy, startServer } from './lib.mjs';
-import { print, report } from './report.mjs';
+import { print, quant, report } from './report.mjs';
 import { watchVideo } from './watch.mjs';
 
 const a = args();
@@ -56,7 +56,7 @@ for (const [i, v] of list.entries()) {
   rows.push(r ? { id: v.id, kind: v.kind || null, from: v.from || 0, to: v.to ?? null, error: error || r.error, duration: r.duration, chunks: r.chunks,
     unapproved: r.unapproved, failed: r.failed.length, coverage: r.coverage, correct: r.correct, expected: r.expected, samples: r.samples,
     waitRuns: r.waitRuns, errorRuns: r.errorRuns, platformErrorRuns: r.platformErrorRuns, ttfsS: r.ttfsMs == null ? null : +(r.ttfsMs / 1000).toFixed(1),
-    readingWithin: r.readingSpeed.within, condensedLater: r.condensedLater, cancelled: r.cancelled.length, cancelledOther: r.cancelledOther, silentGaps: r.silentGaps.length }
+    readingWithin: r.readingSpeed.within, condensedLater: r.condensedLater, timing: r.timing, cancelled: r.cancelled.length, cancelledOther: r.cancelledOther, silentGaps: r.silentGaps.length }
     : { id: v.id, kind: v.kind || null, error });
   if (!a.keep && !rmrf(dir)) console.log('Không xoá được', dir, '— xoá tay thư mục này');
   current = null;
@@ -66,7 +66,9 @@ const ok = rows.filter((r) => !r.error), med = (xs) => { const s = xs.filter((x)
 const total = { videos: rows.length, errors: rows.length - ok.length, unapproved: ok.reduce((s, r) => s + r.unapproved, 0), failedChunks: ok.reduce((s, r) => s + r.failed, 0),
   correctMin: ok.length ? Math.min(...ok.map((r) => r.correct ?? 100)) : null, waitRuns: ok.reduce((s, r) => s + r.waitRuns, 0),
   errorRuns: ok.reduce((s, r) => s + r.errorRuns, 0), ttfsMedian: med(ok.map((r) => r.ttfsS)), ttfsMax: ok.length ? Math.max(...ok.map((r) => r.ttfsS ?? 0)) : null,
-  readingMedian: med(ok.map((r) => r.readingWithin)), cancelled: ok.reduce((s, r) => s + r.cancelled, 0) };
+  readingMedian: med(ok.map((r) => r.readingWithin)), cancelled: ok.reduce((s, r) => s + r.cancelled, 0),
+  // Đúng nhịp gộp mọi video (mỗi video ít dòng đo được): hiển thị, nhận dạng, Δin.
+  timing: Object.fromEntries(['render', 'asr', 'in'].map((k) => [k, quant(ok.flatMap((r) => (r.timing && r.timing.values && r.timing.values[k]) || []))])) };
 const summary = { name, at: new Date().toISOString(), rate, throttle: throttle || null, lyrics, total, rows };
 fs.writeFileSync(path.join(root, 'summary.json'), JSON.stringify(summary, null, 1));
 fs.appendFileSync(path.join(OUT_ROOT, 'history.jsonl'), JSON.stringify(summary) + '\n');
@@ -79,5 +81,8 @@ for (const r of rows) {
 }
 console.log(`tổng: ${total.videos} mục, ${total.errors} lỗi, ${total.unapproved} vế cần duyệt, ${total.failedChunks} đoạn lỗi hay dịch ra 0 dòng, đúng dòng thấp nhất ${total.correctMin ?? '-'}%, ` +
   `chờ ${total.waitRuns} lần, lỗi ${total.errorRuns} lần, sub đầu trung vị ${total.ttfsMedian ?? '-'} s (cao nhất ${total.ttfsMax ?? '-'} s), đọc ≤17 trung vị ${total.readingMedian ?? '-'}%`);
+const T = total.timing, ms = (x) => (x == null ? '-' : Math.round(x * 1000) + ' ms');
+console.log(`đúng nhịp gộp: hiển thị trung vị ${ms(T.render.median)} (${T.render.n} dòng); nhận dạng trung vị ${ms(T.asr.median)}, P90 ${ms(T.asr.p90)} (${T.asr.n} dòng); ` +
+  `Δin trung vị ${ms(T.in.median)}, P90 ${ms(T.in.p90)}, sớm nhất ${ms(T.in.min)}, ${T.in.within83ms ?? '-'}% trong ±83 ms (${T.in.n} dòng)`);
 console.log(a.keep ? `\nĐã giữ dữ liệu video trong ${root}. Xem xong thì xoá: node run.mjs --clean ${name}` : `\nĐã xoá dữ liệu video; điểm số ở ${path.join(root, 'summary.json')}`);
 process.exit(0);

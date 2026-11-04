@@ -98,24 +98,45 @@ export const extStatus = (sw) => sw.evaluate(async () => {
 
 // Chạy trong trang: video đang phát (to nhất, có thời lượng), nhãn và sub của extension (shadow root mở).
 // rate: đặt tốc độ; seek: tua chính thẻ video đó tới giây này.
+// subLog: các lần chữ sub đổi kể từ lần gọi trước, mỗi lần kèm giờ video lúc đó (bộ ghi trong trang chạy mỗi khung hình, ~16 ms),
+// để đo đúng nhịp (report.mjs, timing): lần chụp 0,25 s quá thô cho mốc 80 ms.
 export const PAGE_STATE = (opt) => {
   const { rate, seek } = typeof opt === 'object' && opt ? opt : { rate: opt };
   const area = (v) => { const r = v.getBoundingClientRect(); return r.width * r.height; };
-  const v = [...document.querySelectorAll('video')].filter((x) => x.duration > 0 && area(x) > 0).sort((a, b) => area(b) - area(a))[0];
+  const video = () => [...document.querySelectorAll('video')].filter((x) => x.duration > 0 && area(x) > 0).sort((a, b) => area(b) - area(a))[0];
+  const ui = () => {
+    let badge = null, dot = null, sub = null;
+    for (const el of document.querySelectorAll('body > div, html > div')) {
+      const sr = el.shadowRoot;
+      if (!sr || !sr.querySelector('.sub')) continue;
+      const bd = sr.querySelector('.badge'), d = sr.querySelector('.badge .dot'), s = sr.querySelector('.sub');
+      if (bd && getComputedStyle(bd).display !== 'none') { badge = bd.textContent; dot = d ? d.style.background || d.style.backgroundColor : null; }
+      if (s && getComputedStyle(s).display !== 'none') sub = s.textContent;
+    }
+    return { badge, dot, sub };
+  };
+  if (!window.__todSubLog) {
+    window.__todSubLog = [];
+    let last;
+    const tick = () => {
+      try {
+        const sub = ui().sub;
+        if (sub !== last) { last = sub; const v = video(); window.__todSubLog.push({ t: v ? +v.currentTime.toFixed(3) : null, sub }); if (window.__todSubLog.length > 5000) window.__todSubLog.shift(); }
+      } catch (_) { /* trang đang đổi */ }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+  const subLog = window.__todSubLog.splice(0);
+  const v = video();
   if (v && seek != null) v.currentTime = seek;
   if (v && rate) { if (v.playbackRate !== rate) v.playbackRate = rate; if (v.paused) v.play().catch(() => {}); }
-  let badge = null, dot = null, sub = null;
-  for (const el of document.querySelectorAll('body > div, html > div')) {
-    const sr = el.shadowRoot;
-    if (!sr || !sr.querySelector('.sub')) continue;
-    const bd = sr.querySelector('.badge'), d = sr.querySelector('.badge .dot'), s = sr.querySelector('.sub');
-    if (bd && getComputedStyle(bd).display !== 'none') { badge = bd.textContent; dot = d ? d.style.background || d.style.backgroundColor : null; }
-    if (s && getComputedStyle(s).display !== 'none') sub = s.textContent;
-  }
+  const { badge, dot, sub } = ui();
   const act = document.querySelector('[data-e2e="feed-active-video"]');
   const inner = act && (act.getAttribute('data-e2e-vid') ? act : act.querySelector('[data-e2e-vid]'));
   return { t: v ? +v.currentTime.toFixed(2) : null, dur: v && isFinite(v.duration) ? +v.duration.toFixed(1) : null, rate: v ? v.playbackRate : null,
-    paused: v ? v.paused : null, badge, dot, sub, vid: inner ? inner.getAttribute('data-e2e-vid') : null, url: location.pathname + location.search };
+    paused: v ? v.paused : null, badge, dot, sub, vid: inner ? inner.getAttribute('data-e2e-vid') : null, url: location.pathname + location.search,
+    ...(subLog.length ? { subLog } : {}) };
 };
 // Trạng thái nhãn theo màu chấm (BADGE trong alpha/extension/content.js), không theo chữ: chữ trên nhãn sẽ đổi theo ngôn ngữ.
 const DOT = { '245,166,35': 'pending', '155,155,155': 'skipped', '231,76,60': 'error', '46,204,113': 'ok' };
@@ -133,14 +154,15 @@ export const platformError = (s) => { const t = String((s && s.badge) || '');
   return /Douyin|tải video|tải mục lục|file video đã đổi|HTTP 429/i.test(t) && !/từ chối key|alpha\/server|OpenAI|Gemini|DashScope|server/i.test(t); };
 
 // ---------------------------------------------------------------- server đo và proxy ghi yêu cầu
-// Server đo riêng (cache trống trong work, giữ file nhận dạng để chạy lại offline: TOD_KEEP_ASR). Dùng key ở alpha/server/.env.
-export async function startServer({ port = 8788, work, keepAsr = true, env = {} }) {
+// Server đo riêng (cache trống trong work, giữ file nhận dạng để chạy lại offline: TOD_KEEP_ASR; giữ âm thanh từng đoạn ở work/dump
+// để đo lúc giọng nói bắt đầu: TOD_DUMP; cả hai xoá cùng thư mục lượt đo). Dùng key ở alpha/server/.env.
+export async function startServer({ port = 8788, work, keepAsr = true, dump = true, env = {} }) {
   await needPort(port, 'server đo khác đang chạy?');
   fs.mkdirSync(work, { recursive: true });
   const log = path.join(work, 'server.log');
   const fd = fs.openSync(log, 'a');
   const child = spawn(process.execPath, ['server.mjs'], { cwd: SERVER_DIR, stdio: ['ignore', fd, fd],
-    env: { ...process.env, PORT: String(port), TOD_WORK: work, TOD_KEEP_ASR: keepAsr ? '1' : '', ...env } });
+    env: { ...process.env, PORT: String(port), TOD_WORK: work, TOD_KEEP_ASR: keepAsr ? '1' : '', TOD_DUMP: dump ? '1' : '', ...env } });
   fs.closeSync(fd);
   for (let i = 0; ; i++) {
     if (await fetch(`http://127.0.0.1:${port}/health`).then((r) => r.ok).catch(() => false)) break;

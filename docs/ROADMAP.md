@@ -133,7 +133,7 @@ Tới khi chọn model nhận dạng cuối (giai đoạn 3), bảng điểm dù
    - đếm cả đoạn bị bỏ nguyên đoạn, vế câu không có chữ Hán, và cả hai chế độ lời bài hát;
    - nhận biết "đang dịch" từ trạng thái máy đọc được, thay vì dò chữ tiếng Việt trên nhãn: chữ trên nhãn sẽ đổi ở giai đoạn 1;
    - thêm tuỳ chọn cho server đo giữ lại kết quả nhận dạng có mốc từng chữ, chỉ trong lượt đo, xoá khi xong. Hiện server xoá file nhận dạng khi đã có kết quả cuối ([server.mjs:230](../alpha/server/server.mjs#L230)), nên không chạy lại offline được;
-   - thêm báo cáo đúng nhịp và tốc độ đọc;
+   - thêm báo cáo đúng nhịp và tốc độ đọc; *(đã làm 4/11: HANDOFF §6an, §6ar)*
    - thêm chế độ ghi chẩn đoán khi bạn xem bình thường, để lỗi bạn gặp trên máy Windows gửi về được.
 
    Kết quả ghi vào `alpha/server/work/` (đã nằm ngoài git) hoặc thư mục có `.gitignore` riêng, để GitHub Desktop không đẩy nhầm. Âm thanh và chữ của video xoá khi xong lượt đo; chỉ giữ điểm số. Chạy được cả trên Mac lẫn Windows.
