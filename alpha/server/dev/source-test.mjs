@@ -37,10 +37,12 @@ const chars = (text, at, per) => {
 };
 // Âm thanh 12 s: tiếng Anh, ba câu liền nhau; 16 s: tiếng Trung.
 const EN_LINES = ['Hello everyone, my name is Mr. Brown.', ' Today we are going to talk about pandas.', ' Are you ready?'];
-const WORDS = { 12: english(EN_LINES), 16: [...chars('大家好，今天我们去吃火锅。', 0.5, 0.2), ...chars('这个陀螺很好玩。', 4, 0.2)] };
-const VI = { Hello: 'Chào mọi người, mình tên là Brown.', Today: 'Hôm nay chúng ta sẽ nói về gấu trúc.', ready: 'Các bạn sẵn sàng chưa?',
+const WORDS = { 12: english(EN_LINES), 16: [...chars('大家好，今天我们去吃火锅。', 0.5, 0.2), ...chars('这个陀螺很好玩。', 4, 0.2)],
+  20: chars('断る。帰れ。てめえ死にてえのか。', 0.5, 0.2), 24: english(['안녕하세요.', ' 오늘은 날씨가 좋네요.']) };
+const VI = { 断る: 'Tôi từ chối.', 帰れ: 'Về đi.', てめえ: 'Mày muốn chết à?', 안녕하세요: 'Xin chào.', 오늘은: 'Hôm nay trời đẹp nhỉ.', Hello: 'Chào mọi người, mình tên là Brown.', Today: 'Hôm nay chúng ta sẽ nói về gấu trúc.', ready: 'Các bạn sẵn sàng chưa?',
   大家好: 'Chào cả nhà, hôm nay đi ăn lẩu.', 陀螺: 'Con quay này vui lắm.' };
 const pick = (src) => Object.entries(VI).find(([k]) => src.includes(k))?.[1] || 'x';
+const KOECHO = '안녕하세요.';
 let asrCalls = 0;
 const mtBodies = [];
 const providers = http.createServer((req, res) => {
@@ -52,7 +54,7 @@ const providers = http.createServer((req, res) => {
       asrCalls++;
       const b64 = JSON.parse(body).input.messages[0].content[0].input_audio.data;
       const seconds = Math.round((Buffer.from(b64.split(',')[1], 'base64').length * 8) / 48000);
-      const words = WORDS[seconds < 14 ? 12 : 16];
+      const words = WORDS[seconds < 14 ? 12 : seconds < 18 ? 16 : seconds < 22 ? 20 : 24];
       const sentence = { begin_time: words[0].begin_time, end_time: words.at(-1).end_time, text: words.map(w => w.text + w.punctuation).join(''), words };
       return json({ output: { sentence, text: sentence.text } });
     }
@@ -63,7 +65,7 @@ const providers = http.createServer((req, res) => {
       const retry = /^Dịch lại/.test(content);
       // ECHO trong mô tả video: lượt đầu trả nguyên câu tiếng Anh cho câu về gấu trúc (model không dịch).
       const echo = content.includes('ECHO') && !retry;
-      const cues = lines.map(l => { const src = l.en ?? l.zh; return { id: l.id, vi: echo && src.includes('pandas') ? src : pick(src) }; });
+      const cues = lines.map(l => { const src = l.en ?? l.ja ?? l.ko ?? l.zh; return { id: l.id, vi: echo && (src.includes('pandas') || src.includes('안녕')) ? src : pick(src) }; });
       return json({ choices: [{ message: { role: 'assistant', content: JSON.stringify(retry ? { cues } : { pronouns: { pairs: [] }, cues }) } }] });
     }
     res.writeHead(404); res.end();
@@ -170,6 +172,44 @@ try {
   t('tắt lời bài hát: video tiếng Anh vẫn có sub', () => {
     assert.equal(g.status, 'ok', JSON.stringify(g));
     assert.deepEqual(g.cues.map(x => x.zh), EN_TRIM);
+  });
+
+  // 8. Tiếng Nhật, tiếng Hàn (giai đoạn 4): câu lệnh ghi đúng ngôn ngữ nguồn, dòng gốc gửi bằng khoá ja / ko; bản dịch chép nguyên
+  // chữ Hàn thì dịch lại.
+  const J = '7500000000000000507', K = '7500000000000000508';
+  const mtJ = mtBodies.length;
+  const j = await post(base(J, { target: 'vi', aac: aac(20) }));
+  t('video nói tiếng Nhật: nguồn ja, câu lệnh "từ tiếng Nhật", khoá ja', () => {
+    assert.equal(j.status, 'ok', JSON.stringify(j)); assert.equal(j.src, 'ja');
+    // Ba câu ngắn liền nhau được gộp thành một dòng (luật gộp dòng dưới 0,833 s, như tiếng Trung).
+    assert.match(mtBodies[mtJ], /từ tiếng Nhật sang tiếng Việt/); assert.match(mtBodies[mtJ], /"ja":"断る。帰れ。/);
+    assert.doesNotMatch(mtBodies[mtJ], /Hán Việt/);
+    assert.deepEqual(j.cues.map(c => c.vi), ['Tôi từ chối.']);
+  });
+  const mtK = mtBodies.length;
+  const k = await post(base(K, { target: 'vi', aac: aac(24), desc: 'ECHO' }));
+  t('video nói tiếng Hàn: nguồn ko, câu lệnh "từ tiếng Hàn"; dòng còn chữ Hàn thì dịch lại', () => {
+    assert.equal(k.status, 'ok', JSON.stringify(k)); assert.equal(k.src, 'ko');
+    assert.match(mtBodies[mtK], /từ tiếng Hàn sang tiếng Việt/); assert.match(mtBodies[mtK], /"ko":"안녕하세요\./);
+    assert.match(mtBodies[mtK + 1], /^Dịch lại[^\n]*tiếng Hàn/);
+    assert.ok(k.cues.length >= 1 && k.cues.every(c => !/\p{Script=Hangul}/u.test(c.vi)), JSON.stringify(k.cues));
+  });
+
+  // 9. Kết quả "ok" cũ (trước giai đoạn 4) của đoạn nghe ra tiếng Nhật: làm lại; kết quả cũ tiếng Trung và kết quả mới tiếng Nhật: dùng cache.
+  const L = '7500000000000000509', M = '7500000000000000510';
+  const okOld = (id, heard) => JSON.stringify({ id, from: 0, to: 10, status: 'ok', target: 'vi', asr: 'funasr', seconds: 20, heard, sung: 0, sentences: 2,
+    cues: [{ id: 0, start: 0.5, end: 2, zh: heard, vi: 'cũ' }], debug: { features: { label: 'speech' } } });
+  fs.writeFileSync(path.join(WORK, 'cache', `${L}.0-10.vi.lyr.${V}.json`), okOld(L, 'てめえ死にてえのか。'));
+  fs.writeFileSync(path.join(WORK, 'cache', `${M}.0-10.vi.lyr.${V}.json`), okOld(M, '大家好，今天我们去吃火锅。'));
+  const asrL = asrCalls;
+  const l = await post(base(L, { target: 'vi', aac: aac(20) }));
+  const m = await post(base(M, { target: 'vi', aac: aac(16) }));
+  const j2 = await post(base(J, { target: 'vi', aac: aac(20) }));
+  t('cache "ok" cũ nghe ra tiếng Nhật: làm lại; tiếng Trung cũ và tiếng Nhật mới: dùng cache', () => {
+    assert.equal(l.status, 'ok', JSON.stringify(l)); assert.ok(!l.cached); assert.equal(l.src, 'ja');
+    assert.ok(m.cached, JSON.stringify(m)); assert.equal(m.cues[0].vi, 'cũ');
+    assert.ok(j2.cached, JSON.stringify(j2));
+    assert.equal(asrCalls, asrL + 1);
   });
 
   t('log server ghi nguồn tiếng Anh, và lần hiện bản chép không dịch', () => {

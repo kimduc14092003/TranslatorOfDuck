@@ -78,6 +78,20 @@ t('vlog có một câu hát: chỉ bỏ câu hát, giữ câu nói', () => {
   assert.equal(s.r.text, '今天我们来到了稻城亚丁这里的风景真的太美了');
   assert.ok(segmentCues(s.r).every(c => !c.zh.includes('自由')));
 });
+t('tiếng Nhật: câu cảm thán ngắn kéo dài không phải câu hát; câu hát dài thì có', () => {
+  // Đo thật 5/11 (phim, 8:11): "うんらん？" 4 chữ kana trong 1,8 s bị gắn ♪.
+  const cry = [W('うん', 491.9, 492.8), W('らん', 492.8, 493.6)];
+  const talk = Array.from('何言ってんだてめえ').map((c, i) => W(c, 497.2 + i * 0.25, 497.4 + i * 0.25));
+  const sing = Array.from('あなたのことをずっと').map((c, i) => W(c, 501 + i * 0.5, 501.48 + i * 0.5));
+  const r = { text: 'うんらん？何言ってんだてめえ。あなたのことをずっと', words: [...cry, ...talk, ...sing], segments: [
+    { start: 491.9, end: 493.6, text: 'うんらん？' }, { start: 497.2, end: 499.6, text: '何言ってんだてめえ。' }, { start: 501, end: 505.98, text: 'あなたのことをずっと' }] };
+  assert.deepEqual(splitSung(r).sentences.map(x => x.sung), [false, false, true]);
+});
+t('tiếng Nhật, tiếng Hàn: điệp khúc lặp là lặp lời; dấu ー đếm là một chữ', () => {
+  assert.equal(classifySpeech({}, { text: 'さよならさよならさよならさよなら', words: [] }).repeat, true);
+  assert.equal(classifySpeech({}, { text: '사랑해 사랑해 사랑해 사랑해', words: [] }).repeat, true);
+  assert.equal(classifySpeech({}, { text: 'すごーーーい', words: [W('すごーーーい', 0, 0.9)] }).medCharDur, 0.15);
+});
 t('chế độ lời bài hát, vlog có một câu hát: chỉ dòng hát được đánh dấu sung, dòng nói giữ nguyên', () => {
   // Câu nói 0,2 s/chữ, rồi một câu hát 0,6 s/chữ (như vlog có đoạn hát theo nhạc nền).
   const words = [W('今天', 0, 0.4), W('我们', 0.4, 0.8), W('去', 0.8, 1.0), W('吃', 1.0, 1.2), W('火锅。', 1.2, 1.6),
@@ -291,6 +305,26 @@ t('tiếng Anh: "Yeah." và "Huh?" là câu có nghĩa, giữ; "Um." thì bỏ',
   assert.equal(isFiller('Um.', undefined, true), true); assert.equal(isFiller('Uh, hmm.', undefined, true), true);
   assert.equal(isFiller('Yeah.', undefined, true), false); assert.equal(isFiller('Hey!', undefined, true), false);
   assert.equal(isFiller('yeah yeah'), true, 'tiếng Trung: như cũ');
+});
+// Giai đoạn 4: lời tiếng Nhật, tiếng Hàn. Trước đây đi đường tiếng Trung (câu lệnh "từ tiếng Trung"; chia dòng chỉ đếm chữ Hán nên
+// câu nhiều kana không bị cắt; dấu chấm sau chữ Hàn không hết câu).
+t('nhận ra nguồn tiếng Nhật, tiếng Hàn; câu tiếng Trung có một chữ kana vẫn là tiếng Trung', () => {
+  assert.equal(classifySpeech({}, { text: '断る。帰れ。てめえ死にてえのか。', words: [] }).src, 'ja');
+  assert.equal(classifySpeech({}, { text: '감사합니다. 여기 여기.', words: [] }).src, 'ko');
+  assert.equal(classifySpeech({}, { text: '这家店の招牌菜真的很好吃。', words: [] }).src, 'zh');
+  assert.equal(classifySpeech({}, { text: '今天去ユニクロ买了件衣服，真的很便宜。', words: [] }).src, 'zh');
+  // Bài hát tiếng Nhật: hashtag nhạc, chữ kéo dài 0,5 s/chữ.
+  const song = Array.from('あなたのことをずっとわすれない').map((c, i) => W(c, i * 0.5, i * 0.5 + 0.48));
+  assert.equal(classifySpeech({ hashtags: ['翻唱'] }, { text: 'あなたのことをずっとわすれない', words: song }).label, 'singing');
+  assert.equal(classifySpeech({}, { text: '大家好今天我们去吃火锅', words: [] }).src, 'zh');
+  for (const text of ['断る。帰れ。', '감사합니다.']) assert.equal(classifySpeech({}, { text, words: [] }).label, 'speech');
+});
+t('tiếng Hàn: dấu chấm sau chữ Hàn hết câu; dòng nhiều kana được chia theo độ dài', () => {
+  const ko = ['안녕하세요.', ' 오늘은', ' 날씨가', ' 좋네요.'].map((x, i) => W(x, 0.5 + i * 0.4, 0.88 + i * 0.4));
+  assert.deepEqual(resplitSentences({ text: '', segments: [], words: ko }).segments.map(x => x.text.trim()), ['안녕하세요.', '오늘은 날씨가 좋네요.']);
+  const ja = Array.from('きょうはとてもいいてんきなのでみんなでこうえんにいってあそびましょう').map((c, i) => W(c, i * 0.12, i * 0.12 + 0.11));
+  const cues = segmentCues({ words: ja });
+  assert.ok(cues.length >= 2 && cues.every(c => c.zh.length <= 17), JSON.stringify(cues.map(c => c.zh)));
 });
 t('sửa khoảng trắng câu tiếng Việt', () => {
   assert.equal(fixViText('  Chào  cả nhà ,hôm nay đi ăn lẩu . '), 'Chào cả nhà, hôm nay đi ăn lẩu.');

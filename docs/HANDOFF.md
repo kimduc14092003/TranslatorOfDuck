@@ -1587,6 +1587,36 @@ Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt
   - Không gọi: `fun-asr` (chỉ bất đồng bộ qua link công khai), ElevenLabs, Azure (chưa có key).
 - Chưa biết model nào đúng hơn (chưa nghe lại các đoạn chênh nhau). Chủ dự án chốt tạm 5/11: giữ `qwen-audio-3.1-asr-flash`. Dữ liệu của lượt đo đã xoá.
 
+## 6aw. Nguồn tiếng Nhật, tiếng Hàn (5/11, giai đoạn 4)
+
+- **Nhận ngôn ngữ nguồn** (`classifySpeech`, trường `src` của kết quả, tiếng Trung không ghi):
+  - `en`: số từ Latin nhiều hơn số chữ Hán, kana, Hàn (giai đoạn 3);
+  - `ko`: chữ Hàn nhiều hơn chữ Hán + kana và hơn số từ Latin;
+  - `ja`: ≥ 2 chữ hiragana và kana ≥ 20% chữ Hán + kana. Chỉ katakana thì không đủ: "今天去ユニクロ买了件衣服" vẫn là tiếng Trung.
+  - Trên 290 đoạn nhận dạng trong cache: 14 đoạn ja, 1 đoạn ko, còn lại như cũ.
+- **Dịch:** câu lệnh tiếng Việt, tiếng Anh ghi "từ tiếng Nhật / tiếng Hàn", dòng gốc gửi bằng khoá `ja` / `ko`, tên riêng phiên theo romaji / romanization; không có dòng Hán Việt, pinyin. Bản dịch còn kana hay chữ Hàn thì dịch lại (`hanOut` đếm cả kana, chữ Hàn). Câu lệnh tiếng Trung, tiếng Anh giữ từng byte (`prompt-golden-test`).
+- **Chia câu, chia dòng:** dấu chấm sau chữ Hàn là hết câu; dòng kana đếm chữ như chữ Hán.
+- **Lời hát:** độ kéo dài từng chữ đếm cả kana, chữ Hàn và dấu ー; lặp điệp khúc, lời nói trong bài hát cũng đếm các chữ này. Câu chủ yếu kana hay chữ Hàn cần ≥ 6 chữ mới xét là câu hát: đo thật, câu cảm thán "うんらん？" (4 chữ, 1,8 s) bị gắn ♪.
+- **Cache cũ:** kết quả `ok` không có `src`, không có `debug.features.kana`, mà `heard` có ≥ 3 kana hay chữ Hàn thì làm lại (`oldJaKo` trong `server.mjs`). Trên cache thật chỉ bắt 11 file, đều là tiếng Nhật thật.
+- **Kiểm:**
+  - `npm test` 14 bộ đều đạt (thêm ca tiếng Nhật, tiếng Hàn ở `test.mjs`, `source-test.mjs`);
+  - verifier hai vòng: chạy lại 290 đoạn nhận dạng × 2 chế độ bằng code cũ và mới, 578/580 lượt giống hệt; 2 lượt còn lại là đoạn trộn Trung, Anh, Nhật (7698003223789848803), chỉ đổi `src` sang ja, dòng sub giữ nguyên.
+- **Đo thật** (bộ video thử mục 2, phim 7703023641964907827, 8:10–9:00, `run.mjs --items 2`):
+
+  | Đích | Vế mất | Độ phủ | Đúng dòng | Lỗi | Sub đầu sau khi tua |
+  |---|---|---|---|---|---|
+  | vi | 0 | 100% (15/15) | 85,7% | 0 | 4,2 s |
+  | en | 0 | 100% (15/15) | 86% | 0 | 4,5 s |
+
+  - Đúng dòng thấp vì 7 lần chụp trống ở 491,9–493,6 s: câu đầu tiên sau khi tua đã hết trước khi bản dịch về. Tiếng Trung cũng vậy, không do tiếng Nhật.
+  - Phim trộn hai ngôn ngữ: đoạn có cả câu tiếng Trung lẫn tiếng Nhật được dịch bằng câu lệnh tiếng Nhật, câu tiếng Trung vẫn dịch đúng.
+  - Dữ liệu lượt đo đã xoá.
+- **Còn lại:**
+  - tiếng Hàn chưa có mốc từng chữ thật để kiểm luật lời hát và chia dòng;
+  - giọng kịch nói chậm (dưới 0,33 s/chữ thì an toàn; chậm hơn 2,5 lần bình thường mới bị ♪, verifier thử bằng cách kéo dài một đoạn thật);
+  - chưa có người đọc tiếng Nhật, tiếng Hàn duyệt bản dịch;
+  - `heard` chỉ có 40 chữ đầu: kết quả tiếng Nhật cũ mà 40 chữ đầu có < 3 kana thì không được làm lại (cache thật không có ca này).
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).
