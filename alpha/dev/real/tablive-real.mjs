@@ -50,8 +50,16 @@ try {
     if (playing) break;
     await sleep(500);
   }
+  // --seek-at giây --seek-to giây: tua video (giờ thử) ; --pause-at giây --pause-for giây: tạm dừng.
   const t0 = Date.now();
+  const acts = [];
+  if (a['seek-at']) acts.push({ at: Number(a['seek-at']) * 1000, run: () => page.evaluate((x) => { document.querySelector('video').currentTime = x; }, Number(a['seek-to'] || 0)), name: 'tua tới ' + (a['seek-to'] || 0) });
+  if (a['pause-at']) {
+    acts.push({ at: Number(a['pause-at']) * 1000, run: () => page.evaluate(() => document.querySelector('video').pause()), name: 'tạm dừng' });
+    acts.push({ at: (Number(a['pause-at']) + Number(a['pause-for'] || 5)) * 1000, run: () => page.evaluate(() => document.querySelector('video').play()), name: 'phát tiếp' });
+  }
   while (Date.now() - t0 < seconds * 1000) {
+    for (const x of acts) if (!x.done && Date.now() - t0 >= x.at) { x.done = true; await x.run().catch(() => {}); samples.push({ ms: Date.now() - t0, act: x.name }); }
     const s = await page.evaluate(() => {
       const v = document.querySelector('video');
       const host = [...document.querySelectorAll('div')].find((d) => d.shadowRoot && d.shadowRoot.querySelector('.badge'));
@@ -72,7 +80,7 @@ try {
 }
 fs.writeFileSync(path.join(out, 'samples.json'), JSON.stringify(samples, null, 1));
 let prev = '';
-for (const s of samples) { const k = s.sub + ' | ' + s.badge; if (k !== prev) { console.log(((s.ms / 1000).toFixed(1) + ' s').padStart(7), 'video', s.vt, '|', s.sub || '(trống)', '|', s.badge); prev = k; } }
+for (const s of samples) { if (s.act) { console.log('   ---', s.act); continue; } const k = s.sub + ' | ' + s.badge; if (k !== prev) { console.log(((s.ms / 1000).toFixed(1) + ' s').padStart(7), 'video', s.vt, '|', s.sub || '(trống)', '|', s.badge); prev = k; } }
 const withSub = samples.filter((s) => s.sub).length;
 console.log(`\n${samples.length} lần chụp, ${withSub} có sub. Server log: ${server.log}`);
 if (!a.keep) { fs.rmSync(out, { recursive: true, force: true }); console.log('đã xoá dữ liệu lượt thử'); } else console.log('giữ dữ liệu ở', out);

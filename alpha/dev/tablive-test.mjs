@@ -93,6 +93,31 @@ function loadBackground() {
   return { send, calls, toTab, session };
 }
 
+await t('dòng theo độ trễ riêng: dòng dịch lúc xem hiện sau lag; tua lại (lag 0) hiện đúng lúc nói', () => {
+  const cues = [{ at: 10000, until: 12000, lag: 8000, text: 'a' }, { at: 13000, until: 15000, lag: 8000, text: 'b' }];
+  assert.equal(L.current(cues, 12000), null);
+  assert.equal(L.current(cues, 18500).text, 'a');
+  assert.equal(L.current(cues, 21500).text, 'b');
+  cues[0].lag = 0;
+  assert.equal(L.current(cues, 10500).text, 'a');
+});
+
+await t('giờ video lúc câu được nghe: từ mẫu gần nhất trước đó, cộng thời gian đã phát; đang dừng thì không cộng', () => {
+  const s = [{ w: 1000, vt: 30, playing: true, rate: 1 }, { w: 1100, vt: 30.1, playing: true, rate: 1 }, { w: 1200, vt: 30.1, playing: false, rate: 1 }];
+  assert.equal(L.videoTimeAt(s, 1150).toFixed(2), '30.15');
+  assert.equal(L.videoTimeAt(s, 1700), 30.1);
+  assert.equal(L.videoTimeAt(s, 500), null);
+  assert.equal(L.videoTimeAt(s, 5000), null);
+  assert.equal(L.videoTimeAt([{ w: 0, vt: 10, playing: true, rate: 2 }], 500), 11);
+});
+
+await t('dòng trùng giờ: chiếm quá nửa dòng ngắn hơn thì coi là trùng', () => {
+  const x = { at: 45000, until: 48000 };
+  assert.equal(L.overlaps(x, 45400, 48600), true);
+  assert.equal(L.overlaps(x, 47500, 50000), false);
+  assert.equal(L.overlaps(x, 48000, 49000), false);
+});
+
 await t('popup bật: lấy mã luồng thu của tab, mở trang ẩn, tiêm lớp sub, gửi cài đặt cho trang ẩn, nhớ tab đang thu', async () => {
   const b = loadBackground();
   const r = await b.send({ type: 'tab-start', tabId: 7 });

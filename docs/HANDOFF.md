@@ -1678,6 +1678,16 @@ Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt
 
 - Còn lại: giọng dạy tiếng Trung chậm bị gắn ♪ (luật của đường tiếng Trung); chưa thử bằng cú bấm popup thật; chưa thử trang có nhạc nền liên tục (đường giữ câu ở server).
 
+### 6ay (tiếp). Sub theo giờ video (6/11)
+
+- Chủ dự án thử lần đầu thấy "dịch không đúng". Log cho thấy chữ nhận dạng và bản dịch đều đúng, nhưng: ô "Dịch sang" đang là English; sub theo đồng hồ máy nên trễ 8–10 s so với lời, và khi tua vẫn hiện nốt dòng của đoạn cũ.
+- **Sửa (`tab.js`):** trang có video thì ghi giờ video mỗi 100 ms; mỗi dòng gắn vào giờ video lúc câu được nghe (`videoTimeAt`), hiện theo giờ video + độ trễ riêng của dòng (`lag`).
+  - tạm dừng thì sub đứng yên;
+  - tua thì mọi dòng đã có bỏ độ trễ: tua lại chỗ đã dịch thì dòng hiện đúng lúc nói, dòng trước điểm tua không hiện lại;
+  - dòng mới trùng quá nửa thời gian với dòng đã có (nghe lại sau khi tua) thì bỏ (`overlaps`);
+  - không có video (trang chỉ có tiếng, video trong iframe): theo đồng hồ máy như cũ.
+- **Thử thật** (U4h59nMjb0A, 95 s, tạm dừng 6 s ở giây 30, tua từ 0:54 về 0:20): sub đứng yên khi dừng; sau khi tua, các dòng hiện đúng lúc nói, đúng thứ tự, không dòng lặp. Lần thử trước bản sửa: dòng nói ở 0:13 hiện lại ở 0:21, một dòng hiện hai lần.
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).

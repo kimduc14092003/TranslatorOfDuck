@@ -61,15 +61,29 @@
     const late = arrivedMs - cueStartMs;
     return late > delay ? Math.min(MAX_DELAY, Math.ceil((late + 500) / 500) * 500) : delay;
   }
-  // Dòng đang hiện lúc now (ms, đồng hồ máy): dòng đã tới giờ (at ≤ now) mới nhất, còn trong thời gian của nó (giữ ít nhất
-  // 1,2 s cho dòng ngắn). cues: [{ at, until, text }] theo thứ tự at.
+  // Dòng đang hiện lúc now (ms, theo đồng hồ hiển thị: giờ video khi trang có video, không thì đồng hồ máy). Mỗi dòng hiện từ
+  // at + lag tới until + lag (giữ ít nhất 1,2 s cho dòng ngắn); lag: độ trễ của dòng (dòng dịch lúc đang xem: độ trễ hiện tại;
+  // tua lại chỗ đã dịch: 0, hiện đúng lúc nói). Nhiều dòng cùng hợp: dòng bắt đầu muộn nhất. cues: [{ at, until, lag?, text }].
   function current(cues, now) {
     let pick = null;
     for (const c of cues) {
-      if (c.at > now) break;
-      if (now < Math.max(c.until, c.at + 1200)) pick = c;
+      const lag = c.lag || 0, from = c.at + lag;
+      if (from <= now && now < Math.max(c.until, c.at + 1200) + lag && (!pick || from >= pick.at + (pick.lag || 0))) pick = c;
     }
     return pick;
   }
-  root.TodLive = { RATE, W, PRE, MIN_NEW, MAX_WAIT, QUIET, findPause, MAX_DELAY, plan, advance, peak, wav, nextDelay, current };
+  // Giờ video (giây) lúc đồng hồ máy là at (ms), từ các mẫu tab.js ghi mỗi 100 ms: [{ w, vt, playing, rate }] theo thứ tự w. Mẫu
+  // gần nhất trước at, cộng thời gian đã phát từ đó nếu đang phát. Không có mẫu nào trước at (hay quá 2 s): null.
+  function videoTimeAt(samples, at) {
+    let s = null;
+    for (const x of samples) { if (x.w > at) break; s = x; }
+    if (!s || at - s.w > 2000) return null;
+    return s.vt + (s.playing ? ((at - s.w) / 1000) * (s.rate || 1) : 0);
+  }
+  // Dòng x đã chiếm phần lớn (> 50% dòng ngắn hơn) khoảng [a, b) (ms) chưa.
+  function overlaps(x, a, b) {
+    const o = Math.min(x.until, b) - Math.max(x.at, a);
+    return o > 0.5 * Math.max(1, Math.min(x.until - x.at, b - a));
+  }
+  root.TodLive = { RATE, W, PRE, MIN_NEW, MAX_WAIT, QUIET, findPause, MAX_DELAY, plan, advance, peak, wav, nextDelay, current, videoTimeAt, overlaps };
 })(globalThis);
