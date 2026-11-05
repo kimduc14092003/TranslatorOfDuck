@@ -1,15 +1,58 @@
-// Đường dự phòng cho trang bất kỳ (bản thử, nhánh claude/any-site-tab-audio): thu âm thanh của tab, gửi từng khúc cho server
-// nhận dạng và dịch, sub hiện trễ vài giây. Hàm dùng chung cho offscreen.js (thu, gửi) và tab.js (hiện sub); không đụng
-// chrome.*, nên chạy được trong Node để test (alpha/dev/tablive-test.mjs).
+// Đường dự phòng cho trang bất kỳ (bản thử, nhánh claude/any-site-tab-audio): thu âm thanh của tab, gửi cho server nhận dạng và
+// dịch, sub hiện trễ vài giây. Hàm dùng chung cho offscreen.js (thu, gửi) và tab.js (hiện sub); không đụng chrome.*, nên chạy
+// được trong Node để test (alpha/dev/tablive-test.mjs).
 (function (root) {
-  // Khúc k dịch các câu BẮT ĐẦU trong [kW, (k+1)W) (giây tính từ lúc bắt đầu thu). Âm thanh thu dư PRE giây phía trước để đủ
-  // chữ của câu vắt qua đầu khúc, dư TAIL giây phía sau để câu bắt đầu gần cuối khúc nói hết. Server cắt theo from/to
-  // (windowAsr), như đoạn video Douyin. Khúc ngắn thì sub ra sớm hơn; dư hai đầu làm tốn thêm (PRE + TAIL) / W tiền nhận dạng.
-  const W = 5, PRE = 1.5, TAIL = 1.5;
-  // tail: thu dư phía sau (giây), đổi được để thử (cài đặt liveTail): dư nhiều thì câu nói chậm ít bị cắt ở ranh giới khúc hơn,
-  // đổi lại sub trễ thêm đúng chừng đó.
-  function windowOf(k, tail = TAIL) {
-    return { k, from: k * W, to: (k + 1) * W, recStart: Math.max(0, k * W - PRE), recStop: (k + 1) * W + tail };
+  // Âm thanh giữ liên tục trong bộ đệm (16 kHz, một kênh). Con trỏ (cursor, giây tính từ lúc bắt đầu thu): mốc đầu phần chưa dịch.
+  // Mỗi lần gửi: âm thanh từ cursor − PRE tới hiện tại, dịch các câu bắt đầu từ cursor. Server bỏ lại câu cuối nếu còn đang nói
+  // lúc âm thanh hết, trả mốc bắt đầu câu đó (next): con trỏ dời tới đó, lần sau gửi lại câu ấy cùng âm thanh mới. Trước đây
+  // (khúc 5 s cố định) câu nói chậm bị cắt đôi ở ranh giới khúc (thử thật 6/11, HANDOFF §6ay).
+  const RATE = 16000;
+  // Gửi khi phần chưa dịch dài ≥ W giây và có ≥ MIN_NEW giây âm thanh mới kể từ lần gửi trước. Phần chưa dịch dài quá MAX_WAIT
+  // giây (một câu dài mãi không hết): gửi final, server dịch hết. BACK: lùi from một chút, mốc câu ở lượt nhận dạng sau có thể
+  // sớm hơn mốc next vài trăm ms.
+  // from là đúng con trỏ: server cắt theo từng chữ từ đó (liveTrim, lệch mốc 0,15 s).
+  const W = 5, PRE = 1.5, MIN_NEW = 2, MAX_WAIT = 15;
+  const r1 = (x) => Math.round(x * 10) / 10;
+  function plan(cursor, lastTo, now) {
+    if (now - cursor < W || now - lastTo < MIN_NEW) return null;
+    return { from: r1(cursor), to: r1(now), audioFrom: Math.max(0, cursor - PRE), final: now - cursor >= MAX_WAIT };
+  }
+  // Khoảng ngừng nói gần cuối nhất (giây tính từ đầu tail): cửa sổ 0,45 s có độ to (RMS) dưới 20% độ to cả đoạn, trong LOOK giây
+  // cuối. Cắt âm thanh ở đó thì câu cuối đã nói xong: gửi final, khỏi để server giữ câu (ASR kéo mốc chữ cuối tới hết âm thanh nên
+  // server hay tưởng câu còn dở: 17/21 lần giữ, sub trễ 14 s, thử thật 6/11). Không có (nhạc nền, nói liền): null.
+  const LOOK = 2.5, PAUSE = 0.45;
+  function rms(a, i0, i1) { let s = 0; for (let i = i0; i < i1; i++) s += a[i] * a[i]; return Math.sqrt(s / Math.max(1, i1 - i0)); }
+  function findPause(int16, rate = RATE) {
+    const win = Math.round(PAUSE * rate), hop = Math.round(0.05 * rate);
+    if (int16.length < win * 4) return null;
+    const all = rms(int16, 0, int16.length);
+    const lim = Math.max(0.2 * all, 0.005 * 32768);
+    for (let e = int16.length; e - win >= Math.max(0, int16.length - LOOK * rate); e -= hop) {
+      if (rms(int16, e - win, e) < lim) return (e - win / 2) / rate;
+    }
+    return null;
+  }
+  // Con trỏ sau một lần gửi (to: hết âm thanh đã gửi). Lỗi, hay server cũ không trả next: coi như đã dịch hết tới to.
+  function advance(cursor, to, res) {
+    const next = res && typeof res.next === 'number' ? res.next : to;
+    return Math.max(cursor, Math.min(next, to));
+  }
+  // Mức to nhất (0–1) của mẫu Int16: dưới QUIET suốt phần chưa dịch thì không gửi (khỏi trả tiền nhận dạng khúc im lặng).
+  const QUIET = 0.01;
+  function peak(int16) {
+    let m = 0;
+    for (let i = 0; i < int16.length; i++) { const v = Math.abs(int16[i]); if (v > m) m = v; }
+    return m / 32768;
+  }
+  // File WAV PCM 16 bit một kênh.
+  function wav(int16, rate = RATE) {
+    const out = new Uint8Array(44 + int16.length * 2), v = new DataView(out.buffer);
+    const str = (o, s) => { for (let i = 0; i < s.length; i++) out[o + i] = s.charCodeAt(i); };
+    str(0, 'RIFF'); v.setUint32(4, 36 + int16.length * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true);
+    v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, int16.length * 2, true);
+    for (let i = 0; i < int16.length; i++) v.setInt16(44 + i * 2, int16[i], true);
+    return out;
   }
   // Độ trễ hiển thị (ms): dòng hiện ở lúc người nói bắt đầu nói + delay, để các dòng giữ đúng nhịp với nhau. Dòng về muộn hơn
   // mốc đó thì tăng delay (làm tròn lên 0,5 s, tối đa 20 s); không giảm trong một lượt thu (sub nhảy sớm, muộn khó theo hơn).
@@ -17,12 +60,6 @@
   function nextDelay(delay, cueStartMs, arrivedMs) {
     const late = arrivedMs - cueStartMs;
     return late > delay ? Math.min(MAX_DELAY, Math.ceil((late + 500) / 500) * 500) : delay;
-  }
-  // Khúc im lặng (mức to nhất dưới ngưỡng suốt khúc): không gửi, khỏi trả tiền nhận dạng. levels: [[giây, mức 0–1], …].
-  const QUIET = 0.01;
-  function silent(levels, from, to) {
-    const xs = levels.filter(([t]) => t >= from && t <= to);
-    return xs.length > 0 && xs.every(([, m]) => m < QUIET);
   }
   // Dòng đang hiện lúc now (ms, đồng hồ máy): dòng đã tới giờ (at ≤ now) mới nhất, còn trong thời gian của nó (giữ ít nhất
   // 1,2 s cho dòng ngắn). cues: [{ at, until, text }] theo thứ tự at.
@@ -34,5 +71,5 @@
     }
     return pick;
   }
-  root.TodLive = { W, PRE, TAIL, MAX_DELAY, QUIET, windowOf, nextDelay, silent, current };
+  root.TodLive = { RATE, W, PRE, MIN_NEW, MAX_WAIT, QUIET, findPause, MAX_DELAY, plan, advance, peak, wav, nextDelay, current };
 })(globalThis);

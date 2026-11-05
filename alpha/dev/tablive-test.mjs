@@ -15,26 +15,51 @@ const L = ctx.TodLive;
 let n = 0;
 const t = async (name, fn) => { await fn(); n++; console.log('PASS ' + name); };
 
-await t('khúc thu: liền nhau, không hở; mỗi khúc thu dư hai đầu, khúc đầu không bắt đầu trước 0', () => {
-  const ws = [0, 1, 2, 3].map(k => L.windowOf(k));
-  assert.deepEqual(ws.map(w => [w.from, w.to]), [[0, 5], [5, 10], [10, 15], [15, 20]]);
-  assert.equal(ws[0].recStart, 0);
-  for (const w of ws.slice(1)) assert.ok(w.recStart < w.from && w.recStop > w.to);
-  // Khúc sau bắt đầu thu trước khi khúc trước dừng: không có quãng nào không được thu.
-  for (let i = 1; i < ws.length; i++) assert.ok(ws[i].recStart < ws[i - 1].recStop);
+await t('kế hoạch gửi: chờ đủ 5 s chưa dịch và 2 s âm thanh mới; gửi từ con trỏ, âm thanh dư 1,5 s phía trước', () => {
+  assert.equal(L.plan(0, 0, 4.9), null);
+  assert.equal(JSON.stringify(L.plan(0, 0, 5.04)), JSON.stringify({ from: 0, to: 5, audioFrom: 0, final: false }));
+  // Câu cuối bị giữ lại ở 8,2: lần sau gửi lại từ 7,9 khi đã có thêm 2 s mới và phần chưa dịch đủ 5 s.
+  assert.equal(L.plan(8.2, 10, 11.5), null);
+  assert.equal(L.plan(8.2, 10, 13.25).from, 8.2);
+  assert.equal(L.plan(8.2, 10, 13.25).audioFrom.toFixed(1), '6.7');
+  // Một câu dài mãi không hết: sau 15 s thì gửi final (server dịch hết).
+  assert.equal(L.plan(20, 33, 35.1).final, true);
+});
+
+await t('khoảng ngừng nói: tìm cái gần cuối nhất trong 2,5 s cuối; nói liền (không ngừng) thì không có', () => {
+  const R = L.RATE, tone = (sec, amp) => Array.from({ length: Math.round(sec * R) }, (_, i) => Math.round(amp * Math.sin(i / 3)));
+  // nói 3 s, ngừng 0,6 s (từ 3 tới 3,6), nói tiếp 1 s
+  const a = new Int16Array([...tone(3, 8000), ...tone(0.6, 50), ...tone(1, 8000)]);
+  const p = L.findPause(a);
+  assert.ok(p > 3 && p < 3.6, String(p));
+  assert.equal(L.findPause(new Int16Array(tone(5, 8000))), null);
+  // ngừng xa hơn 2,5 s trước cuối: không tính
+  assert.equal(L.findPause(new Int16Array([...tone(1, 8000), ...tone(0.5, 50), ...tone(3, 8000)])), null);
+});
+
+await t('con trỏ sau lần gửi: dời tới next server trả (không lùi, không vượt to); lỗi hay server cũ: tới to', () => {
+  assert.equal(L.advance(5, 12, { next: 9.4 }), 9.4);
+  assert.equal(L.advance(5, 12, { next: 3 }), 5);
+  assert.equal(L.advance(5, 12, { next: 20 }), 12);
+  assert.equal(L.advance(5, 12, null), 12);
+  assert.equal(L.advance(5, 12, {}), 12);
+});
+
+await t('WAV 16 bit một kênh 16 kHz; mức to nhất để bỏ khúc im lặng', () => {
+  const pcm = new Int16Array([0, 1000, -32768, 32767]);
+  const w = L.wav(pcm);
+  assert.equal(w.length, 44 + 8);
+  assert.equal(String.fromCharCode(...w.slice(0, 4)) + String.fromCharCode(...w.slice(8, 12)), 'RIFFWAVE');
+  const v = new DataView(w.buffer);
+  assert.equal(v.getUint32(24, true), 16000); assert.equal(v.getUint16(34, true), 16); assert.equal(v.getInt16(46, true), 1000);
+  assert.ok(L.peak(new Int16Array([10, -200, 50])) < L.QUIET);
+  assert.ok(L.peak(pcm) > 0.99);
 });
 
 await t('độ trễ hiển thị: dòng về muộn thì tăng (tròn 0,5 s, tối đa 20 s), về sớm thì giữ', () => {
   assert.equal(L.nextDelay(6000, 0, 4000), 6000);
   assert.equal(L.nextDelay(6000, 0, 7200), 8000);
   assert.equal(L.nextDelay(6000, 0, 60000), 20000);
-});
-
-await t('khúc im lặng: không gửi; có tiếng ở bất kỳ lúc nào trong khúc: gửi; không có mẫu mức âm: gửi', () => {
-  const lv = [[0, 0.001], [1, 0.002], [2, 0.003], [3, 0.2], [4, 0.001]];
-  assert.equal(L.silent(lv, 0, 2.5), true);
-  assert.equal(L.silent(lv, 0, 4), false);
-  assert.equal(L.silent([], 0, 4), false);
 });
 
 await t('dòng đang hiện: dòng mới nhất đã tới giờ, còn trong thời gian của nó (dòng ngắn giữ ít nhất 1,2 s)', () => {

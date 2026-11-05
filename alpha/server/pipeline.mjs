@@ -118,13 +118,13 @@ export async function checkFfmpeg() {
 export async function extractAudio(buf, kind = 'mp4') {
   const bin = await resolveFfmpeg();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tod-'));
-  const src = path.join(dir, kind === 'aac' ? 'in.aac' : kind === 'webm' ? 'in.webm' : 'in.mp4');
+  const src = path.join(dir, ['aac', 'webm', 'wav'].includes(kind) ? 'in.' + kind : 'in.mp4');
   const out = path.join(dir, 'out.mp3');
   fs.writeFileSync(src, buf);
   try {
     // aresample first_pts=0: nếu track âm thanh bắt đầu muộn hơn mốc 0 của video (edit list), chèn khoảng lặng
     // tương ứng; không thì mọi mốc thời gian bị sớm đúng bằng khoảng đó và sub hiện trước lời nói.
-    const run = await new Promise((resolve) => execFile(bin, ['-v', 'error', '-y', '-i', src, '-t', String(kind === 'aac' || kind === 'webm' ? 120 : MAX_SECONDS), '-vn', '-ac', '1', '-ar', '16000',
+    const run = await new Promise((resolve) => execFile(bin, ['-v', 'error', '-y', '-i', src, '-t', String(['aac', 'webm', 'wav'].includes(kind) ? 120 : MAX_SECONDS), '-vn', '-ac', '1', '-ar', '16000',
       '-af', 'aresample=async=1:first_pts=0',
       '-c:a', 'libmp3lame', '-b:a', '48k', out], (err, _o, stderr) => resolve({ err, stderr: String(stderr || '') })));
     // Mã lỗi dạng chữ (ENOENT, EACCES): không chạy được ffmpeg.
@@ -1020,6 +1020,32 @@ export function cuesFromAsr(meta, asr, opts = {}) {
 // opts (video dài, từng đoạn): { kind: 'aac', offset: giây bắt đầu của âm thanh, from, to, context }; signal: huỷ giữa chừng.
 // opts.asrCache { load(), save(x) }: kết quả nhận dạng giọng nói của đúng âm thanh này (server giữ theo mã băm). Lần
 // trước dịch lỗi (sau khi đã trả tiền ASR) thì lần gửi lại chỉ còn bước dịch.
+// Đường dự phòng (âm thanh tab, opts.live): câu cuối còn đang nói lúc khúc âm thanh hết (chữ cuối kết thúc trong 0,8 s cuối) thì
+// không dịch lần này, vì nhận dạng trên âm thanh bị cắt ra câu cụt ("我的名。" rồi khúc sau "名字 | 是乐乐", thử thật 6/11). Trả mốc
+// bắt đầu câu đó (next, giây trong thời gian thu): extension gửi lại từ mốc ấy cùng âm thanh mới. Chỉ xét câu bắt đầu từ from.
+export const LIVE_OPEN = 0.8;
+export function liveHold(asr, offset, seconds, from) {
+  const end = offset + seconds;
+  const segs = (asr.segments || []).filter(x => x.text && x.text.trim() && x.start + offset >= from - 0.05);
+  const last = segs[segs.length - 1];
+  const lastWord = (asr.words || []).filter(w => w.end > w.start).reduce((m, w) => Math.max(m, w.end), 0);
+  if (!last || Math.max(last.end, lastWord) + offset <= end - LIVE_OPEN) return { next: round(end, 3), open: false };
+  return { next: round(last.start + offset, 3), open: true };
+}
+
+// live: lượt nhận dạng sau có thể chia câu khác lượt trước ("你是" | "美国人" thành "你是美国人" bắt đầu trước con trỏ: cả câu bị bỏ,
+// thử thật 6/11). Cắt theo từng chữ: câu bắt đầu trước from mà còn chữ từ from trở đi thì giữ các chữ đó (lệch mốc 0,15 s).
+export function liveTrim(asr, offset, from) {
+  const words = (asr.words || []);
+  const segments = (asr.segments || []).map((x) => {
+    if (x.start + offset >= from - 0.05) return x;
+    if (x.end + offset <= from + 0.1) return x;   // xong trước con trỏ: windowAsr bỏ
+    const ws = words.filter(w => w.start >= x.start - 0.05 && w.end <= x.end + 0.05 && w.start + offset >= from - 0.15);
+    return ws.length ? { start: ws[0].start, end: ws[ws.length - 1].end, text: ws.map(w => w.text).join('').replace(/^\s+/, '') } : x;
+  });
+  return { ...asr, segments };
+}
+
 export async function makeSubtitles(meta, buf, opts = {}) {
   // Dịch đang tạm dừng (hết lượt trong ngày, key/model sai): báo ngay, khỏi tốn tiền nhận dạng giọng nói cho đoạn không dịch được.
   const paused = pausedError(mtService());
@@ -1034,7 +1060,10 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   let asr = saved ? saved.asr : resplitSentences(await netCtx.run({ calls: net.asr }, () => transcribe(audio.mp3, opts.signal)));
   if (!saved) opts.asrCache?.save({ seconds: audio.seconds, asr });
   const tAsr = Date.now();
-  const prep = cuesFromAsr(meta, asr, opts);
+  // live: chỉ dịch các câu bắt đầu trước câu còn dở (opts.final: dịch hết, extension đã chờ câu đó quá lâu).
+  const hold = opts.live && opts.from != null ? liveHold(asr, opts.offset || 0, audio.seconds, opts.from) : null;
+  if (hold && hold.open && !opts.final) opts = { ...opts, to: Math.max(opts.from, hold.next) };
+  const prep = cuesFromAsr(meta, opts.live && opts.from != null ? liveTrim(asr, opts.offset || 0, opts.from) : asr, opts.live ? { ...opts, from: Math.max(0, opts.from - 0.2) } : opts);
   asr = prep.asr;
   const { before, cls, split, song } = prep;
   const cues = prep.cues;
@@ -1042,7 +1071,8 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   // extension không dùng chung nó giữa hai chế độ (noSinging, modeFree).
   // src: ngôn ngữ nguồn khi không phải tiếng Trung (giai đoạn 3: 'en'); cũng nằm trong source để đổi ngôn ngữ đích dùng lại.
   const base = { asr: asr.provider, ...(asr.model && asr.model !== FUNASR_MODEL ? { asrModel: asr.model } : {}), ...(saved ? { asrCached: true } : {}), ...(cls.src && cls.src !== 'zh' ? { src: cls.src } : {}), seconds: audio.seconds, heard: (asr.text || '').slice(0, 40), sung: split.sung, sentences: split.total,
-    ...(song ? { song: true } : {}), debug: { features: cls, sentences: split.sentences, net } };
+    ...(song ? { song: true } : {}), ...(hold ? { next: hold.open && !opts.final ? hold.next : round((opts.offset || 0) + audio.seconds, 3) } : {}),
+    debug: { features: cls, sentences: split.sentences, net } };
   const skip = (label) => ({ status: 'skipped', label, ...base, timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio } });
   if (prep.skip) return skip(prep.skip);
   // source: đủ để dựng lại kết quả ở ngôn ngữ đích khác mà không nhận dạng lại (retranslate, server.mjs: yêu cầu retarget).

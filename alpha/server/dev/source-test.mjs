@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ffmpeg = process.env.FFMPEG || (await import('ffmpeg-static').then(m => m.default).catch(() => null)) || 'ffmpeg';
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'tod-source-'));
+const wavAt = (sec) => { const f = path.join(TMP, `${sec}.wav`); execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=440:duration=${sec}`, '-ar', '16000', '-ac', '1', f]); return fs.readFileSync(f).toString('base64'); };
 const webm = (sec) => { const f = path.join(TMP, `${sec}.webm`); execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=440:duration=${sec}`, '-c:a', 'libopus', f]); return fs.readFileSync(f).toString('base64'); };
 const aac = (sec) => { const f = path.join(TMP, `${sec}.aac`); execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=440:duration=${sec}`, '-c:a', 'aac', f]); return fs.readFileSync(f).toString('base64'); };
 
@@ -221,6 +222,17 @@ try {
     assert.equal(tb.status, 'ok', JSON.stringify(tb)); assert.equal(tb.id, T);
     assert.ok(tb.cues.length >= 1 && tb.cues.every(c => c.start >= 5 && c.start < 10), JSON.stringify(tb.cues));
     assert.equal(bad.status, 400);
+  });
+
+  // 11. Âm thanh tab WAV, câu cuối còn dở lúc âm thanh hết: không dịch câu đó, trả next = mốc bắt đầu câu; final: dịch hết.
+  const T2 = 'tab123456789013';
+  const held = await post(base(T2, { target: 'vi', aac: wavAt(5.5), fmt: 'wav', from: 0, to: 5.5, audioStart: 0 }));
+  const fin = await post(base('tab123456789014', { target: 'vi', aac: wavAt(5.5), fmt: 'wav', from: 0, to: 5.5, audioStart: 0, final: true }));
+  t('âm thanh tab: câu cuối còn dở thì giữ lại (next), final thì dịch hết', () => {
+    assert.equal(held.status, 'ok', JSON.stringify(held));
+    assert.deepEqual(held.cues.map(c => c.zh), EN_TRIM.slice(0, 2));
+    assert.ok(held.next > 4 && held.next < 5.5, String(held.next));
+    assert.deepEqual(fin.cues.map(c => c.zh), EN_TRIM);
   });
 
   t('log server ghi nguồn tiếng Anh, và lần hiện bản chép không dịch', () => {

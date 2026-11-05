@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { classifySpeech, segmentCues, fixViText, splitSung, extractAudio, windowAsr, resplitSentences, speechBefore, lyricCues, isFiller, QUIET_FILLER, cuesFromAsr } from '../pipeline.mjs';
+import { liveHold, liveTrim, classifySpeech, segmentCues, fixViText, splitSung, extractAudio, windowAsr, resplitSentences, speechBefore, lyricCues, isFiller, QUIET_FILLER, cuesFromAsr } from '../pipeline.mjs';
 
 const W = (text, start, end) => ({ text, start, end });
 let n = 0;
@@ -108,6 +108,19 @@ t('dấu chấm ASCII sau chữ Hán là hết câu (video dạy tiếng Hàn xe
   const words = [W('我', 0, 0.3), W('是', 0.3, 0.6), W('大', 0.6, 0.9), W('学', 0.9, 1.2), W('生.', 1.2, 1.6), W('저는', 2.2, 2.8), W(' 회사원', 2.8, 3.6), W('이에요.', 3.6, 4.4)];
   const r = resplitSentences({ text: '我是大学生.저는 회사원이에요.', words, segments: [{ start: 0, end: 4.4, text: '我是大学生.저는 회사원이에요.' }] });
   assert.deepEqual(r.segments.map(x => x.text.trim()), ['我是大学生.', '저는 회사원이에요.']);
+});
+t('âm thanh tab (live): câu cuối còn đang nói lúc âm thanh hết thì giữ lại, trả mốc bắt đầu của nó', () => {
+  // Âm thanh 6,5 s bắt đầu ở 23,5 (giây thu); câu cuối nói tới 6,3 s: còn dở.
+  const asr = { segments: [{ start: 1.5, end: 3, text: '我叫玛丽，' }, { start: 4.2, end: 6.3, text: '我的名' }],
+    words: [W('我', 1.5, 1.8), W('叫', 1.8, 2.1), W('玛丽，', 2.1, 3), W('我', 4.2, 4.5), W('的', 4.5, 4.8), W('名', 4.8, 6.3)] };
+  assert.deepEqual(liveHold(asr, 23.5, 6.5, 25), { next: 27.7, open: true });
+  // Câu cuối đã xong 1 s trước khi hết âm thanh: dịch hết, next là hết âm thanh.
+  assert.deepEqual(liveHold({ ...asr, segments: asr.segments.slice(0, 1), words: asr.words.slice(0, 3) }, 23.5, 6.5, 25), { next: 30, open: false });
+  // Lượt sau chia câu khác: "你是美国人" bắt đầu trước con trỏ (66,46): giữ các chữ từ con trỏ, không bỏ cả câu.
+  const t2 = liveTrim({ segments: [{ start: 0.5, end: 3.2, text: '你是美国人。' }], words: [W('你', 0.5, 0.8), W('是', 0.8, 1.6), W('美国', 1.65, 2.5), W('人。', 2.5, 3.2)] }, 64.8, 66.46);
+  assert.deepEqual(t2.segments, [{ start: 1.65, end: 3.2, text: '美国人。' }]);
+  // Không câu nào bắt đầu từ from: không giữ.
+  assert.deepEqual(liveHold({ segments: [], words: [] }, 0, 5, 0), { next: 5, open: false });
 });
 t('tiếng Nhật, tiếng Hàn: điệp khúc lặp là lặp lời; dấu ー đếm là một chữ', () => {
   assert.equal(classifySpeech({}, { text: 'さよならさよならさよならさよなら', words: [] }).repeat, true);

@@ -1659,6 +1659,25 @@ Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt
   - sang trang web khác trong cùng tab thì Chrome không cho tiêm lại lớp sub (activeTab mất); âm thanh vẫn thu;
   - chưa thử bằng cú bấm popup thật trên Chrome của chủ dự án (lúc thử tự động dùng cờ `--allowlisted-extension-id` và bản sao có quyền mọi trang).
 
+### 6ay (tiếp). Sửa câu bị cắt ở ranh giới khúc (6/11)
+
+- **Bỏ khúc 5 s cố định.** Trang ẩn giữ âm thanh liên tục trong bộ đệm 90 s (16 kHz, gửi WAV, `fmt: 'wav'`) và một con trỏ: mốc đầu phần chưa dịch.
+  - Khi phần chưa dịch đủ 5 s và có thêm ≥ 2 s mới: gửi âm thanh từ con trỏ − 1,5 s tới hiện tại (`tablive.js` `plan`).
+  - Có khoảng ngừng nói ≥ 0,45 s trong 2,5 s cuối (độ to dưới 20% cả đoạn): cắt ở đó, gửi `final` (`findPause`).
+  - Không có khoảng ngừng (nhạc nền, nói liền): server giữ câu cuối nếu chữ cuối kết thúc trong 0,8 s cuối, trả `next` = mốc bắt đầu câu đó; con trỏ dời tới `next` (`liveHold`).
+  - Phần chưa dịch dài quá 15 s thì gửi `final`.
+- **Server cắt theo từng chữ** từ con trỏ (`liveTrim`), vì lượt nhận dạng sau có thể chia câu khác lượt trước: trước đó "你是美国人" bắt đầu trước con trỏ bị bỏ cả câu.
+- **Thử thật** (75 s mỗi video, dịch sang tiếng Việt):
+
+  | Video | Lần gửi | Giữ câu | Có sub | Trễ | Ghi chú |
+  |---|---|---|---|---|---|
+  | M4pc8Epwens, khúc 5 s cố định (trước) | 15 | — | 118/149 | 9,5 s | câu cắt đôi ở ranh giới |
+  | M4pc8Epwens, chỉ giữ câu ở server | 21 | 17 | 102/149 | 14 s | ASR kéo mốc chữ cuối tới hết âm thanh nên gần như lần nào cũng giữ; mất chữ khi lượt sau chia câu khác |
+  | M4pc8Epwens, bản cuối | 17 | 1 | 104/149 | 8 s | video dạy rất chậm, ngừng giữa các chữ lâu như giữa các câu: vẫn vụn ("我的名字。" \| "是乐乐") |
+  | U4h59nMjb0A (vlog dạy tiếng, nói thường), bản cuối | 16 | 1 | 125/149 | 8,5 s | câu liền, không thấy mất chữ |
+
+- Còn lại: giọng dạy tiếng Trung chậm bị gắn ♪ (luật của đường tiếng Trung); chưa thử bằng cú bấm popup thật; chưa thử trang có nhạc nền liên tục (đường giữ câu ở server).
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).

@@ -135,7 +135,7 @@ async function handleSubtitles(req, res) {
   // id "tab<số>": âm thanh thu từ tab của trang bất kỳ (đường dự phòng, extension tab.js/offscreen.js); mốc from/to tính từ lúc
   // bắt đầu thu, âm thanh là WebM/Opus (fmt: 'webm') gửi trong trường aac.
   if (!/^(?:tab)?\d{6,25}$/.test(id) || !(chunked || typeof meta.b64 === 'string')) return send(res, 400, { error: 'need id (digits) and aac or b64' });
-  if (meta.fmt != null && meta.fmt !== 'aac' && meta.fmt !== 'webm') return send(res, 400, { error: 'fmt must be aac or webm' });
+  if (meta.fmt != null && !['aac', 'webm', 'wav'].includes(meta.fmt)) return send(res, 400, { error: 'fmt must be aac, webm or wav' });
   if (chunked && !(num(meta.from) && num(meta.to) && meta.to > meta.from && (retarget || num(meta.audioStart)))) return send(res, 400, { error: 'need from < to and audioStart' });
   const span = (a, b) => `${a}-${b}`;
   const cacheFile = (sp, kind = 'vi') => path.join(CACHE, `${id}.${sp ? sp + '.' : ''}${kind}.${PIPELINE_VERSION}.json`);
@@ -214,7 +214,7 @@ async function handleSubtitles(req, res) {
     if (process.env.TOD_DUMP && buf) {
       const dir = path.join(CACHE, '..', 'dump');
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, path.basename(file, '.json') + (chunked ? `.at${meta.audioStart}.${meta.fmt === 'webm' ? 'webm' : 'aac'}` : '.mp4')), Buffer.from(chunked ? meta.aac : meta.b64, 'base64'));
+      fs.writeFileSync(path.join(dir, path.basename(file, '.json') + (chunked ? `.at${meta.audioStart}.${meta.fmt || 'aac'}` : '.mp4')), Buffer.from(chunked ? meta.aac : meta.b64, 'base64'));
     }
     let opts = {}, later = false;
     if (chunked) {
@@ -266,7 +266,7 @@ async function handleSubtitles(req, res) {
       // Khi bật rút gọn (CONDENSE): mẩu nhanh, đoạn dịch sẵn (video kế tiếp) và đoạn gấp (chứa hay sắp tới chỗ đang xem: urgent) bỏ lượt rút gọn: bớt một
       // lần gọi model, xong sớm hơn. Đo 2/11 trên 503 đoạn trong cache: có rút gọn thì dịch mất 4,0 s (trung vị) thay vì 1,8 s.
       // Đoạn gấp là lúc đang trễ (vừa tua, mạng chậm): sub sớm hơn ~2 s đáng hơn dòng ngắn hơn.
-      opts = { kind: meta.fmt === 'webm' ? 'webm' : 'aac', offset: retarget ? meta.from : meta.audioStart, from: meta.from, to: meta.to, context, condense: CONDENSE && !quick && meta.prefetch !== true && meta.urgent !== true };
+      opts = { kind: meta.fmt || 'aac', offset: retarget ? meta.from : meta.audioStart, from: meta.from, to: meta.to, context, condense: CONDENSE && !quick && meta.prefetch !== true && meta.urgent !== true };
       // Rút gọn sau (extension từ 0.2.42 gửi condenseLater: true cùng stream: true): đoạn gấp, dịch sẵn vẫn trả kết quả ngay như
       // trên, rồi mới rút gọn dòng dài; bản rút gọn gửi thêm một dòng { condensed: [dòng…] } sau dòng kết quả, và ghi đè vào cache.
       // Extension chỉ thay những dòng chưa hiện (chủ dự án 4/11: giữ sub ra sớm, ROADMAP §6).
@@ -274,6 +274,8 @@ async function handleSubtitles(req, res) {
     }
     opts.lyrics = lyrics;
     opts.target = target;
+    // Đường dự phòng (id tab…): giữ câu cuối còn dở cho lần gửi sau (pipeline.mjs liveHold); final: dịch hết.
+    if (chunked && id.startsWith('tab')) { opts.live = true; opts.final = meta.final === true; }
     // Kết quả nhận dạng giọng nói giữ theo mã băm âm thanh (cùng đoạn mà gửi dư khác nhau thì âm thanh, mốc thời gian
     // khác nhau): dịch lỗi rồi extension gửi lại thì không trả tiền ASR lần nữa. Có kết quả cuối thì xoá, trừ đoạn có câu
     // hát (cùng điều kiện noSinging): đổi chế độ lời bài hát thì đoạn đó phải làm lại, giữ ASR để khỏi trả tiền lần nữa.

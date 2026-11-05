@@ -1,7 +1,7 @@
 // Thử đường dự phòng (âm thanh tab, trang bất kỳ) trên một trang thật: server đo riêng (cổng 8788, cache trống), Chromium riêng
 // (cổng 9334, hồ sơ tạm) với cờ --allowlisted-extension-id để bật thu âm thanh tab không cần bấm popup. Ghi mỗi 0,5 s: giờ video,
 // chữ sub, nhãn trễ; xong in tóm tắt và xoá dữ liệu (--keep để giữ).
-//   node tablive-real.mjs <url trang> [--seconds 90] [--target vi|en] [--tail giây] [--keep] [--out <thư mục>]
+//   node tablive-real.mjs <url trang> [--seconds 90] [--target vi|en] [--keep] [--out <thư mục>]
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -38,7 +38,7 @@ try {
   if (!sw.url().includes(extId)) throw new Error('id extension tính ra khác: ' + sw.url());
   // Không --mute-audio (tắt cả âm thanh thu được): thay vào đó trang ẩn không phát lại ra loa (liveMonitor: false), và bật thu
   // ngay khi trang vừa tải, trước khi video kịp phát ra loa (đang thu thì Chrome không phát tiếng tab).
-  await setSettings(sw, { server: server.url, target, liveMonitor: false, ...(a.tail ? { liveTail: Number(a.tail) } : {}) });
+  await setSettings(sw, { server: server.url, target, liveMonitor: false });
   const page = ctx.pages()[0] || await ctx.newPage();
   await page.goto('about:blank#tod');
   const r = await sw.evaluate(async () => { const [t] = await chrome.tabs.query({ active: true }); return tabStart(t.id); });
