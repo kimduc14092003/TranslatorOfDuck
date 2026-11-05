@@ -87,6 +87,28 @@ t('tiếng Nhật: câu cảm thán ngắn kéo dài không phải câu hát; c�
     { start: 491.9, end: 493.6, text: 'うんらん？' }, { start: 497.2, end: 499.6, text: '何言ってんだてめえ。' }, { start: 501, end: 505.98, text: 'あなたのことをずっと' }] };
   assert.deepEqual(splitSung(r).sentences.map(x => x.sung), [false, false, true]);
 });
+t('tiếng Hàn dạy nói chậm (không hashtag nhạc): không câu nào là câu hát, chế độ thường không mất câu', () => {
+  // Đo thật 5/11 (video dạy tiếng Hàn): mốc kết thúc từ kéo tới từ sau, câu nói chậm 0,4–1,2 s/chữ bị gắn ♪.
+  const words = [W(' 저는', 1.11, 2.35), W(' 중국', 2.35, 3.35), W(' 사람', 3.35, 3.91), W('입니다.', 3.91, 5.15), W('我是', 5.43, 5.75), W('中国人。', 5.75, 6.95),
+    W(' 어디', 10.91, 11.87), W('에서', 11.87, 12.59), W(' 오', 12.59, 12.87), W('셨', 12.87, 13.21), W('어요?', 13.21, 14.51)];
+  const r = { text: '저는 중국 사람입니다.我是中国人。어디에서 오셨어요?', words, segments: [
+    { start: 1.11, end: 5.15, text: '저는 중국 사람입니다.' }, { start: 5.43, end: 6.95, text: '我是中国人。' }, { start: 10.91, end: 14.51, text: '어디에서 오셨어요?' }] };
+  for (const lyrics of [true, false]) {
+    const p = cuesFromAsr({ desc: '韩语日常口语 #韩语学习', hashtags: [] }, r, { lyrics });
+    assert.equal(p.cls.src, 'ko'); assert.ok(!p.skip, p.skip);
+    assert.equal(p.cues.length, 3, JSON.stringify(p.cues)); assert.ok(p.cues.every(c => !c.sung), JSON.stringify(p.cues));
+  }
+  // Có hashtag nhạc thì vẫn xét câu hát theo độ kéo dài; chế độ thường cũng không bỏ dòng nào (dạy tiếng Hàn qua bài hát).
+  assert.ok(cuesFromAsr({ desc: '', hashtags: ['翻唱'] }, r, { lyrics: true }).split.sung > 0);
+  const plain = cuesFromAsr({ desc: '学韩语歌 #韩语歌曲', hashtags: [] }, r, { lyrics: false });
+  assert.ok(!plain.skip, plain.skip); assert.equal(plain.cues.length, 3, JSON.stringify(plain.cues));
+});
+t('dấu chấm ASCII sau chữ Hán là hết câu (video dạy tiếng Hàn xen câu tiếng Trung)', () => {
+  // Đo thật 5/11: "我是大学生.저는 회사원이에요." thành một dòng.
+  const words = [W('我', 0, 0.3), W('是', 0.3, 0.6), W('大', 0.6, 0.9), W('学', 0.9, 1.2), W('生.', 1.2, 1.6), W('저는', 2.2, 2.8), W(' 회사원', 2.8, 3.6), W('이에요.', 3.6, 4.4)];
+  const r = resplitSentences({ text: '我是大学生.저는 회사원이에요.', words, segments: [{ start: 0, end: 4.4, text: '我是大学生.저는 회사원이에요.' }] });
+  assert.deepEqual(r.segments.map(x => x.text.trim()), ['我是大学生.', '저는 회사원이에요.']);
+});
 t('tiếng Nhật, tiếng Hàn: điệp khúc lặp là lặp lời; dấu ー đếm là một chữ', () => {
   assert.equal(classifySpeech({}, { text: 'さよならさよならさよならさよなら', words: [] }).repeat, true);
   assert.equal(classifySpeech({}, { text: '사랑해 사랑해 사랑해 사랑해', words: [] }).repeat, true);

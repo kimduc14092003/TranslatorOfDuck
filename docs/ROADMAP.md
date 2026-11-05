@@ -232,7 +232,8 @@ Tới khi chọn model nhận dạng cuối (giai đoạn 3), bảng điểm dù
 
 ### Giai đoạn 4: Mở ra nhiều ngôn ngữ nguồn
 
-> **Trạng thái 5/11 (tiếng Nhật, tiếng Hàn, phía server):** đoạn nói tiếng Nhật, tiếng Hàn được nhận ra và dịch sang tiếng Việt, tiếng Anh với câu lệnh ghi đúng ngôn ngữ nguồn; bài hát tiếng Nhật, tiếng Hàn có ♪; kết quả tiếng Nhật cũ trong cache được làm lại (HANDOFF §6aw). Đo thật đoạn tiếng Nhật của phim trong bộ video thử: 0 vế mất, độ phủ 100%, 0 lỗi. Tiếng Trung không đổi (580 lượt chạy lại trên cache). Chưa làm: mục 1–5 và 7; tiếng Hàn chưa có video thật để đo; chưa có người đọc được tiếng Nhật, tiếng Hàn duyệt bản dịch.
+> **Trạng thái 5/11 (tiếng Nhật, tiếng Hàn, phía server):** đoạn nói tiếng Nhật, tiếng Hàn được nhận ra và dịch sang tiếng Việt, tiếng Anh với câu lệnh ghi đúng ngôn ngữ nguồn; bài hát tiếng Nhật, tiếng Hàn có ♪; kết quả tiếng Nhật cũ trong cache được làm lại (HANDOFF §6aw). Đo thật đoạn tiếng Nhật của phim trong bộ video thử: 0 vế mất, độ phủ 100%, 0 lỗi. Tiếng Trung không đổi (580 lượt chạy lại trên cache). Chưa làm: mục 1–5 và 7; chưa có người đọc được tiếng Nhật, tiếng Hàn duyệt bản dịch.
+> **Đo tiếng Hàn 5/11:** hai video dạy tiếng Hàn, dịch sang tiếng Anh: 0 vế mất, đúng dòng 99,5% và 98,1%, 0 ♪ nhầm sau khi sửa (HANDOFF §6ax).
 
 **Mục tiêu:** thêm tiếng Nhật, tiếng Hàn và các ngôn ngữ khác, mỗi ngôn ngữ một lần, dùng lại khung của giai đoạn 3.
 

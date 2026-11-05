@@ -3,6 +3,7 @@
 // lượt ở tốc độ 1×. Xong mỗi video thì xoá dữ liệu của nó (âm thanh, chữ), chỉ giữ điểm số trong summary.json và history.jsonl.
 //   node run.mjs [--items 1,3] [--ids id1,id2] [--rate 1] [--throttle KB/s] [--lyrics off] [--target vi|en] [--switch-at giây] [--name tên] [--keep]
 //   node run.mjs --clean <tên>      xoá dữ liệu của một lượt đã chạy với --keep
+// --from, --to (giây): với --ids không có trong videos.json, chỉ xem khoảng này (thử video mới cho rẻ).
 // --items: số thứ tự mục trong videos.json (một id có thể có hai mục). Không có --items, --ids: chạy cả videos.json.
 // Mục có "from"/"to" thì tua tới "from" và xem tới "to". TỐN TIỀN nhận dạng và dịch: cả bộ khoảng 29 phút âm thanh.
 import fs from 'node:fs';
@@ -23,7 +24,7 @@ for (const r of fs.existsSync(OUT_ROOT) ? fs.readdirSync(OUT_ROOT).map((f) => pa
 
 const set = readJson(path.join(HERE, 'videos.json')) || { videos: [] };
 const list = a.items ? String(a.items).split(',').map((i) => set.videos[Number(i) - 1]).filter(Boolean)
-  : a.ids ? String(a.ids).split(',').map((id) => set.videos.find((v) => v.id === id) || { id }) : set.videos;
+  : a.ids ? String(a.ids).split(',').map((id) => set.videos.find((v) => v.id === id) || { id, ...(a.from ? { from: Number(a.from) } : {}), ...(a.to ? { to: Number(a.to) } : {}) }) : set.videos;
 const rate = Number(a.rate || 1), throttle = Number(a.throttle || 0), lyrics = a.lyrics == null ? null : a.lyrics !== 'off';
 const target = a.target || null, switchAt = a['switch-at'] != null ? Number(a['switch-at']) : null;   // watch.mjs
 const name = String(a.name || new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-'));

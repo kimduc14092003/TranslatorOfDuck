@@ -28,6 +28,7 @@ Server đo dùng key trong `alpha/server/.env`, giống server hằng ngày. Đ�
 |---|---|
 | `node run.mjs` | Chạy cả `videos.json`. Mỗi video có một server đo với cache trống, một proxy ghi yêu cầu, một Chromium riêng; chấm điểm; xoá dữ liệu video; in bảng và ghi `summary.json`, `history.jsonl` |
 | `node run.mjs --items 2,4 --keep` | Chạy vài mục (số thứ tự trong `videos.json`; `--ids` chọn theo id), **giữ** dữ liệu để soát; xong thì `node run.mjs --clean <tên lượt>` |
+| `node run.mjs --ids <id> --to 60` | Thử một video ngoài `videos.json`, chỉ xem 60 giây đầu (`--from` để bắt đầu muộn hơn) |
 | `node run.mjs --throttle 450` | Như trên, mạng giả lập chậm 450 KB/s (HANDOFF §6t) |
 | `node run.mjs --lyrics off` | Tắt chế độ lời bài hát |
 | `node watch.mjs <id> [--rate 1] [--from s] [--to s] [--server URL]` | Xem một video, ghi `samples.jsonl` (100 ms trong 10 s đầu, rồi 250 ms) |

@@ -1617,6 +1617,32 @@ Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt
   - chưa có người đọc tiếng Nhật, tiếng Hàn duyệt bản dịch;
   - `heard` chỉ có 40 chữ đầu: kết quả tiếng Nhật cũ mà 40 chữ đầu có < 3 kana thì không được làm lại (cache thật không có ca này).
 
+## 6ax. Đo thật tiếng Hàn (5/11, giai đoạn 4)
+
+- **Video:** tìm bằng tìm kiếm web, hai video dạy tiếng Hàn trên Douyin, mỗi video xem 60 giây (`run.mjs --ids … --to 60`): 7671660514925863395 (câu sách vở và câu đời thường, gần như toàn tiếng Hàn), 7680835126024015144 (50 câu thường ngày, giọng chậm, xen câu dịch tiếng Trung). Video thứ ba (7565032174022331711, vlog Seoul) hoá ra nói tiếng Trung.
+- **Lượt đầu (code của §6aw), dịch sang tiếng Việt:** nhận đúng `ko` ở mọi đoạn tiếng Hàn, 0 vế mất, đúng dòng 99,5% và 97%. Lỗi: giọng dạy nói chậm bị gắn ♪ (2 dòng ở video đầu, 15 dòng ở video sau, cả các câu tiếng Trung xen giữa).
+  - Nguyên nhân: mốc kết thúc của từ kéo tới tận từ sau, nên câu nói chậm đo được 0,4–1,2 s/chữ. Riêng chữ kéo dài đã đủ để cả đoạn bị coi là bài hát.
+  - Ở chế độ tắt lời bài hát, các câu này bị bỏ.
+- **Sửa:**
+  - đoạn tiếng Nhật, tiếng Hàn chỉ là bài hát khi lặp lời, hoặc có hashtag nhạc kèm chữ kéo dài;
+  - xét câu hát theo độ kéo dài từng câu (`splitSung(…, { slow })`) chỉ khi có các dấu hiệu đó;
+  - dấu chấm ASCII sau chữ Hán, kana, chữ Hàn là hết câu ("我是大学生.저는 회사원이에요." từng thành một dòng).
+  - đoạn tiếng Nhật, tiếng Hàn ở chế độ tắt lời bài hát cũng không bỏ dòng nghi là hát, chỉ gắn ♪. Lý do (verifier 5/11): mô tả có chữ liên quan nhạc (歌, 舞, mv, cover…, hay gặp ở video dạy tiếng qua bài hát) thì giọng dạy chậm lại bị coi là hát, và độ kéo dài không tách được hai loại (giọng dạy 0,36–0,48 s/chữ, bài hát Nhật 0,46).
+- **Lượt hai (code mới), dịch sang tiếng Anh:**
+
+  | Video | Vế mất | Độ phủ | Đúng dòng | Lỗi | ♪ |
+  |---|---|---|---|---|---|
+  | 7671660514925863395 | 0 | 100% | 99,5% | 0 | 0 |
+  | 7680835126024015144 | 0 | 100% | 98,1% | 0 | 0 |
+
+- **Chạy lại offline:** 7 đoạn tiếng Hàn thật đều 0 ♪, chế độ thường giữ đủ dòng; 290 đoạn trong cache tiếng Trung không đổi (chỉ đoạn trộn 7698003223789848803 đổi `src`, như §6aw).
+- **Đổi so với §6aw:**
+  - bài hát tiếng Nhật, tiếng Hàn không có hashtag nhạc và không lặp lời thì không có ♪ (vẫn dịch đủ);
+  - ở chế độ tắt lời bài hát, bài hát tiếng Nhật, tiếng Hàn vẫn được dịch (có ♪) thay vì bị bỏ.
+- **Verifier vòng 3:** so với 43bc8f0 trên dữ liệu tiếng Hàn thật, không đoạn nào ít dòng hơn; tiếng Trung không đổi. Chưa có mốc từng chữ tiếng Nhật thật để kiểm giọng kịch nói chậm (lượt `p4-ja` không giữ file nhận dạng).
+- **Ghi lại, chưa xem:** vlog Seoul mất 7 vế ở 0–10 s; đoạn đầu bị huỷ ("đã tua đi chỗ khác") ngay lúc mở video, sub đầu 13,8 s. Chưa rõ do extension hay do công cụ đo.
+- Dữ liệu lượt đo đã xoá.
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).

@@ -91,7 +91,7 @@ const unitsOf = (t) => (latinShareOf(t) > 0.5 ? t.trim().length * 16 / 42 : (t.m
 // Token thật có dấu cách sau dấu chấm (" night. ", verifier 4/11), có khi ngoặc kép sau dấu chấm; "I." cuối câu là hết câu.
 const ABBR = /(?:^|[\s(])(?:(?:Mr|Mrs|Ms|Dr|St|Jr|Sr|Prof|vs|etc|e\.g|i\.e|[A-HJ-Za-z])\.|(?:[A-Za-z]\.){2,})$/;
 // Câu tiếng Hàn cũng hết bằng dấu chấm ASCII (감사합니다.).
-const latinStop = (t) => { const x = t.trimEnd().replace(/["'”’)]+$/, ''); return /[A-Za-z0-9\p{Script=Hangul}]\.$/u.test(x) && !ABBR.test(x); };
+const latinStop = (t) => { const x = t.trimEnd().replace(/["'”’)]+$/, ''); return /[A-Za-z0-9\p{Script=Hangul}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]\.$/u.test(x) && !ABBR.test(x); };
 const normalize = (t) => Array.from(String(t).normalize('NFKC').toLowerCase().replace(/[\p{P}\p{S}\s]/gu, ''));
 
 // ---------------------------------------------------------------- tách âm thanh
@@ -627,6 +627,8 @@ export function classifySpeech(meta, r) {
   // lần) vẫn là lời nói.
   else if (f.src === 'en') label = f.medWordDur > 0.5 || (f.repeat && f.medWordDur > 0.4) || (f.tagMusic && f.medWordDur > 0.45) ? 'singing' : 'speech';
   else if (f.repeat && slowChars(f.medCharDur)) label = 'singing';
+  // Tiếng Nhật, tiếng Hàn: chữ kéo dài thôi chưa đủ (giọng dạy nói chậm, mốc từ kéo tới từ sau: đo thật 5/11), cần thêm hashtag nhạc.
+  else if (f.src === 'ja' || f.src === 'ko') label = f.tagMusic && f.medCharDur != null && f.medCharDur > 0.33 ? 'singing' : 'speech';
   else {
     const score = (f.medCharDur != null && f.medCharDur > 0.33 ? 2 : 0) + (f.tagMusic ? 1 : 0) + (f.cps != null && f.cps < 2.5 ? 1 : 0);
     label = score >= 2 ? 'singing' : 'speech';
@@ -636,7 +638,8 @@ export function classifySpeech(meta, r) {
 
 // Lọc theo từng câu: video nói có nhạc nền hay đoạn hát ngắn thì chỉ bỏ những câu hát, không bỏ cả video.
 // Câu "hát" khi chữ kéo dài (trung vị > 0,33 s/chữ, cùng ngưỡng với cả video) hoặc lặp đi lặp lại.
-export function splitSung(r) {
+// slow = false: không xét câu hát theo độ kéo dài, chỉ theo lặp lời (đoạn tiếng Nhật, tiếng Hàn không có dấu hiệu nhạc).
+export function splitSung(r, { slow = true } = {}) {
   const words = (r.words || []).filter(w => w.end > w.start);
   const segs = r.segments || [];
   if (!words.length || !segs.length) return { r, sentences: segs.map(x => ({ start: x.start, end: x.end, text: x.text, sung: false })), sung: 0, total: segs.length };
@@ -649,7 +652,7 @@ export function splitSung(r) {
     // phải câu hát: cần ≥ 6 chữ. Câu tiếng Trung giữ ngưỡng 4 chữ.
     const kh = (x.text.match(/[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu) || []).length;
     const minChars = kh * 2 > perChar.length ? 6 : 4;
-    const sung = (perChar.length >= minChars && med > 0.33) || (repeated(x.text, 3) && slowChars(med));
+    const sung = (slow && perChar.length >= minChars && med > 0.33) || (repeated(x.text, 3) && slowChars(med));
     return { start: x.start, end: x.end, text: x.text, medCharDur: round(med, 3), sung, words: ws };
   });
   const kept = sentences.filter(x => !x.sung);
@@ -978,14 +981,20 @@ export function cuesFromAsr(meta, asr, opts = {}) {
   const before = preRoll ? speechBefore(asr, opts.offset || 0, opts.from) : [];
   if (opts.from != null) asr = windowAsr(asr, opts.offset || 0, opts.from, opts.to, preRoll);
   const cls = classifySpeech(meta, asr);
-  const split = splitSung(asr);
+  // Đoạn tiếng Nhật, tiếng Hàn: câu chỉ là câu hát theo độ kéo dài khi có hashtag nhạc hay cả đoạn nghe như hát. Đo thật 5/11
+  // (video dạy tiếng Hàn): giọng dạy nói chậm, mốc kết thúc từ kéo tới tận từ sau (0,4–1,2 s/chữ), mọi câu bị gắn ♪, và ở chế
+  // độ thường thì bị bỏ. Tiếng Trung giữ như cũ.
+  const split = splitSung(asr, { slow: !(cls.src === 'ja' || cls.src === 'ko') || cls.tagMusic || cls.label === 'singing' });
   // Cả đoạn là bài hát khi: lặp lời, hoặc quá nửa số câu là câu hát, hoặc chữ kéo dài kèm hashtag nhạc.
   // Hashtag nhạc cộng nói thưa (vlog có nhạc nền, nhiều khoảng lặng) thì không đủ: chỉ lọc từng câu.
   const song = cls.label === 'singing' && (cls.src === 'en' || (cls.repeat && slowChars(cls.medCharDur)) || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33));
   const out = { asr, before, cls, split, song };
   if (cls.label !== 'speech' && cls.label !== 'singing') return { ...out, skip: cls.label };
   let cues;
-  if (opts.lyrics) {
+  // Tiếng Nhật, tiếng Hàn: chế độ thường cũng không bỏ dòng nghi là hát, chỉ đánh dấu ♪. Độ kéo dài không tách được giọng dạy nói
+  // chậm (0,36–0,48 s/chữ) với bài hát (0,46), và hashtag nhạc hay gặp ở video dạy tiếng qua bài hát ("学韩语歌"): bỏ thì mất câu
+  // nói (verifier 5/11). Đổi lại: bài hát tiếng Nhật, tiếng Hàn ở chế độ thường vẫn được dịch.
+  if (opts.lyrics || cls.src === 'ja' || cls.src === 'ko') {
     // Chế độ lời bài hát: không bỏ câu hát, đánh dấu để hiện "♪".
     cues = lyricCues(asr, { ...cls, label: song ? 'singing' : 'speech' }, split);
     // Không còn dòng nào: chỉ có tiếng đệm (yeah yeah), hay dòng hát chỉ có tiếng đệm (啦啦啦).
