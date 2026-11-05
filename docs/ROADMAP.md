@@ -209,6 +209,7 @@ Tới khi chọn model nhận dạng cuối (giai đoạn 3), bảng điểm dù
 ### Giai đoạn 3: Một ngôn ngữ nguồn mới, làm trọn
 
 > **Trạng thái 4/11 (bản thử):** video nói tiếng Anh dịch sang tiếng Việt; đích tiếng Anh hiện bản chép (HANDOFF §6au). Chưa làm: mục 1 (lớp nhận dạng chung), mục 2 (chọn model nhận dạng cuối), gợi ý ngôn ngữ cho nhận dạng.
+> **Chốt tạm 5/11:** giữ model nhận dạng đang dùng (`qwen-audio-3.1-asr-flash`): trong 3 model đã thử, chỉ nó vừa nhanh vừa có mốc từng từ (HANDOFF §6av). Thử lại bằng `alpha/dev/real/asr-bench.mjs` khi có key ElevenLabs, Azure, hay làm được `fun-asr` (cần tải âm thanh lên link).
 
 **Mục tiêu:** làm trọn một ngôn ngữ nguồn trước khi tổng quát hoá: tiếng Anh (đề xuất) nói trong video, dịch sang tiếng Việt và tiếng Anh, đạt bảng điểm.
 

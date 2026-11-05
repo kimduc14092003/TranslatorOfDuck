@@ -1585,7 +1585,7 @@ Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt
   - Chênh nhau: hai model Alibaba 0,11–0,12; Gemini so với hai model kia 0,18–0,21.
   - Gemini: gói miễn phí chỉ 25 lần gọi mỗi ngày (61 lần 429). Lượt đầu có 16 đoạn lỗi mạng (ENOTFOUND) ở mọi model, chạy lại được.
   - Không gọi: `fun-asr` (chỉ bất đồng bộ qua link công khai), ElevenLabs, Azure (chưa có key).
-- Chưa biết model nào đúng hơn: cần nghe lại các đoạn chênh nhau nhất (`node asr-bench.mjs asr-full --top 15`); dữ liệu giữ ở `alpha/server/work/` tới khi chủ dự án nghe xong, rồi `node asr-bench.mjs --clean asr-full && node run.mjs --clean asr-full`.
+- Chưa biết model nào đúng hơn (chưa nghe lại các đoạn chênh nhau). Chủ dự án chốt tạm 5/11: giữ `qwen-audio-3.1-asr-flash`. Dữ liệu của lượt đo đã xoá.
 
 ## 7. Việc tiếp theo trên Mac
 
