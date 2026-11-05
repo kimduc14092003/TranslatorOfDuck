@@ -1643,6 +1643,22 @@ Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt
 - **Ghi lại, chưa xem:** vlog Seoul mất 7 vế ở 0–10 s; đoạn đầu bị huỷ ("đã tua đi chỗ khác") ngay lúc mở video, sub đầu 13,8 s. Chưa rõ do extension hay do công cụ đo.
 - Dữ liệu lượt đo đã xoá.
 
+## 6ay. Thử đường dự phòng cho trang bất kỳ (6/11, nhánh `claude/any-site-tab-audio`, extension 0.2.46)
+
+- **Cách làm:** popup có nút "Dịch âm thanh tab này". Background lấy mã luồng thu (`chrome.tabCapture.getMediaStreamId`, quyền activeTab của lần bấm), mở trang ẩn `offscreen.html` (`USER_MEDIA`) và tiêm `tablive.js` + `tab.js` vào tab.
+  - Trang ẩn thu âm thanh, phát lại ra loa (đang thu thì Chrome không phát tiếng tab), ghi từng khúc WebM/Opus, gửi `/v1/subtitles`.
+  - Mỗi khúc dịch các câu bắt đầu trong 5 s, thu dư 1,5 s hai đầu. Khúc im lặng không gửi.
+  - `tab.js` hiện dòng ở lúc người nói + độ trễ. Độ trễ tự tăng khi dòng về muộn, bắt đầu 6 s, tối đa 20 s.
+- **Server:** id `tab<số>` (mốc tính từ lúc bắt đầu thu), trường `fmt: 'webm'`; mọi bước sau như đoạn Douyin. `source-test` có ca WebM.
+- **Quyền mới:** `tabCapture`, `offscreen`, `activeTab`, `scripting`. Không xin quyền mọi trang.
+- **Test:** `alpha/dev/tablive-test.mjs` 7 kiểm tra; các test cũ của server và extension đều đạt.
+- **Thử thật** (`alpha/dev/real/tablive-real.mjs`, YouTube "日常中文对话 Ep.1", 75 s, dịch sang tiếng Việt): 14/14 khúc có lời, 0 lỗi, 116–118/149 lần chụp có sub, trễ 8,5–9,5 s.
+- **Vấn đề thấy được:**
+  - câu nói chậm bị cắt ở ranh giới khúc ("我的名。" rồi "名字 | 是乐乐"), dịch sai theo ("我也很高。" thành "Mình cũng rất cao."). Thu dư 3 s không đỡ: thêm dòng lặp, trễ 12,5 s. Hướng sửa: giữ câu cuối chưa xong của khúc, gửi lại cùng âm thanh khúc sau;
+  - giọng dạy tiếng Trung chậm bị gắn ♪ (luật sẵn có của đường tiếng Trung);
+  - sang trang web khác trong cùng tab thì Chrome không cho tiêm lại lớp sub (activeTab mất); âm thanh vẫn thu;
+  - chưa thử bằng cú bấm popup thật trên Chrome của chủ dự án (lúc thử tự động dùng cờ `--allowlisted-extension-id` và bản sao có quyền mọi trang).
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).

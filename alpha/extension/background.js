@@ -6,10 +6,43 @@ const pending = new Map();   // "tab:key" -> AbortController
 // để biết service worker đang chạy có phải bản cũ không (Chrome có thể giữ background.js bản trước: content.js, workerReady)
 // và có đọc được NDJSON không (ndjson: gửi stream: true được), có chuyển bản rút gọn sau không (condensed: gửi condenseLater: true
 // được, từ 0.2.42).
-const BUILD = '0.2.45';
+const BUILD = '0.2.46';
+// Đường dự phòng cho trang bất kỳ (bản thử): popup bật trên tab đang mở; offscreen.js thu âm thanh tab và gọi server, tab.js
+// (tiêm vào tab) hiện sub. Background lấy mã luồng thu (tabCapture), mở trang ẩn, chuyển tin giữa trang ẩn và tab.
+const inject = (tabId) => chrome.scripting.executeScript({ target: { tabId }, files: ['tablive.js', 'tab.js'] }).catch(() => {});
+async function toOffscreen(m) {
+  if (!(await chrome.offscreen.hasDocument())) return null;
+  return chrome.runtime.sendMessage({ ...m, to: 'offscreen' }).catch(() => null);
+}
+async function tabStart(tabId) {
+  // Gọi ngay trong lượt người xem bấm nút ở popup (quyền activeTab của tab đó).
+  const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+  if (!(await chrome.offscreen.hasDocument())) {
+    await chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['USER_MEDIA'], justification: 'Thu âm thanh tab người xem bật để làm phụ đề' });
+  }
+  const [{ settings = {} }, tab] = await Promise.all([chrome.storage.local.get('settings'), chrome.tabs.get(tabId)]);
+  await inject(tabId);
+  const r = await chrome.runtime.sendMessage({ to: 'offscreen', type: 'start', streamId, tabId, settings, title: tab.title || '' });
+  if (r && r.ok) await chrome.storage.session.set({ liveTab: tabId });
+  return r || { ok: false, error: 'trang thu âm thanh không trả lời' };
+}
+// Tab đang thu tải lại trang hay sang trang khác cùng trang web: tiêm lại lớp sub (khác trang web thì Chrome không cho, bỏ qua).
+chrome.tabs.onUpdated?.addListener((tabId, info) => {
+  if (info.status !== 'complete') return;
+  chrome.storage.session.get('liveTab').then(({ liveTab }) => { if (liveTab === tabId) inject(tabId); }).catch(() => {});
+});
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   const tab = sender.tab ? sender.tab.id : -1;
   if (msg && msg.type === 'hello') { reply({ build: BUILD, ndjson: true, condensed: true }); return false; }
+  // Đường dự phòng: tin của offscreen.js (dòng sub, trạng thái) chuyển cho tab đang thu; popup bật, tắt, hỏi trạng thái.
+  if (msg && msg.to === 'background' && !sender.tab) {
+    if (msg.type === 'state' && msg.on === false) chrome.storage.session.remove('liveTab').catch(() => {});
+    if (typeof msg.tabId === 'number') chrome.tabs.sendMessage(msg.tabId, { ...msg, type: 'tab-' + msg.type }).catch(() => {});
+    return false;
+  }
+  if (msg && msg.type === 'tab-start' && !sender.tab) { tabStart(msg.tabId).then(reply, (e) => reply({ ok: false, error: String((e && e.message) || e) })); return true; }
+  if (msg && msg.type === 'tab-stop' && !sender.tab) { toOffscreen({ type: 'stop' }).then(() => reply({ ok: true })); return true; }
+  if (msg && msg.type === 'tab-status' && !sender.tab) { toOffscreen({ type: 'status' }).then((st) => reply(st || { on: false })); return true; }
   if (msg && msg.type === 'cancel') {
     for (const k of msg.keys || []) { const c = pending.get(tab + ':' + k); if (c) c.abort(); }
     return false;

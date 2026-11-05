@@ -58,6 +58,28 @@ async function showStats() {
   }
 }
 
+// Đường dự phòng (trang bất kỳ): nút bật, tắt thu âm thanh tab đang mở; trạng thái hỏi background (trang ẩn offscreen.js).
+async function liveSetup() {
+  const btn = $('live'), st = $('liveState');
+  if (!btn || !chrome.runtime || !chrome.runtime.sendMessage) return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const show = (x) => {
+    const here = x && x.on && tab && x.tabId === tab.id;
+    btn.textContent = here ? 'Tắt dịch tab này' : 'Dịch âm thanh tab này';
+    st.textContent = !x || !x.on ? '' : here ? `Đang thu: gửi ${x.sent} khúc, có lời ${x.ok}, im lặng ${x.quiet}, lỗi ${x.errors}.` : 'Đang thu một tab khác (bật ở đây sẽ chuyển sang tab này).';
+    return here;
+  };
+  let on = show(await chrome.runtime.sendMessage({ type: 'tab-status' }).catch(() => null));
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    const r = on ? await chrome.runtime.sendMessage({ type: 'tab-stop' }).catch(() => null)
+      : await chrome.runtime.sendMessage({ type: 'tab-start', tabId: tab && tab.id }).catch((e) => ({ ok: false, error: String(e) }));
+    if (!on && (!r || !r.ok)) st.textContent = 'Không bật được: ' + ((r && r.error) || 'không rõ lỗi');
+    else on = show(await chrome.runtime.sendMessage({ type: 'tab-status' }).catch(() => null));
+    btn.disabled = false;
+  });
+}
+
 (async () => {
   const s = await load();
   $('enabled').checked = s.enabled;
@@ -86,6 +108,7 @@ async function showStats() {
   $('dminus').addEventListener('click', () => nudge(-0.1));
   $('dplus').addEventListener('click', () => nudge(0.1));
   $('check').addEventListener('click', checkServer);
+  liveSetup();
   checkServer();
   showStats();
 })();

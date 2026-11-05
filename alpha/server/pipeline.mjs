@@ -118,13 +118,13 @@ export async function checkFfmpeg() {
 export async function extractAudio(buf, kind = 'mp4') {
   const bin = await resolveFfmpeg();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tod-'));
-  const src = path.join(dir, kind === 'aac' ? 'in.aac' : 'in.mp4');
+  const src = path.join(dir, kind === 'aac' ? 'in.aac' : kind === 'webm' ? 'in.webm' : 'in.mp4');
   const out = path.join(dir, 'out.mp3');
   fs.writeFileSync(src, buf);
   try {
     // aresample first_pts=0: nếu track âm thanh bắt đầu muộn hơn mốc 0 của video (edit list), chèn khoảng lặng
     // tương ứng; không thì mọi mốc thời gian bị sớm đúng bằng khoảng đó và sub hiện trước lời nói.
-    const run = await new Promise((resolve) => execFile(bin, ['-v', 'error', '-y', '-i', src, '-t', String(kind === 'aac' ? 120 : MAX_SECONDS), '-vn', '-ac', '1', '-ar', '16000',
+    const run = await new Promise((resolve) => execFile(bin, ['-v', 'error', '-y', '-i', src, '-t', String(kind === 'aac' || kind === 'webm' ? 120 : MAX_SECONDS), '-vn', '-ac', '1', '-ar', '16000',
       '-af', 'aresample=async=1:first_pts=0',
       '-c:a', 'libmp3lame', '-b:a', '48k', out], (err, _o, stderr) => resolve({ err, stderr: String(stderr || '') })));
     // Mã lỗi dạng chữ (ENOENT, EACCES): không chạy được ffmpeg.

@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ffmpeg = process.env.FFMPEG || (await import('ffmpeg-static').then(m => m.default).catch(() => null)) || 'ffmpeg';
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'tod-source-'));
+const webm = (sec) => { const f = path.join(TMP, `${sec}.webm`); execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=440:duration=${sec}`, '-c:a', 'libopus', f]); return fs.readFileSync(f).toString('base64'); };
 const aac = (sec) => { const f = path.join(TMP, `${sec}.aac`); execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=440:duration=${sec}`, '-c:a', 'aac', f]); return fs.readFileSync(f).toString('base64'); };
 
 // Từ tiếng Anh như Fun-ASR trả: dấu cách đứng trước từ, dấu câu ở trường punctuation. Câu liền nhau, không có khoảng lặng.
@@ -210,6 +211,16 @@ try {
     assert.ok(m.cached, JSON.stringify(m)); assert.equal(m.cues[0].vi, 'cũ');
     assert.ok(j2.cached, JSON.stringify(j2));
     assert.equal(asrCalls, asrL + 1);
+  });
+
+  // 10. Đường dự phòng (âm thanh thu từ tab của trang bất kỳ): id "tab…", WebM/Opus; định dạng lạ thì 400.
+  const T = 'tab123456789012';
+  const tb = await post(base(T, { target: 'vi', aac: webm(12), fmt: 'webm', from: 5, to: 10, audioStart: 0, desc: 'Some page title' }));
+  const bad = await fetch(`http://127.0.0.1:${port}/v1/subtitles`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(base(T, { aac: webm(12), fmt: 'ogg' })) });
+  t('âm thanh WebM thu từ tab: nhận dạng, dịch như đoạn video; fmt lạ trả 400', () => {
+    assert.equal(tb.status, 'ok', JSON.stringify(tb)); assert.equal(tb.id, T);
+    assert.ok(tb.cues.length >= 1 && tb.cues.every(c => c.start >= 5 && c.start < 10), JSON.stringify(tb.cues));
+    assert.equal(bad.status, 400);
   });
 
   t('log server ghi nguồn tiếng Anh, và lần hiện bản chép không dịch', () => {
