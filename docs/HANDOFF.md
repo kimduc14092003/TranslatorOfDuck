@@ -1688,6 +1688,14 @@ Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt
   - không có video (trang chỉ có tiếng, video trong iframe): theo đồng hồ máy như cũ.
 - **Thử thật** (U4h59nMjb0A, 95 s, tạm dừng 6 s ở giây 30, tua từ 0:54 về 0:20): sub đứng yên khi dừng; sau khi tua, các dòng hiện đúng lúc nói, đúng thứ tự, không dòng lặp. Lần thử trước bản sửa: dòng nói ở 0:13 hiện lại ở 0:21, một dòng hiện hai lần.
 
+### 6ay (tiếp). Lần thử thứ hai của chủ dự án (7/11)
+
+- Chủ dự án thấy "không ổn". Từ log: lượt thu ngừng ở 0:21 lúc 3:33 sáng, chạy lại 9:09 sáng (có lẽ máy ngủ), từ đó sub không hiện. Nguyên nhân: lớp sub đổi giờ thu (đếm theo số mẫu) sang giờ máy bằng một mốc cố định lúc bắt đầu; máy ngủ thì số mẫu đứng mà giờ máy chạy, mọi dòng sau đó lệch 6 giờ.
+  - Sửa: trang ẩn ghi mốc giờ máy mỗi lần nhận âm thanh, gửi giờ máy của từng dòng (`ws`, `we`; `tablive.js` `wallOf`).
+- Lượt thử của tôi trên cùng video (ZBp9_7JQ9eQ, 120 s): bản dịch liền mạch, nhưng độ trễ chỉ tăng: một lượt dịch chậm 14 s đẩy lên 17,5 s tới hết video.
+  - Sửa: độ trễ tính từ 8 dòng gần đây (muộn nhất + 0,5 s, trong 3–20 s), giảm lại được (`delayFrom`). Thử lại 150 s, có tạm dừng 8 s: trễ 7,5–9 s suốt lượt.
+- Còn thấy trong log lượt của chủ dự án: câu bị cắt ở chỗ ngừng giữa câu, dịch sai theo ("请你忘掉我是一个中文" | "学生这个身份…"). Chưa sửa: lượt của tôi trên cùng video không gặp; cần thêm mẫu.
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).

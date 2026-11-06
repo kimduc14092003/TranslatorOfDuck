@@ -56,10 +56,22 @@ await t('WAV 16 bit một kênh 16 kHz; mức to nhất để bỏ khúc im lặ
   assert.ok(L.peak(pcm) > 0.99);
 });
 
-await t('độ trễ hiển thị: dòng về muộn thì tăng (tròn 0,5 s, tối đa 20 s), về sớm thì giữ', () => {
-  assert.equal(L.nextDelay(6000, 0, 4000), 6000);
-  assert.equal(L.nextDelay(6000, 0, 7200), 8000);
-  assert.equal(L.nextDelay(6000, 0, 60000), 20000);
+await t('độ trễ hiển thị: theo dòng muộn nhất trong 8 dòng gần đây (tròn 0,5 s, trong 3–20 s), giảm lại sau một lượt chậm', () => {
+  assert.equal(L.delayFrom([]), 6000);
+  assert.equal(L.delayFrom([7200, 6000]), 8000);
+  assert.equal(L.delayFrom([60000]), 20000);
+  assert.equal(L.delayFrom([1000]), 3000);
+  // Một lượt chậm (17 s) rồi 8 dòng về đúng nhịp (8 s): độ trễ giảm lại.
+  assert.equal(L.delayFrom([17000, ...Array(8).fill(8000)]), 8500);
+});
+
+await t('giờ máy của mẫu: theo mốc gần nhất sau mẫu đó; máy ngủ (số mẫu đứng, giờ máy chạy) không làm lệch dòng sau', () => {
+  const R = L.RATE;
+  const anchors = [{ n: 0, w: 1000 }, { n: 10 * R, w: 11000 }, { n: 20 * R, w: 6 * 3600e3 + 21000 }];
+  assert.equal(L.wallOf(anchors, 5), 6000);
+  // Sau khi máy ngủ 6 giờ ở giây 10: mẫu ở giây 15 thuộc phần sau giấc ngủ.
+  assert.equal(L.wallOf(anchors, 15), 6 * 3600e3 + 16000);
+  assert.equal(L.wallOf([], 3), null);
 });
 
 await t('dòng đang hiện: dòng mới nhất đã tới giờ, còn trong thời gian của nó (dòng ngắn giữ ít nhất 1,2 s)', () => {
@@ -134,11 +146,11 @@ await t('popup bật: lấy mã luồng thu của tab, mở trang ẩn, tiêm l�
 await t('tin của trang ẩn chuyển cho đúng tab (tab-cues, tab-state); tắt thì quên tab đang thu; tin từ tab không được giả làm trang ẩn', async () => {
   const b = loadBackground();
   await b.send({ type: 'tab-start', tabId: 7 });
-  await b.send({ to: 'background', type: 'cues', tabId: 7, cues: [{ start: 1, end: 2, vi: 'x' }], wall0: 5 });
+  await b.send({ to: 'background', type: 'cues', tabId: 7, cues: [{ start: 1, end: 2, vi: 'x', ws: 5 }] });
   await b.send({ to: 'background', type: 'cues', tabId: 9, cues: [] }, { tab: { id: 9 } });
   await b.send({ to: 'background', type: 'state', tabId: 7, on: false });
   assert.deepEqual(b.toTab.map(m => [m.tab, m.type]), [[7, 'tab-cues'], [7, 'tab-state']]);
-  assert.equal(b.toTab[0].wall0, 5);
+  assert.equal(b.toTab[0].cues[0].ws, 5);
   assert.equal(b.session.liveTab, undefined);
 });
 

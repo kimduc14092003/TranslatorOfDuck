@@ -40,7 +40,7 @@
     if (video) video.addEventListener('seeking', onSeeking);
   };
 
-  let wcues = [], vcues = [], delay = 6000, note = 'đang nghe…';
+  let wcues = [], vcues = [], lates = [], delay = L.delayFrom([]), note = 'đang nghe…';
   const showBadge = () => { badge.textContent = `TOD · trễ ${(delay / 1000).toFixed(1)} s · ${note}`; };
   showBadge();
   const timer = setInterval(() => {
@@ -52,6 +52,7 @@
     }
     const c = (video && L.current(vcues, video.currentTime * 1000)) || L.current(wcues, w - delay);
     if (c) { lineEl.textContent = c.text; lineEl.hidden = false; } else lineEl.hidden = true;
+    if (lates.length > 50) lates = lates.slice(-20);
     if (wcues.length > 300) wcues = wcues.slice(-200);
     if (vcues.length > 600) vcues = vcues.slice(-400);
   }, 100);
@@ -62,17 +63,21 @@
       const now = Date.now();
       for (const c of msg.cues) {
         const text = (c.sung ? '♪ ' : '') + (c.vi || c.zh || '');
-        const at = msg.wall0 + c.start * 1000, until = msg.wall0 + c.end * 1000;
+        // ws, we: giờ máy lúc câu được nghe (offscreen.js tính theo mốc của từng mẫu).
+        if (typeof c.ws !== 'number') continue;
+        const at = c.ws, until = typeof c.we === 'number' ? c.we : c.ws + 2000;
         const vt = video ? L.videoTimeAt(samples, at) : null;
         if (vt != null) {
           const vs = vt * 1000, ve = vs + (until - at);
           // Đã có dòng chiếm phần lớn khoảng giờ video đó (tua lại rồi nghe lại, lần nhận dạng sau có thể ra chữ hơi khác): giữ dòng cũ.
           if (vcues.some((x) => L.overlaps(x, vs, ve))) continue;
           // Trễ tính theo giờ video: dòng về lúc video đã chạy tới đâu so với lúc câu được nói.
-          delay = L.nextDelay(delay, vs, video.currentTime * 1000);
+          lates.push(video.currentTime * 1000 - vs);
+          delay = L.delayFrom(lates);
           vcues.push({ at: vs, until: ve, lag: delay, text });
         } else {
-          delay = L.nextDelay(delay, at, now);
+          lates.push(now - at);
+          delay = L.delayFrom(lates);
           wcues.push({ at, until, text });
         }
       }

@@ -54,12 +54,24 @@
     for (let i = 0; i < int16.length; i++) v.setInt16(44 + i * 2, int16[i], true);
     return out;
   }
-  // Độ trễ hiển thị (ms): dòng hiện ở lúc người nói bắt đầu nói + delay, để các dòng giữ đúng nhịp với nhau. Dòng về muộn hơn
-  // mốc đó thì tăng delay (làm tròn lên 0,5 s, tối đa 20 s); không giảm trong một lượt thu (sub nhảy sớm, muộn khó theo hơn).
-  const MAX_DELAY = 20000;
-  function nextDelay(delay, cueStartMs, arrivedMs) {
-    const late = arrivedMs - cueStartMs;
-    return late > delay ? Math.min(MAX_DELAY, Math.ceil((late + 500) / 500) * 500) : delay;
+  // Độ trễ hiển thị (ms): dòng hiện ở lúc người nói bắt đầu nói + độ trễ, để các dòng giữ đúng nhịp với nhau. Tính từ độ muộn của
+  // các dòng gần đây (lates: ms, lúc dòng về trừ lúc câu được nói): lớn nhất + 0,5 s, làm tròn lên 0,5 s, trong [3 s, 20 s].
+  // Trước đây độ trễ chỉ tăng: một lượt dịch chậm 14 s giữ sub trễ 17,5 s tới hết video (thử thật 7/11).
+  const MIN_DELAY = 3000, MAX_DELAY = 20000, RECENT = 8;
+  function delayFrom(lates) {
+    if (!lates.length) return 6000;
+    const m = Math.max(...lates.slice(-RECENT));
+    return Math.max(MIN_DELAY, Math.min(MAX_DELAY, Math.ceil((m + 500) / 500) * 500));
+  }
+  // Giờ máy (ms) lúc thu được mẫu ở giây t (tính theo số mẫu): từ các mốc [{ n, w }] (n: số mẫu đã nhận, w: giờ máy lúc đó),
+  // offscreen.js ghi mỗi lần nhận âm thanh. Không dùng một mốc cố định lúc bắt đầu: máy ngủ hay trang ẩn bị dừng thì số mẫu
+  // không tăng mà giờ máy vẫn chạy, mọi dòng sau đó lệch hàng giờ và không bao giờ hiện (lần thử của chủ dự án, 7/11).
+  function wallOf(anchors, t, rate = RATE) {
+    const n = t * rate;
+    let a = null;
+    for (const x of anchors) { if (x.n >= n) { a = x; break; } }
+    a = a || anchors[anchors.length - 1];
+    return a ? Math.round(a.w - ((a.n - n) / rate) * 1000) : null;
   }
   // Dòng đang hiện lúc now (ms, theo đồng hồ hiển thị: giờ video khi trang có video, không thì đồng hồ máy). Mỗi dòng hiện từ
   // at + lag tới until + lag (giữ ít nhất 1,2 s cho dòng ngắn); lag: độ trễ của dòng (dòng dịch lúc đang xem: độ trễ hiện tại;
@@ -85,5 +97,5 @@
     const o = Math.min(x.until, b) - Math.max(x.at, a);
     return o > 0.5 * Math.max(1, Math.min(x.until - x.at, b - a));
   }
-  root.TodLive = { RATE, W, PRE, MIN_NEW, MAX_WAIT, QUIET, findPause, MAX_DELAY, plan, advance, peak, wav, nextDelay, current, videoTimeAt, overlaps };
+  root.TodLive = { RATE, W, PRE, MIN_NEW, MAX_WAIT, QUIET, findPause, MIN_DELAY, MAX_DELAY, plan, advance, peak, wav, delayFrom, wallOf, current, videoTimeAt, overlaps };
 })(globalThis);

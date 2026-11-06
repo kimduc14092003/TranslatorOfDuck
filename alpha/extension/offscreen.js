@@ -40,11 +40,10 @@ async function start({ streamId, tabId, settings = {}, title = '' }) {
   src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
   const id = 'tab' + Date.now() + String(Math.floor(Math.random() * 1000)).padStart(3, '0');
   const r = run = { id, base, tabId, stream, ctx, proc, settings, title, ring: new Int16Array(KEEP * L.RATE), n: 0, acc: 0, accN: 0, pos: 0,
-    wall0: 0, cursor: 0, lastTo: 0, busy: false, prev: null, timer: null, sent: 0, ok: 0, skipped: 0, quiet: 0, held: 0, errors: 0 };
+    anchors: [], cursor: 0, lastTo: 0, busy: false, prev: null, timer: null, sent: 0, ok: 0, skipped: 0, quiet: 0, held: 0, errors: 0 };
   const step = ctx.sampleRate / L.RATE;
   proc.onaudioprocess = (e) => {
     if (run !== r) return;
-    if (!r.wall0) r.wall0 = Date.now() - (e.inputBuffer.duration * 1000);
     const x = e.inputBuffer.getChannelData(0);
     for (let i = 0; i < x.length; i++) {
       r.acc += x[i]; r.accN++; r.pos += 1;
@@ -55,6 +54,9 @@ async function start({ streamId, tabId, settings = {}, title = '' }) {
         r.n++; r.acc = 0; r.accN = 0;
       }
     }
+    // Mốc giờ máy của mẫu cuối vừa nhận (tablive.js wallOf); giữ 3 phút.
+    r.anchors.push({ n: r.n, w: Date.now() });
+    if (r.anchors.length > 2400) r.anchors.splice(0, 400);
   };
   stream.getAudioTracks()[0].addEventListener('ended', () => { if (run === r) stop('tab đã đóng hay dừng thu'); });
   r.timer = setInterval(() => tick(r), 500);
@@ -70,7 +72,7 @@ function slice(r, a, b) {
 }
 
 function tick(r) {
-  if (run !== r || r.busy || !r.wall0) return;
+  if (run !== r || r.busy || !r.anchors.length) return;
   const now = nowSec(r);
   const p = L.plan(r.cursor, r.lastTo, now);
   if (!p) return;
@@ -106,7 +108,7 @@ async function send(r, p, pcm) {
     const res = await fetch(r.base + '/v1/subtitles', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     o = await res.json().catch(() => ({}));
     if (run !== r) return;
-    if (o.status === 'ok') { r.ok++; if (o.cues && o.cues.length) tell(r, { type: 'cues', cues: o.cues, wall0: r.wall0 }); }
+    if (o.status === 'ok') { r.ok++; if (o.cues && o.cues.length) tell(r, { type: 'cues', cues: o.cues.map((c) => ({ ...c, ws: L.wallOf(r.anchors, c.start), we: L.wallOf(r.anchors, c.end) })) }); }
     else if (o.status === 'skipped') r.skipped++;
     else { r.errors++; tell(r, { type: 'state', on: true, error: o.error || 'HTTP ' + res.status }); }
   } catch (_) {
