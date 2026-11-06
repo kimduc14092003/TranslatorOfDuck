@@ -80,7 +80,8 @@ function tick(r) {
   if (L.peak(slice(r, r.cursor, now)) < L.QUIET) { r.quiet++; r.cursor = r.lastTo = now; return; }
   // Cắt ở khoảng ngừng nói gần cuối nhất (nếu có): câu cuối đã xong, gửi final.
   const pcm = slice(r, p.audioFrom, now);
-  const pause = L.findPause(pcm);
+  // livePause: ngưỡng khoảng ngừng (giây), chỉ để thử (tablive-real.mjs --pause).
+  const pause = L.findPause(pcm, L.RATE, Number(r.settings.livePause) > 0 ? Number(r.settings.livePause) : undefined);
   const cut = pause != null ? p.audioFrom + pause : null;
   if (cut != null && cut - r.cursor >= 2) {
     const to = Math.round(cut * 10) / 10;

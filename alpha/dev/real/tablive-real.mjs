@@ -38,7 +38,7 @@ try {
   if (!sw.url().includes(extId)) throw new Error('id extension tính ra khác: ' + sw.url());
   // Không --mute-audio (tắt cả âm thanh thu được): thay vào đó trang ẩn không phát lại ra loa (liveMonitor: false), và bật thu
   // ngay khi trang vừa tải, trước khi video kịp phát ra loa (đang thu thì Chrome không phát tiếng tab).
-  await setSettings(sw, { server: server.url, target, liveMonitor: false });
+  await setSettings(sw, { server: server.url, target, liveMonitor: false, ...(a.pause ? { livePause: Number(a.pause) } : {}) });
   const page = ctx.pages()[0] || await ctx.newPage();
   await page.goto('about:blank#tod');
   const r = await sw.evaluate(async () => { const [t] = await chrome.tabs.query({ active: true }); return tabStart(t.id); });
@@ -46,7 +46,7 @@ try {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await sw.evaluate(async () => { const { liveTab } = await chrome.storage.session.get('liveTab'); await inject(liveTab); });
   for (let i = 0; i < 60; i++) {
-    const playing = await page.evaluate(() => { const v = document.querySelector('video'); if (v && v.paused) v.play().catch(() => {}); return !!v && !v.paused && v.currentTime > 0.5; }).catch(() => false);
+    const playing = await page.evaluate(() => { const v = document.querySelector('video'); if (v) v.muted = false; if (v && v.paused) v.play().catch(() => {}); return !!v && !v.paused && v.currentTime > 0.5; }).catch(() => false);
     if (playing) break;
     await sleep(500);
   }

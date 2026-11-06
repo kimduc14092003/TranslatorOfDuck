@@ -1696,6 +1696,19 @@ Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt
   - Sửa: độ trễ tính từ 8 dòng gần đây (muộn nhất + 0,5 s, trong 3–20 s), giảm lại được (`delayFrom`). Thử lại 150 s, có tạm dừng 8 s: trễ 7,5–9 s suốt lượt.
 - Còn thấy trong log lượt của chủ dự án: câu bị cắt ở chỗ ngừng giữa câu, dịch sai theo ("请你忘掉我是一个中文" | "学生这个身份…"). Chưa sửa: lượt của tôi trên cùng video không gặp; cần thêm mẫu.
 
+### 6ay (tiếp). Thử trên TikTok (7/11)
+
+- Video: [@xiaoguachinese 7474475102868901152](https://www.tiktok.com/@xiaoguachinese/video/7474475102868901152) (tiếng Trung, nói nhanh), [@slayspeech 7589057200262319391](https://www.tiktok.com/@slayspeech/video/7589057200262319391) (tiếng Anh kể chậm). Xem không đăng nhập; TikTok mở video ở chế độ tắt tiếng, người xem phải bật tiếng (script thử tự bật). Video TikTok tự phát lại từ đầu: sub hiện ngay đúng lúc nói (như tua lại).
+- Lần đầu: chạy được, trễ 8–10 s; lỗi: giọng kể chậm bị cắt vụn ở mọi khoảng ngừng 0,45 s ("Misaki and how we." | "became friends when I was in."), và gắn ♪ (luật hát theo độ kéo dài).
+- **Sửa:**
+  - khoảng ngừng để cắt: 0,45 s → 0,7 s (0,7 và 1,0 s đều ra câu liền; 1,0 s giữ câu nhiều hơn);
+  - âm thanh tab chỉ coi là hát khi lặp lời, không xét độ kéo dài (`opts.live`);
+  - chưa có câu nào nói xong thì server trả `skipped`/`held` kèm `next`, không trả dòng dở (trước đó gửi lại cùng câu ba lần);
+  - câu cuối dài còn dở: chỉ giữ phần sau dấu phẩy cuối (trước đó giữ cả câu, sub trễ 18,5 s với người nói nhanh);
+  - cắt theo chữ lệch 0,3 s thay vì 0,15 s ("meet" bị mất).
+- **Lần cuối** (70 s mỗi video, sang tiếng Việt): tiếng Trung 15/15 lần gửi có lời, 125/139 lần chụp có sub, trễ 6–9 s; tiếng Anh 105/139, trễ 4,5–10 s; không ♪ nhầm, không mất chữ thấy được.
+- Còn lại: đôi khi một chữ ở chỗ cắt hiện ở cả hai dòng ("…眼中的好。" | "好老师…"); người nói chậm vẫn có dòng cụt ("year," | "my friend Jocelyn.").
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).

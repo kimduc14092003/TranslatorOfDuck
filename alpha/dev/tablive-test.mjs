@@ -28,10 +28,12 @@ await t('kế hoạch gửi: chờ đủ 5 s chưa dịch và 2 s âm thanh mớ
 
 await t('khoảng ngừng nói: tìm cái gần cuối nhất trong 2,5 s cuối; nói liền (không ngừng) thì không có', () => {
   const R = L.RATE, tone = (sec, amp) => Array.from({ length: Math.round(sec * R) }, (_, i) => Math.round(amp * Math.sin(i / 3)));
-  // nói 3 s, ngừng 0,6 s (từ 3 tới 3,6), nói tiếp 1 s
-  const a = new Int16Array([...tone(3, 8000), ...tone(0.6, 50), ...tone(1, 8000)]);
+  // nói 3 s, ngừng 0,9 s (từ 3 tới 3,9), nói tiếp 1 s
+  const a = new Int16Array([...tone(3, 8000), ...tone(0.9, 50), ...tone(1, 8000)]);
   const p = L.findPause(a);
-  assert.ok(p > 3 && p < 3.6, String(p));
+  assert.ok(p > 3 && p < 3.9, String(p));
+  // ngừng 0,5 s (giữa câu, nói chậm): không cắt
+  assert.equal(L.findPause(new Int16Array([...tone(3, 8000), ...tone(0.5, 50), ...tone(1, 8000)])), null);
   assert.equal(L.findPause(new Int16Array(tone(5, 8000))), null);
   // ngừng xa hơn 2,5 s trước cuối: không tính
   assert.equal(L.findPause(new Int16Array([...tone(1, 8000), ...tone(0.5, 50), ...tone(3, 8000)])), null);

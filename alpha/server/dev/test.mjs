@@ -119,6 +119,10 @@ t('âm thanh tab (live): câu cuối còn đang nói lúc âm thanh hết thì g
   // Lượt sau chia câu khác: "你是美国人" bắt đầu trước con trỏ (66,46): giữ các chữ từ con trỏ, không bỏ cả câu.
   const t2 = liveTrim({ segments: [{ start: 0.5, end: 3.2, text: '你是美国人。' }], words: [W('你', 0.5, 0.8), W('是', 0.8, 1.6), W('美国', 1.65, 2.5), W('人。', 2.5, 3.2)] }, 64.8, 66.46);
   assert.deepEqual(t2.segments, [{ start: 1.65, end: 3.2, text: '美国人。' }]);
+  // Câu cuối dài còn dở có dấu phẩy: chỉ giữ phần sau dấu phẩy cuối.
+  const longOpen = { segments: [{ start: 0, end: 7.9, text: '可是我的心里在说，我还想做很多别的事情，我想学' }],
+    words: [W('可是我的', 0, 1), W('心里在说，', 1, 2), W('我还想', 2.1, 3), W('做很多别的事情，', 3, 5), W('我想', 5.2, 6), W('学', 6, 7.9)] };
+  assert.deepEqual(liveHold(longOpen, 0, 8, 0), { next: 5.2, open: true });
   // Không câu nào bắt đầu từ from: không giữ.
   assert.deepEqual(liveHold({ segments: [], words: [] }, 0, 5, 0), { next: 5, open: false });
 });

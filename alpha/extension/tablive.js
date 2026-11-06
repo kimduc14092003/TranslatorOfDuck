@@ -17,13 +17,13 @@
     if (now - cursor < W || now - lastTo < MIN_NEW) return null;
     return { from: r1(cursor), to: r1(now), audioFrom: Math.max(0, cursor - PRE), final: now - cursor >= MAX_WAIT };
   }
-  // Khoảng ngừng nói gần cuối nhất (giây tính từ đầu tail): cửa sổ 0,45 s có độ to (RMS) dưới 20% độ to cả đoạn, trong LOOK giây
+  // Khoảng ngừng nói gần cuối nhất (giây tính từ đầu tail): cửa sổ 0,7 s có độ to (RMS) dưới 20% độ to cả đoạn, trong LOOK giây
   // cuối. Cắt âm thanh ở đó thì câu cuối đã nói xong: gửi final, khỏi để server giữ câu (ASR kéo mốc chữ cuối tới hết âm thanh nên
-  // server hay tưởng câu còn dở: 17/21 lần giữ, sub trễ 14 s, thử thật 6/11). Không có (nhạc nền, nói liền): null.
-  const LOOK = 2.5, PAUSE = 0.45;
+  // server hay tưởng câu còn dở: 17/21 lần giữ, sub trễ 14 s, thử thật 6/11). Không có (nhạc nền, nói liền): null. 0,45 s cắt vụn giọng nói chậm ("Misaki and how we." | "became friends when I was in."); 0,7 s ra câu liền, trễ thêm khoảng 1 s (TikTok, 7/11).
+  const LOOK = 2.5, PAUSE = 0.7;
   function rms(a, i0, i1) { let s = 0; for (let i = i0; i < i1; i++) s += a[i] * a[i]; return Math.sqrt(s / Math.max(1, i1 - i0)); }
-  function findPause(int16, rate = RATE) {
-    const win = Math.round(PAUSE * rate), hop = Math.round(0.05 * rate);
+  function findPause(int16, rate = RATE, pause = PAUSE) {
+    const win = Math.round(pause * rate), hop = Math.round(0.05 * rate);
     if (int16.length < win * 4) return null;
     const all = rms(int16, 0, int16.length);
     const lim = Math.max(0.2 * all, 0.005 * 32768);

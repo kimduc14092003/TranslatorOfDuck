@@ -981,10 +981,13 @@ export function cuesFromAsr(meta, asr, opts = {}) {
   const before = preRoll ? speechBefore(asr, opts.offset || 0, opts.from) : [];
   if (opts.from != null) asr = windowAsr(asr, opts.offset || 0, opts.from, opts.to, preRoll);
   const cls = classifySpeech(meta, asr);
+  // Âm thanh tab (opts.live): không có hashtag, mô tả như video Douyin; giọng đọc chậm (dạy tiếng, kể chuyện) bị nhận là hát theo
+  // độ kéo dài (thử thật trên TikTok 7/11). Chỉ coi là hát khi lặp lời; không xét câu hát theo độ kéo dài.
+  if (opts.live && cls.label === 'singing' && !cls.repeat) cls.label = 'speech';
   // Đoạn tiếng Nhật, tiếng Hàn: câu chỉ là câu hát theo độ kéo dài khi có hashtag nhạc hay cả đoạn nghe như hát. Đo thật 5/11
   // (video dạy tiếng Hàn): giọng dạy nói chậm, mốc kết thúc từ kéo tới tận từ sau (0,4–1,2 s/chữ), mọi câu bị gắn ♪, và ở chế
   // độ thường thì bị bỏ. Tiếng Trung giữ như cũ.
-  const split = splitSung(asr, { slow: !(cls.src === 'ja' || cls.src === 'ko') || cls.tagMusic || cls.label === 'singing' });
+  const split = splitSung(asr, { slow: !opts.live && (!(cls.src === 'ja' || cls.src === 'ko') || cls.tagMusic || cls.label === 'singing') });
   // Cả đoạn là bài hát khi: lặp lời, hoặc quá nửa số câu là câu hát, hoặc chữ kéo dài kèm hashtag nhạc.
   // Hashtag nhạc cộng nói thưa (vlog có nhạc nền, nhiều khoảng lặng) thì không đủ: chỉ lọc từng câu.
   const song = cls.label === 'singing' && (cls.src === 'en' || (cls.repeat && slowChars(cls.medCharDur)) || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33));
@@ -1030,6 +1033,12 @@ export function liveHold(asr, offset, seconds, from) {
   const last = segs[segs.length - 1];
   const lastWord = (asr.words || []).filter(w => w.end > w.start).reduce((m, w) => Math.max(m, w.end), 0);
   if (!last || Math.max(last.end, lastWord) + offset <= end - LIVE_OPEN) return { next: round(end, 3), open: false };
+  // Câu cuối dài (nói nhanh, nhận dạng không chấm câu): chỉ giữ từ sau dấu phẩy cuối cùng, phần trước dịch luôn. Trước đây giữ cả
+  // câu: không có khoảng ngừng nào, extension chờ đủ 15 s, sub trễ 18,5 s (TikTok, 7/11).
+  const ws = (asr.words || []).filter(w => w.start >= last.start - 0.05 && w.end <= last.end + 0.05);
+  for (let i = ws.length - 2; i >= 0; i--) {
+    if (/[，、,;；：:]\s*$/.test(ws[i].text) && ws[i + 1].start + offset >= from + 1) return { next: round(ws[i + 1].start + offset, 3), open: true };
+  }
   return { next: round(last.start + offset, 3), open: true };
 }
 
@@ -1040,7 +1049,9 @@ export function liveTrim(asr, offset, from) {
   const segments = (asr.segments || []).map((x) => {
     if (x.start + offset >= from - 0.05) return x;
     if (x.end + offset <= from + 0.1) return x;   // xong trước con trỏ: windowAsr bỏ
-    const ws = words.filter(w => w.start >= x.start - 0.05 && w.end <= x.end + 0.05 && w.start + offset >= from - 0.15);
+    // Lệch 0,3 s: lượt nhận dạng sau đặt mốc chữ đầu sớm hơn chỗ cắt ("meet" bị mất, TikTok 7/11). Chỗ cắt nằm giữa một khoảng
+    // ngừng ≥ 0,7 s nên chữ cuối của phần trước kết thúc trước đó ≥ 0,35 s.
+    const ws = words.filter(w => w.start >= x.start - 0.05 && w.end <= x.end + 0.05 && w.start + offset >= from - 0.3);
     return ws.length ? { start: ws[0].start, end: ws[ws.length - 1].end, text: ws.map(w => w.text).join('').replace(/^\s+/, '') } : x;
   });
   return { ...asr, segments };
@@ -1062,7 +1073,15 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   const tAsr = Date.now();
   // live: chỉ dịch các câu bắt đầu trước câu còn dở (opts.final: dịch hết, extension đã chờ câu đó quá lâu).
   const hold = opts.live && opts.from != null ? liveHold(asr, opts.offset || 0, audio.seconds, opts.from) : null;
-  if (hold && hold.open && !opts.final) opts = { ...opts, to: Math.max(opts.from, hold.next) };
+  if (hold && hold.open && !opts.final) {
+    // Chưa có câu nào nói xong (câu dở bắt đầu ngay từ con trỏ): không dịch gì, gửi lại sau cùng âm thanh mới. Trước đây vẫn trả
+    // dòng dở, extension gửi lại cùng câu ba lần (thử thật 7/11).
+    if (hold.next - opts.from < 0.3) {
+      return { status: 'skipped', label: 'held', next: hold.next, asr: asr.provider, seconds: audio.seconds, heard: (asr.text || '').slice(0, 40), sung: 0, sentences: 0,
+        timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio } };
+    }
+    opts = { ...opts, to: hold.next };
+  }
   const prep = cuesFromAsr(meta, opts.live && opts.from != null ? liveTrim(asr, opts.offset || 0, opts.from) : asr, opts.live ? { ...opts, from: Math.max(0, opts.from - 0.2) } : opts);
   asr = prep.asr;
   const { before, cls, split, song } = prep;

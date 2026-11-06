@@ -235,6 +235,13 @@ try {
     assert.deepEqual(fin.cues.map(c => c.zh), EN_TRIM);
   });
 
+  // 12. Âm thanh tab, câu dở bắt đầu ngay từ con trỏ: không dịch gì (held), trả next để gửi lại sau.
+  const h2 = await post(base('tab123456789015', { target: 'vi', aac: wavAt(5.5), fmt: 'wav', from: 4.9, to: 5.5, audioStart: 0 }));
+  t('âm thanh tab: chưa có câu nào xong thì không trả dòng dở (held, next)', () => {
+    assert.equal(h2.status, 'skipped', JSON.stringify(h2)); assert.equal(h2.label, 'held');
+    assert.ok(h2.next >= 4.9 && h2.next < 5.2, String(h2.next)); assert.equal(h2.cues, undefined);
+  });
+
   t('log server ghi nguồn tiếng Anh, và lần hiện bản chép không dịch', () => {
     assert.match(log, /nguồn tiếng Anh/);
     assert.match(log, /hiện bản chép, không dịch/);
