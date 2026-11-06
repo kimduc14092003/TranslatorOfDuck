@@ -1,7 +1,7 @@
 // Thử đường dự phòng (âm thanh tab, trang bất kỳ) trên một trang thật: server đo riêng (cổng 8788, cache trống), Chromium riêng
 // (cổng 9334, hồ sơ tạm) với cờ --allowlisted-extension-id để bật thu âm thanh tab không cần bấm popup. Ghi mỗi 0,5 s: giờ video,
 // chữ sub, nhãn trễ; xong in tóm tắt và xoá dữ liệu (--keep để giữ).
-//   node tablive-real.mjs <url trang> [--seconds 90] [--target vi|en] [--keep] [--out <thư mục>]
+//   node tablive-real.mjs <url trang> [--next-at 30,60] [--seconds 90] [--target vi|en] [--keep] [--out <thư mục>]
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -40,28 +40,32 @@ try {
   // ngay khi trang vừa tải, trước khi video kịp phát ra loa (đang thu thì Chrome không phát tiếng tab).
   await setSettings(sw, { server: server.url, target, liveMonitor: false, ...(a.pause ? { livePause: Number(a.pause) } : {}) });
   const page = ctx.pages()[0] || await ctx.newPage();
-  await page.goto('about:blank#tod');
+  // Bật thu trên một trang thường (trang /health của server đo): about:blank không tiêm được lớp sub nên extension từ chối bật.
+  await page.goto(server.url + '/health');
   const r = await sw.evaluate(async () => { const [t] = await chrome.tabs.query({ active: true }); return tabStart(t.id); });
   console.log('bật thu:', JSON.stringify(r));
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await sw.evaluate(async () => { const { liveTab } = await chrome.storage.session.get('liveTab'); await inject(liveTab); });
   for (let i = 0; i < 60; i++) {
-    const playing = await page.evaluate(() => { const v = document.querySelector('video'); if (v) v.muted = false; if (v && v.paused) v.play().catch(() => {}); return !!v && !v.paused && v.currentTime > 0.5; }).catch(() => false);
+    const playing = await page.evaluate(() => { const v = [...document.querySelectorAll('video')].filter((x) => x.getBoundingClientRect().width * x.getBoundingClientRect().height > 0).sort((p, q) => { const r = (x) => x.getBoundingClientRect(); return r(q).width * r(q).height - r(p).width * r(p).height; })[0]; if (v) v.muted = false; if (v && v.paused) v.play().catch(() => {}); return !!v && !v.paused && v.currentTime > 0.5; }).catch(() => false);
     if (playing) break;
     await sleep(500);
   }
   // --seek-at giây --seek-to giây: tua video (giờ thử) ; --pause-at giây --pause-for giây: tạm dừng.
   const t0 = Date.now();
   const acts = [];
-  if (a['seek-at']) acts.push({ at: Number(a['seek-at']) * 1000, run: () => page.evaluate((x) => { document.querySelector('video').currentTime = x; }, Number(a['seek-to'] || 0)), name: 'tua tới ' + (a['seek-to'] || 0) });
+  if (a['seek-at']) acts.push({ at: Number(a['seek-at']) * 1000, run: () => page.evaluate((x) => { ([...document.querySelectorAll('video')].filter((x) => x.getBoundingClientRect().width * x.getBoundingClientRect().height > 0).sort((p, q) => { const r = (x) => x.getBoundingClientRect(); return r(q).width * r(q).height - r(p).width * r(p).height; })[0]).currentTime = x; }, Number(a['seek-to'] || 0)), name: 'tua tới ' + (a['seek-to'] || 0) });
   if (a['pause-at']) {
-    acts.push({ at: Number(a['pause-at']) * 1000, run: () => page.evaluate(() => document.querySelector('video').pause()), name: 'tạm dừng' });
-    acts.push({ at: (Number(a['pause-at']) + Number(a['pause-for'] || 5)) * 1000, run: () => page.evaluate(() => document.querySelector('video').play()), name: 'phát tiếp' });
+    acts.push({ at: Number(a['pause-at']) * 1000, run: () => page.evaluate(() => ([...document.querySelectorAll('video')].filter((x) => x.getBoundingClientRect().width * x.getBoundingClientRect().height > 0).sort((p, q) => { const r = (x) => x.getBoundingClientRect(); return r(q).width * r(q).height - r(p).width * r(p).height; })[0]).pause()), name: 'tạm dừng' });
+    acts.push({ at: (Number(a['pause-at']) + Number(a['pause-for'] || 5)) * 1000, run: () => page.evaluate(() => ([...document.querySelectorAll('video')].filter((x) => x.getBoundingClientRect().width * x.getBoundingClientRect().height > 0).sort((p, q) => { const r = (x) => x.getBoundingClientRect(); return r(q).width * r(q).height - r(p).width * r(p).height; })[0]).play()), name: 'phát tiếp' });
   }
+  // --next-at giây[,giây…]: nhấn mũi tên xuống (sang video kế trong feed, như lướt Douyin), rồi bật tiếng video mới.
+  for (const x of String(a['next-at'] || '').split(',').filter(Boolean)) acts.push({ at: Number(x) * 1000, name: 'sang video kế',
+    run: async () => { await page.keyboard.press('ArrowDown'); await sleep(1500); await page.evaluate(() => { const v = [...document.querySelectorAll('video')].filter((x) => x.getBoundingClientRect().width * x.getBoundingClientRect().height > 0).sort((p, q) => { const r = (x) => x.getBoundingClientRect(); return r(q).width * r(q).height - r(p).width * r(p).height; })[0]; if (v) { v.muted = false; if (v.paused) v.play().catch(() => {}); } }); } });
   while (Date.now() - t0 < seconds * 1000) {
     for (const x of acts) if (!x.done && Date.now() - t0 >= x.at) { x.done = true; await x.run().catch(() => {}); samples.push({ ms: Date.now() - t0, act: x.name }); }
     const s = await page.evaluate(() => {
-      const v = document.querySelector('video');
+      const v = [...document.querySelectorAll('video')].filter((x) => x.getBoundingClientRect().width * x.getBoundingClientRect().height > 0).sort((p, q) => { const r = (x) => x.getBoundingClientRect(); return r(q).width * r(q).height - r(p).width * r(p).height; })[0];
       const host = [...document.querySelectorAll('div')].find((d) => d.shadowRoot && d.shadowRoot.querySelector('.badge'));
       const line = host && host.shadowRoot.querySelector('.line');
       return { vt: v ? Math.round(v.currentTime * 10) / 10 : null, sub: line && !line.hidden ? line.textContent : '', badge: host ? host.shadowRoot.querySelector('.badge').textContent : null };

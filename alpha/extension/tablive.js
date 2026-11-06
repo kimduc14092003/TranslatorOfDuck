@@ -86,16 +86,19 @@
   }
   // Giờ video (giây) lúc đồng hồ máy là at (ms), từ các mẫu tab.js ghi mỗi 100 ms: [{ w, vt, playing, rate }] theo thứ tự w. Mẫu
   // gần nhất trước at, cộng thời gian đã phát từ đó nếu đang phát. Không có mẫu nào trước at (hay quá 2 s): null.
-  function videoTimeAt(samples, at) {
+  // videoAt: kèm key (video nào: thẻ video, nguồn phát, đường dẫn trang). Lướt feed sang video kế thì dòng của video trước
+  // không hiện trên video mới (thử YouTube Shorts, TikTok 7/11: dòng short đầu hiện lại khi short sau quay về 0:00).
+  function videoAt(samples, at) {
     let s = null;
     for (const x of samples) { if (x.w > at) break; s = x; }
     if (!s || at - s.w > 2000) return null;
-    return s.vt + (s.playing ? ((at - s.w) / 1000) * (s.rate || 1) : 0);
+    return { vt: s.vt + (s.playing ? ((at - s.w) / 1000) * (s.rate || 1) : 0), key: s.key };
   }
+  function videoTimeAt(samples, at) { const x = videoAt(samples, at); return x ? x.vt : null; }
   // Dòng x đã chiếm phần lớn (> 50% dòng ngắn hơn) khoảng [a, b) (ms) chưa.
   function overlaps(x, a, b) {
     const o = Math.min(x.until, b) - Math.max(x.at, a);
     return o > 0.5 * Math.max(1, Math.min(x.until - x.at, b - a));
   }
-  root.TodLive = { RATE, W, PRE, MIN_NEW, MAX_WAIT, QUIET, findPause, MIN_DELAY, MAX_DELAY, plan, advance, peak, wav, delayFrom, wallOf, current, videoTimeAt, overlaps };
+  root.TodLive = { RATE, W, PRE, MIN_NEW, MAX_WAIT, QUIET, findPause, MIN_DELAY, MAX_DELAY, plan, advance, peak, wav, delayFrom, wallOf, current, videoAt, videoTimeAt, overlaps };
 })(globalThis);

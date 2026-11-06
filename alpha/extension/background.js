@@ -9,7 +9,7 @@ const pending = new Map();   // "tab:key" -> AbortController
 const BUILD = '0.2.46';
 // Đường dự phòng cho trang bất kỳ (bản thử): popup bật trên tab đang mở; offscreen.js thu âm thanh tab và gọi server, tab.js
 // (tiêm vào tab) hiện sub. Background lấy mã luồng thu (tabCapture), mở trang ẩn, chuyển tin giữa trang ẩn và tab.
-const inject = (tabId) => chrome.scripting.executeScript({ target: { tabId }, files: ['tablive.js', 'tab.js'] }).catch(() => {});
+const inject = (tabId) => chrome.scripting.executeScript({ target: { tabId }, files: ['tablive.js', 'tab.js'] });
 async function toOffscreen(m) {
   if (!(await chrome.offscreen.hasDocument())) return null;
   return chrome.runtime.sendMessage({ ...m, to: 'offscreen' }).catch(() => null);
@@ -21,7 +21,8 @@ async function tabStart(tabId) {
     await chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['USER_MEDIA'], justification: 'Thu âm thanh tab người xem bật để làm phụ đề' });
   }
   const [{ settings = {} }, tab] = await Promise.all([chrome.storage.local.get('settings'), chrome.tabs.get(tabId)]);
-  await inject(tabId);
+  // Không tiêm được lớp sub (trang của Chrome, trang chặn extension): báo lỗi, không bắt đầu thu (Astra 7/11, F12).
+  try { await inject(tabId); } catch (e) { return { ok: false, error: 'không hiện được sub trên trang này: ' + String((e && e.message) || e) }; }
   const r = await chrome.runtime.sendMessage({ to: 'offscreen', type: 'start', streamId, tabId, settings, title: tab.title || '' });
   if (r && r.ok) await chrome.storage.session.set({ liveTab: tabId });
   return r || { ok: false, error: 'trang thu âm thanh không trả lời' };
@@ -29,7 +30,7 @@ async function tabStart(tabId) {
 // Tab đang thu tải lại trang hay sang trang khác cùng trang web: tiêm lại lớp sub (khác trang web thì Chrome không cho, bỏ qua).
 chrome.tabs.onUpdated?.addListener((tabId, info) => {
   if (info.status !== 'complete') return;
-  chrome.storage.session.get('liveTab').then(({ liveTab }) => { if (liveTab === tabId) inject(tabId); }).catch(() => {});
+  chrome.storage.session.get('liveTab').then(({ liveTab }) => { if (liveTab === tabId) return inject(tabId); }).catch(() => {});
 });
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   const tab = sender.tab ? sender.tab.id : -1;

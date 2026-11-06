@@ -79,6 +79,9 @@ function tick(r) {
   // Im lặng từ con trỏ tới giờ: bỏ qua, không gửi.
   if (L.peak(slice(r, r.cursor, now)) < L.QUIET) { r.quiet++; r.cursor = r.lastTo = now; return; }
   // Cắt ở khoảng ngừng nói gần cuối nhất (nếu có): câu cuối đã xong, gửi final.
+  // Bộ đệm vòng đã ghi đè phần đầu (server chậm, chờ lâu): mốc âm thanh gửi đi phải là mẫu cũ nhất còn giữ (F11).
+  const oldest = Math.max(0, (r.n - r.ring.length) / L.RATE);
+  if (p.audioFrom < oldest) { p.audioFrom = oldest; if (r.cursor < oldest) r.cursor = oldest; }
   const pcm = slice(r, p.audioFrom, now);
   // livePause: ngưỡng khoảng ngừng (giây), chỉ để thử (tablive-real.mjs --pause).
   const pause = L.findPause(pcm, L.RATE, Number(r.settings.livePause) > 0 ? Number(r.settings.livePause) : undefined);
@@ -119,9 +122,15 @@ async function send(r, p, pcm) {
   } finally {
     if (run === r) {
       // Câu cuối còn dở: con trỏ dời về mốc câu đó (server trả next), lần sau gửi lại câu ấy cùng âm thanh mới.
-      const next = L.advance(r.cursor, p.to, o && (o.status === 'ok' || o.status === 'skipped') ? o : null);
-      if (next < p.to) r.held++;
-      r.cursor = next;
+      // Lỗi (server tắt, lỗi dịch): không dời con trỏ, gửi lại đoạn đó lần sau; lỗi 3 lần liền thì bỏ qua đoạn (F10).
+      const good = o && (o.status === 'ok' || o.status === 'skipped');
+      r.fails = good ? 0 : (r.fails || 0) + 1;
+      if (good || r.fails >= 3) {
+        const next = L.advance(r.cursor, p.to, good ? o : null);
+        if (next < p.to) r.held++;
+        r.cursor = next;
+        r.fails = 0;
+      }
       r.lastTo = p.to;
       if (o && o.status === 'ok') r.prev = [p.from, p.to];
       r.busy = false;

@@ -27,8 +27,21 @@
 
   // Video chính: thẻ video lớn nhất đang hiện, có thời lượng.
   const area = (v) => { const r = v.getBoundingClientRect(); return r.width * r.height; };
-  const mainVideo = () => [...document.querySelectorAll('video')].filter((v) => v.duration > 0 && area(v) > 0).sort((a, b) => area(b) - area(a))[0] || null;
+  // Video chính: trong các thẻ video có thời lượng, phần nằm trong khung nhìn lớn nhất, video đang phát trước. Feed tải sẵn video
+  // kế (to bằng, nằm ngoài khung nhìn, đang dừng): không chọn nhầm (Astra 7/11, F01).
+  const inView = (v) => {
+    const r = v.getBoundingClientRect();
+    const w = Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)), h = Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
+    return w * h;
+  };
+  const mainVideo = () => [...document.querySelectorAll('video')].filter((v) => v.duration > 0 && inView(v) > 0)
+    .sort((a, b) => (b.paused ? 0 : 1) - (a.paused ? 0 : 1) || inView(b) - inView(a))[0] || null;
   let video = null;
+  // Khoá của video đang xem: thẻ video (đánh số), nguồn phát, đường dẫn trang. Feed dùng lại một thẻ cho nhiều video (đổi src)
+  // hay đổi đường dẫn mỗi video (Shorts): khoá đổi theo.
+  const ids = new WeakMap();
+  let nextId = 1;
+  const keyOf = (v) => { if (!ids.has(v)) ids.set(v, nextId++); return ids.get(v) + '|' + (v.currentSrc || v.src || '') + '|' + location.pathname; };
   const samples = [];   // [{ w, vt, playing, rate }]: giờ video theo đồng hồ máy, 2 phút gần nhất
   // Tua: mọi dòng đã có hiện đúng lúc nói (lag 0). Dòng nói trước điểm tua thì không hiện lại; trước đây chỉ bỏ trễ cho dòng sau
   // điểm tua, dòng nói ở 0:13 vẫn hiện lại ở 0:21 sau khi tua về 0:20 (thử thật 6/11).
@@ -40,17 +53,26 @@
     if (video) video.addEventListener('seeking', onSeeking);
   };
 
+  let wasMuted = false;
   let wcues = [], vcues = [], lates = [], delay = L.delayFrom([]), note = 'đang nghe…';
   const showBadge = () => { badge.textContent = `TOD · trễ ${(delay / 1000).toFixed(1)} s · ${note}`; };
   showBadge();
   const timer = setInterval(() => {
+    // Trang gỡ lớp sub (trang một-trang đổi nội dung): gắn lại (F08).
+    if (!host.isConnected) place();
     watch(mainVideo());
     const w = Date.now();
     if (video) {
-      samples.push({ w, vt: video.currentTime, playing: !video.paused && !video.seeking, rate: video.playbackRate || 1 });
+      // Video quay về đầu (vòng lặp) hay nhảy lùi mà không có sự kiện tua: xử lý như tua (F03).
+      const last = samples[samples.length - 1];
+      if (last && last.key === keyOf(video) && video.currentTime < last.vt - 1) onSeeking();
+      const muted = video.muted || video.volume === 0;
+      if (muted !== wasMuted) { wasMuted = muted; note = muted ? 'video đang tắt tiếng: bật tiếng để dịch' : 'đang nghe…'; showBadge(); }
+      samples.push({ w, vt: video.currentTime, playing: !video.paused && !video.seeking, rate: video.playbackRate || 1, key: keyOf(video) });
       while (samples.length && samples[0].w < w - 120000) samples.shift();
     }
-    const c = (video && L.current(vcues, video.currentTime * 1000)) || L.current(wcues, w - delay);
+    const cur = video ? keyOf(video) : null;
+    const c = (video && L.current(vcues.filter((x) => x.key === cur), video.currentTime * 1000)) || L.current(wcues, w - delay);
     if (c) { lineEl.textContent = c.text; lineEl.hidden = false; } else lineEl.hidden = true;
     if (lates.length > 50) lates = lates.slice(-20);
     if (wcues.length > 300) wcues = wcues.slice(-200);
@@ -66,15 +88,16 @@
         // ws, we: giờ máy lúc câu được nghe (offscreen.js tính theo mốc của từng mẫu).
         if (typeof c.ws !== 'number') continue;
         const at = c.ws, until = typeof c.we === 'number' ? c.we : c.ws + 2000;
-        const vt = video ? L.videoTimeAt(samples, at) : null;
-        if (vt != null) {
-          const vs = vt * 1000, ve = vs + (until - at);
+        const va = video ? L.videoAt(samples, at) : null;
+        if (va) {
+          const vs = va.vt * 1000, ve = vs + (until - at);
           // Đã có dòng chiếm phần lớn khoảng giờ video đó (tua lại rồi nghe lại, lần nhận dạng sau có thể ra chữ hơi khác): giữ dòng cũ.
-          if (vcues.some((x) => L.overlaps(x, vs, ve))) continue;
+          if (vcues.some((x) => x.key === va.key && L.overlaps(x, vs, ve))) continue;
           // Trễ tính theo giờ video: dòng về lúc video đã chạy tới đâu so với lúc câu được nói.
-          lates.push(video.currentTime * 1000 - vs);
+          // Độ muộn chỉ tính khi dòng thuộc video đang xem (lướt sang video khác thì giờ video không so được).
+          if (va.key === keyOf(video)) lates.push(video.currentTime * 1000 - vs);
           delay = L.delayFrom(lates);
-          vcues.push({ at: vs, until: ve, lag: delay, text });
+          vcues.push({ at: vs, until: ve, lag: delay, text, key: va.key });
         } else {
           lates.push(now - at);
           delay = L.delayFrom(lates);

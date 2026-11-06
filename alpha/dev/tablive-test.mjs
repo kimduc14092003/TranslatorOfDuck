@@ -85,7 +85,7 @@ await t('dòng đang hiện: dòng mới nhất đã tới giờ, còn trong th�
 });
 
 // background.js với chrome giả: ghi lại các lời gọi.
-function loadBackground() {
+function loadBackground({ injectFails = false } = {}) {
   const calls = [], toTab = [], session = {};
   let listener = null, hasDoc = false;
   const chrome = {
@@ -96,7 +96,7 @@ function loadBackground() {
     tabs: { sendMessage: (tab, m) => { toTab.push({ tab, ...m }); return Promise.resolve(); }, get: async (id) => ({ id, title: 'A page' }), onUpdated: { addListener: () => {} } },
     tabCapture: { getMediaStreamId: async (o) => { calls.push(['capture', o]); return 'stream-1'; } },
     offscreen: { hasDocument: async () => hasDoc, createDocument: async (o) => { calls.push(['offscreen', o]); hasDoc = true; } },
-    scripting: { executeScript: async (o) => { calls.push(['inject', o]); } },
+    scripting: { executeScript: async (o) => { calls.push(['inject', o]); if (injectFails) throw new Error('Cannot access a chrome:// URL'); } },
     storage: { local: { get: async () => ({ settings: { target: 'en', server: 'http://127.0.0.1:8787' } }) },
       session: { set: async (o) => Object.assign(session, o), get: async () => session, remove: async (k) => { delete session[k]; } } },
   };
@@ -125,6 +125,12 @@ await t('giờ video lúc câu được nghe: từ mẫu gần nhất trước �
   assert.equal(L.videoTimeAt([{ w: 0, vt: 10, playing: true, rate: 2 }], 500), 11);
 });
 
+await t('video nào: mẫu mang khoá video, dòng lấy khoá của mẫu lúc câu được nghe', () => {
+  const s = [{ w: 0, vt: 20, playing: true, rate: 1, key: 'A' }, { w: 1000, vt: 0.1, playing: true, rate: 1, key: 'B' }];
+  assert.equal(JSON.stringify(L.videoAt(s, 500)), JSON.stringify({ vt: 20.5, key: 'A' }));
+  assert.equal(L.videoAt(s, 1200).key, 'B');
+});
+
 await t('dòng trùng giờ: chiếm quá nửa dòng ngắn hơn thì coi là trùng', () => {
   const x = { at: 45000, until: 48000 };
   assert.equal(L.overlaps(x, 45400, 48600), true);
@@ -143,6 +149,14 @@ await t('popup bật: lấy mã luồng thu của tab, mở trang ẩn, tiêm l�
   const start = b.calls[3][1];
   assert.equal(start.to, 'offscreen'); assert.equal(start.streamId, 'stream-1'); assert.equal(start.settings.target, 'en'); assert.equal(start.title, 'A page');
   assert.equal(b.session.liveTab, 7);
+});
+
+await t('không tiêm được lớp sub (trang của Chrome): báo lỗi, không bắt đầu thu', async () => {
+  const b = loadBackground({ injectFails: true });
+  const r = await b.send({ type: 'tab-start', tabId: 7 });
+  assert.equal(r.ok, false); assert.match(r.error, /không hiện được sub/);
+  assert.ok(!b.calls.some(c => c[0] === 'runtime' && c[1].type === 'start'));
+  assert.equal(b.session.liveTab, undefined);
 });
 
 await t('tin của trang ẩn chuyển cho đúng tab (tab-cues, tab-state); tắt thì quên tab đang thu; tin từ tab không được giả làm trang ẩn', async () => {

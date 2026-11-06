@@ -1709,6 +1709,23 @@ Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt
 - **Lần cuối** (70 s mỗi video, sang tiếng Việt): tiếng Trung 15/15 lần gửi có lời, 125/139 lần chụp có sub, trễ 6–9 s; tiếng Anh 105/139, trễ 4,5–10 s; không ♪ nhầm, không mất chữ thấy được.
 - Còn lại: đôi khi một chữ ở chỗ cắt hiện ở cả hai dòng ("…眼中的好。" | "好老师…"); người nói chậm vẫn có dòng cụt ("year," | "my friend Jocelyn.").
 
+### 6ay (tiếp). Các trang video ngắn kiểu Douyin, có Astra soát (7/11)
+
+- **Thử thật** (khách, không đăng nhập, `tablive-real.mjs --next-at 20,40`: nhấn mũi tên xuống sang video kế):
+
+  | Trang | Kết quả |
+  |---|---|
+  | YouTube Shorts (`/shorts`) | chạy; trễ 8 s sau lúc đầu (lượt đầu tới 17,5 s) |
+  | TikTok For You | chạy; video tự lặp thì dòng hiện đúng lúc nói |
+  | Instagram Reels (`/reels/`) | chạy với khách; Instagram hay tự tắt tiếng reel, lớp sub báo "video đang tắt tiếng" |
+  | Facebook Reels | không có video: đòi đăng nhập |
+  | Kuaishou (`/new-reco`) | trang không tải trong 30 s từ Việt Nam |
+  | Xiaohongshu (`/explore`) | trang khám phá là ảnh, không tự phát video; chưa thử trang một ghi chú video |
+
+- **Lỗi lớn tìm thấy khi lướt** (cả tôi đo thật lẫn Astra dựng probe, F02): dòng của video trước hiện trên video mới (dòng chỉ gắn giờ video). Sửa: mỗi mẫu giờ video và mỗi dòng mang khoá video (thẻ video, nguồn phát, đường dẫn trang; `videoAt`), chỉ hiện dòng của video đang xem.
+- **Astra (Codex, effort high, 8 phút, bản `git archive` không .env, probe offline):** 12 phát hiện. Đã sửa: F01 chọn video đang phát và trong khung nhìn; F03 quay về đầu không có sự kiện tua; F05 báo tắt tiếng; F08 lớp sub bị gỡ thì gắn lại; F10 lỗi server thì gửi lại đoạn đó (bỏ sau 3 lần); F11 mốc âm thanh khi bộ đệm vòng bị ghi đè; F12 không tiêm được lớp sub thì báo lỗi, không thu.
+- **Chưa sửa:** F04 video trong shadow DOM hay iframe; F06 vị trí sub theo khung video; F07 toàn màn hình kiểu gốc của thẻ video (lớp sub nằm ngoài lớp toàn màn hình); F09 một lượt thu chung id nên ngữ cảnh dịch, bảng xưng hô mang sang video sau.
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).
