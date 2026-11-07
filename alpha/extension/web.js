@@ -46,12 +46,14 @@
     else if (m.type === 'data') {
       if (!okId(m.sb) || !(m.bytes instanceof ArrayBuffer) || m.bytes.byteLength > MAX_APPEND || !Number.isFinite(m.offset)) return;
       const tr = s.tracks.get(m.sb) || s.tracks.set(m.sb, { init: null, info: null, segs: [], bytes: 0 }).get(m.sb);
-      const u8 = new Uint8Array(m.bytes);
+      let u8 = new Uint8Array(m.bytes);
       let segs = [];
       try {
         // Mẩu init và mẩu dữ liệu có thể nằm chung một lần nạp (G02): lấy init, rồi đọc tiếp các mảnh phía sau.
         const info = F.readInit(u8);
-        if (info) { tr.init = u8.slice(0, info.end); tr.info = info; }
+        if (info) { tr.init = info.mux ? info.initBytes : u8.slice(0, info.end); tr.info = info; }
+        // Mẩu gộp hình + tiếng: chỉ giữ phần âm thanh (bản chép mới, nhỏ hơn hàng chục lần), phần hình bỏ luôn.
+        if (tr.info && tr.info.mux) u8 = F.extractAudio(u8, tr.info);
         segs = F.readSegments(u8, tr.info);
       } catch (_) { return; }
       for (const g of segs) {

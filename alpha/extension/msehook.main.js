@@ -9,8 +9,9 @@
   if (MS0 && MS0.prototype.addSourceBuffer.__tod) return;
   const VIDEO_CODEC = /avc|hvc|hev|vp0?[89]|av01|mp4v/i;
   const AUDIO_CODEC = /mp4a|opus|vorbis|ac-3|ec-3|flac/i;
-  // Âm thanh riêng: codecs chỉ có âm thanh (TikTok ghi kiểu "video/mp4;codecs=mp4a…"); mẩu gộp hình + tiếng thì bỏ (quá nặng).
-  const audioOnly = (mime) => AUDIO_CODEC.test(mime) && !VIDEO_CODEC.test(mime);
+  // Âm thanh riêng: codecs chỉ có âm thanh (TikTok ghi kiểu "video/mp4;codecs=mp4a…"). Mẩu gộp hình + tiếng (huangguoai.com:
+  // "video/mp4;codecs=mp4a.40.2,hvc1…") cũng chép, đánh dấu mux: web.js tách riêng phần âm thanh rồi bỏ phần hình ngay.
+  const hasAudio = (mime) => AUDIO_CODEC.test(mime);
   let msN = 0, sbN = 0;
   const msId = new WeakMap(), msUrl = new WeakMap();
   const post = (m, transfer) => window.postMessage({ __todMse: 1, ...m }, '*', transfer || []);
@@ -32,9 +33,9 @@
     ctor.prototype.addSourceBuffer = function (mime) {
       const sb = add.call(this, mime);
       if (!msId.has(this)) msId.set(this, ++msN);
-      if (!audioOnly(String(mime))) return sb;
+      if (!hasAudio(String(mime))) return sb;
       const ms = msId.get(this), id = ++sbN;
-      post({ type: 'sb', ms, sb: id, mime: String(mime), url: msUrl.get(this) || null });
+      post({ type: 'sb', ms, sb: id, mime: String(mime), mux: VIDEO_CODEC.test(String(mime)), url: msUrl.get(this) || null });
       const app = sb.appendBuffer;
       sb.appendBuffer = function (buf) {
         try {

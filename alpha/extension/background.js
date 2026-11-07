@@ -6,7 +6,7 @@ const pending = new Map();   // "tab:key" -> AbortController
 // để biết service worker đang chạy có phải bản cũ không (Chrome có thể giữ background.js bản trước: content.js, workerReady)
 // và có đọc được NDJSON không (ndjson: gửi stream: true được), có chuyển bản rút gọn sau không (condensed: gửi condenseLater: true
 // được, từ 0.2.42).
-const BUILD = '0.2.48';
+const BUILD = '0.2.49';
 // Bộ đọc chung (dịch trước trên trang bất kỳ người xem bật): popup xin quyền đúng trang web đó (optional_host_permissions), rồi
 // background đăng ký msehook.main.js (thế giới trang) + fmp4.js, web.js cho trang đó và tải lại tab. Trang chặn chặt (DRM) hay đã
 // có đường riêng thì không bật.

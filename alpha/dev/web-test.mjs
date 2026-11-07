@@ -53,6 +53,49 @@ await t('mẩu thường: mốc bắt đầu (tfdt) và độ dài (trun), liề
   assert.equal(gg.length, 2); assert.equal(gg[1].byteStart, frags[0].length); assert.equal(gg[1].byteEnd, two.length);
 });
 
+// Mẩu gộp hình + tiếng (như huangguoai.com: HEVC + AAC chung một SourceBuffer): tách riêng âm thanh, ffmpeg giải được, đúng mốc.
+await t('mẩu gộp hình + tiếng: tách riêng âm thanh thành fMP4 chỉ có tiếng, ffmpeg giải được, mốc liền nhau 0–12 s', () => {
+  const mf = path.join(TMP, 'mux.mp4');
+  execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=25:duration=12', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=12',
+    '-c:v', 'mpeg4', '-g', '25', '-c:a', 'aac', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-frag_duration', '1000000', mf]);
+  const mb = new Uint8Array(fs.readFileSync(mf)), md = new DataView(mb.buffer);
+  const tp = [];
+  for (let o = 0; o + 8 <= mb.length;) { const size = md.getUint32(o); tp.push({ type: String.fromCharCode(...mb.slice(o + 4, o + 8)), at: o, size }); o += size; }
+  const mv = tp.find((b) => b.type === 'moov');
+  const info = F.readInit(mb.slice(0, mv.at + mv.size));
+  assert.ok(info.mux && info.trackId > 0 && info.initBytes, JSON.stringify({ mux: info.mux, id: info.trackId }));
+  assert.equal(info.timescale, 44100);
+  // Nạp như trình phát: hai mảnh một lần.
+  const fr = [];
+  for (let i = 0; i < tp.length; i++) if (tp[i].type === 'moof') fr.push(mb.slice(tp[i].at, tp[i + 1].at + tp[i + 1].size));
+  const parts = [], segs = [];
+  let audioBytes = 0, muxBytes = 0;
+  for (let i = 0; i < fr.length; i += 2) {
+    const chunk = new Uint8Array([...fr[i], ...(fr[i + 1] || [])]);
+    muxBytes += chunk.length;
+    const a = F.extractAudio(chunk, info);
+    audioBytes += a.length;
+    parts.push(a);
+    segs.push(...F.readSegments(a, info));
+  }
+  assert.ok(segs.length >= 6, String(segs.length));
+  assert.ok(Math.abs(segs[0].start) < 0.1);
+  for (let i = 1; i < segs.length; i++) assert.ok(Math.abs(segs[i].start - segs[i - 1].end) < 0.03, `${segs[i - 1].end} → ${segs[i].start}`);
+  assert.ok(Math.abs(segs.at(-1).end - 12) < 0.2, String(segs.at(-1).end));
+  assert.ok(audioBytes < muxBytes / 3, `${audioBytes} / ${muxBytes}`);
+  // Ghép init chỉ-tiếng + các mảnh chỉ-tiếng: ffmpeg thấy đúng một luồng âm thanh, giải hết không lỗi, dài ~12 s.
+  const out = path.join(TMP, 'audio-only.mp4');
+  fs.writeFileSync(out, Buffer.concat([info.initBytes, ...parts]));
+  let log = '';
+  try { execFileSync(ffmpeg, ['-v', 'error', '-i', out, '-f', 'wav', path.join(TMP, 'a.wav')], { stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { log = String(e.stderr); }
+  assert.equal(log, '', log);
+  const wav = fs.statSync(path.join(TMP, 'a.wav')).size, secs = (wav - 44) / (44100 * 2);
+  assert.ok(Math.abs(secs - 12) < 0.3, String(secs));
+  let probe = '';
+  try { execFileSync(ffmpeg, ['-hide_banner', '-i', out], { stdio: ['ignore', 'pipe', 'pipe'] }); } catch (e) { probe = String(e.stderr); }
+  assert.ok(/Audio: aac/.test(probe) && !/Video:/.test(probe), probe);
+});
+
 // background.js: bật bộ đọc cho một trang (đăng ký script, tải lại tab); trang chặn chặt thì không.
 function loadBackground(granted = true, store = {}) {
   let listener = null;
