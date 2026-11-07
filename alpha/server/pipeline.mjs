@@ -49,14 +49,25 @@ const looksOpenAI = (v) => /^sk-(proj|svcacct|admin)-/.test(v || '') || /^sk-[A-
 export const misplacedOpenAIKey = ['GEMINI_API_KEY', 'DASHSCOPE_API_KEY', 'GROQ_API_KEY'].find(n => looksOpenAI(ENV[n])) || null;
 if (!ENV.OPENAI_API_KEY && misplacedOpenAIKey) ENV.OPENAI_API_KEY = ENV[misplacedOpenAIKey];
 for (const n of ['GEMINI_API_KEY', 'DASHSCOPE_API_KEY']) if (looksOpenAI(ENV[n])) delete ENV[n];
-const mtProvider = () => (ENV.OPENAI_API_KEY ? 'openai' : ENV.GEMINI_API_KEY ? 'gemini' : null);
+// Dịch bằng Qwen của Alibaba (DashScope, cổng cùng kiểu API với OpenAI, dùng chung DASHSCOPE_API_KEY với nhận dạng giọng
+// nói): MT_PROVIDER=qwen, hoặc tự chọn khi không có key OpenAI, Gemini. Chủ dự án hết key OpenAI 7/11.
+const QWEN_BASE = ENV.QWEN_BASE || DASHSCOPE_BASE + '/compatible-mode/v1';
+const QWEN_MODEL = ENV.QWEN_MODEL || 'qwen-flash';
+const MT_PROVIDER = String(ENV.MT_PROVIDER || '').toLowerCase();
+const mtProvider = () => {
+  if (MT_PROVIDER === 'qwen') return ENV.DASHSCOPE_API_KEY ? 'qwen' : null;
+  if (MT_PROVIDER === 'openai') return ENV.OPENAI_API_KEY ? 'openai' : null;
+  if (MT_PROVIDER === 'gemini') return ENV.GEMINI_API_KEY ? 'gemini' : null;
+  return ENV.OPENAI_API_KEY ? 'openai' : ENV.GEMINI_API_KEY ? 'gemini' : ENV.DASHSCOPE_API_KEY ? 'qwen' : null;
+};
+const MT_MODEL = { openai: OPENAI_MODEL, gemini: GEMINI_MODEL, qwen: QWEN_MODEL };
 export function config() {
   const mt = mtProvider();
   // asrModel: model nhận dạng đang dùng (null khi mọi model đều hết hạn mức); asrFallback: đang dùng model dự phòng.
   const dash = !!ENV.DASHSCOPE_API_KEY, asrModel = dash ? asrModelNow() : null;
   return { asr: dash ? 'funasr' : (ENV.GEMINI_API_KEY ? 'gemini' : null),
     ...(dash ? { asrModel, asrModels: asrModels(), ...(asrModel && asrModel !== FUNASR_MODEL ? { asrFallback: true } : {}) } : {}), mt,
-    model: mt === 'openai' ? OPENAI_MODEL : GEMINI_MODEL, ...(mt === 'openai' && OPENAI_REASONING_EFFORT ? { effort: OPENAI_REASONING_EFFORT } : {}),
+    model: MT_MODEL[mt] || null, ...(mt === 'openai' && OPENAI_REASONING_EFFORT ? { effort: OPENAI_REASONING_EFFORT } : {}),
     maxSeconds: MAX_SECONDS };
 }
 
@@ -171,9 +182,9 @@ const MT_LIMIT = mtLimit(MT_TIMEOUT_MS);
 // DAY_QUOTA_PAUSE_MS, trong lúc đó báo lỗi ngay, không gọi dịch vụ.
 const DAY_QUOTA_PAUSE_MS = 10 * 60 * 1000;
 const dayQuotaUntil = new Map();   // dịch vụ → thời điểm thử lại
-const serviceOf = (url) => url.startsWith(OPENAI_BASE) ? 'OpenAI' : url.startsWith(GEMINI_BASE) ? 'Gemini'
+const serviceOf = (url) => url.startsWith(OPENAI_BASE) ? 'OpenAI' : url.startsWith(GEMINI_BASE) ? 'Gemini' : url.startsWith(QWEN_BASE) ? 'Qwen'
   : url.startsWith(DASHSCOPE_BASE) ? 'DashScope' : new URL(url).host;
-const QUOTA_WHY = { Gemini: 'đã hết lượt gọi trong ngày (gói miễn phí)', OpenAI: 'hết hạn mức hoặc hết tiền trong tài khoản' };
+const QUOTA_WHY = { Gemini: 'đã hết lượt gọi trong ngày (gói miễn phí)', OpenAI: 'hết hạn mức hoặc hết tiền trong tài khoản', Qwen: 'hết hạn mức (gói miễn phí) hoặc hết tiền trong tài khoản Alibaba Cloud' };
 function dayQuotaError(service) {
   const why = service !== 'DashScope' ? QUOTA_WHY[service] || 'hết hạn mức'
     : 'hết hạn mức nhận dạng giọng nói' + (asrModels().length > 1 ? ' (cả model dự phòng)' : '');
@@ -449,32 +460,38 @@ const toJsonSchema = (x) => {
   return out;
 };
 // onText (nếu có): gọi dạng stream, onText(nội dung JSON đã nhận tới lúc đó) mỗi lần có chữ mới.
-async function openaiJson(text, schema, temperature, signal, timeoutMs = 10000, onText = null) {
-  if (!onText) return openaiCall(text, schema, temperature, signal, timeoutMs, null);
+const OPENAI_CFG = { base: OPENAI_BASE, model: OPENAI_MODEL, key: () => ENV.OPENAI_API_KEY, effort: OPENAI_REASONING_EFFORT, name: 'OpenAI' };
+const QWEN_CFG = { base: QWEN_BASE, model: QWEN_MODEL, key: () => ENV.DASHSCOPE_API_KEY, effort: '', name: 'Qwen' };
+async function openaiJson(text, schema, temperature, signal, timeoutMs = 10000, onText = null, cfg = OPENAI_CFG) {
+  if (!onText) return openaiCall(text, schema, temperature, signal, timeoutMs, null, cfg);
   // Dịch vụ cùng kiểu API (OPENAI_BASE) không nhận stream: true (HTTP 400): gọi lại không stream.
-  try { return await openaiCall(text, schema, temperature, signal, timeoutMs, onText); } catch (e) {
-    if (e.status === 400) return openaiCall(text, schema, temperature, signal, timeoutMs, null);
+  try { return await openaiCall(text, schema, temperature, signal, timeoutMs, onText, cfg); } catch (e) {
+    if (e.status === 400) return openaiCall(text, schema, temperature, signal, timeoutMs, null, cfg);
     throw e;
   }
 }
-async function openaiCall(text, schema, temperature, signal, timeoutMs, onText) {
-  const reasoning = OPENAI_REASONING_EFFORT || /^(o\d|gpt-([5-9]|\d\d))/.test(OPENAI_MODEL);   // model suy luận không nhận temperature
-  const b = await httpJson(`${OPENAI_BASE}/chat/completions`, {
+async function openaiCall(text, schema, temperature, signal, timeoutMs, onText, cfg = OPENAI_CFG) {
+  const reasoning = cfg.effort || /^(o\d|gpt-([5-9]|\d\d))/.test(cfg.model);   // model suy luận không nhận temperature
+  const b = await httpJson(`${cfg.base}/chat/completions`, {
     method: 'POST', ...(onText ? { onText } : {}),
-    signal, headers: { Authorization: 'Bearer ' + ENV.OPENAI_API_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: OPENAI_MODEL, messages: [{ role: 'user', content: text }], ...(reasoning ? {} : { temperature }), ...(onText ? { stream: true } : {}),
-      ...(OPENAI_REASONING_EFFORT ? { reasoning_effort: OPENAI_REASONING_EFFORT } : {}),
+    signal, headers: { Authorization: 'Bearer ' + cfg.key(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: cfg.model, messages: [{ role: 'user', content: text }], ...(reasoning ? {} : { temperature }), ...(onText ? { stream: true } : {}),
+      ...(cfg.effort ? { reasoning_effort: cfg.effort } : {}),
+      // Qwen3 (qwen-flash, qwen-plus): tắt chế độ suy nghĩ, dịch phụ đề không cần và chậm hơn nhiều.
+      ...(cfg === QWEN_CFG ? { enable_thinking: false } : {}),
       response_format: { type: 'json_schema', json_schema: { name: 'subtitles', strict: true, schema: toJsonSchema(schema) } } }),
   }, timeoutMs);
   const m = b.choices && b.choices[0] && b.choices[0].message;
-  if (m && m.refusal) throw new Error('OpenAI từ chối: ' + String(m.refusal).slice(0, 100));
+  if (m && m.refusal) throw new Error(cfg.name + ' từ chối: ' + String(m.refusal).slice(0, 100));
   return JSON.parse((m && m.content) || '{}');
 }
 // Lượt gọi model dịch: hạn tăng dần (MT_LIMIT). httpJson nhận hạn là số (cố định) hay hàm (theo lần gọi).
 // onText: chỉ OpenAI (stream); Gemini trả một lần như trước.
 const mtJson = (text, schema, temperature, signal, onText = null) =>
-  (mtProvider() === 'openai' ? openaiJson(text, schema, temperature, signal, MT_LIMIT, onText) : geminiJson([{ text }], schema, temperature, signal, MT_LIMIT));
-const mtService = () => (mtProvider() === 'openai' ? 'OpenAI' : 'Gemini');
+  (mtProvider() === 'openai' ? openaiJson(text, schema, temperature, signal, MT_LIMIT, onText)
+    : mtProvider() === 'qwen' ? openaiJson(text, schema, temperature, signal, MT_LIMIT, onText, QWEN_CFG)
+    : geminiJson([{ text }], schema, temperature, signal, MT_LIMIT));
+const mtService = () => ({ openai: 'OpenAI', qwen: 'Qwen' })[mtProvider()] || 'Gemini';
 async function geminiAsr(mp3, signal) {
   const schema = { type: 'OBJECT', properties: { segments: { type: 'ARRAY', items: { type: 'OBJECT', properties: {
     start: { type: 'NUMBER' }, end: { type: 'NUMBER' }, text: { type: 'STRING' } }, required: ['start', 'end', 'text'] } } }, required: ['segments'] };
@@ -516,7 +533,7 @@ export function warmProviders() {
   if (ENV.DASHSCOPE_API_KEY) { if (!pausedError('DashScope') && asrModelNow()) asrBase = DASHSCOPE_BASE; }
   else if (ENV.GEMINI_API_KEY && !pausedError('Gemini')) asrBase = GEMINI_BASE;
   if (!asrBase) return [];
-  const bases = [mt === 'openai' ? OPENAI_BASE : GEMINI_BASE, asrBase];
+  const bases = [{ openai: OPENAI_BASE, qwen: QWEN_BASE }[mt] || GEMINI_BASE, asrBase];
   const now = Date.now();
   const warmed = [];
   for (const origin of new Set(bases.map(b => new URL(b).origin))) {
@@ -920,7 +937,7 @@ export async function translate(meta, cues, context = [], signal, { far = false,
       .map(({ c, vi }) => ({ start: c.start, end: c.end, se: c.se, vi, zh: c.zh, ...(c.sung ? { sung: true } : {}) }));
     if (part.length) onPartial(part);
   });
-  if (!mtProvider()) throw new Error('Chưa có OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env');
+  if (!mtProvider()) throw new Error('Chưa có key dịch (OPENAI_API_KEY, GEMINI_API_KEY hoặc DASHSCOPE_API_KEY) trong alpha/server/.env');
   const known = pack.pronouns ? normalizePronouns(meta.pronouns) : null;   // bảng xưng hô chỉ có ở tiếng Việt
   const author = pack.author(meta.author);
   const first = await mtJson(pack.first({ meta, known, author, context, far, before, sung, cues, budget, round, PRONOUN_PAIRS, src }), pack.firstSchema, 0.2, signal, onText);
