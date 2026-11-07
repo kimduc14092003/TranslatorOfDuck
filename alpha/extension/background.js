@@ -6,17 +6,17 @@ const pending = new Map();   // "tab:key" -> AbortController
 // để biết service worker đang chạy có phải bản cũ không (Chrome có thể giữ background.js bản trước: content.js, workerReady)
 // và có đọc được NDJSON không (ndjson: gửi stream: true được), có chuyển bản rút gọn sau không (condensed: gửi condenseLater: true
 // được, từ 0.2.42).
-const BUILD = '0.2.47';
+const BUILD = '0.2.48';
 // Bộ đọc chung (dịch trước trên trang bất kỳ người xem bật): popup xin quyền đúng trang web đó (optional_host_permissions), rồi
 // background đăng ký msehook.main.js (thế giới trang) + fmp4.js, web.js cho trang đó và tải lại tab. Trang chặn chặt (DRM) hay đã
 // có đường riêng thì không bật.
 const WEB_BLOCKED = /(^|\.)(youtube\.com|youtube-nocookie\.com|youtu\.be|netflix\.com|primevideo\.com|disneyplus\.com|max\.com|hbomax\.com|hulu\.com|tv\.apple\.com|douyin\.com)$/i;
 // Mã đăng ký theo từng trang: mã hex của origin (một-một; trước đây đổi ký tự lạ thành _ nên a-b.example trùng a.b.example, G15).
 const webId = (origin) => 'tod-web-' + Array.from(origin).map((c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
-async function webEnable(origin, tabId) {
-  const host = new URL(origin).hostname;
-  if (WEB_BLOCKED.test(host)) return { ok: false, error: host.endsWith('douyin.com') ? 'Douyin đã có sẵn đường dịch riêng.' : 'Trang này chặn chặt (mã hoá hay đã bỏ khỏi lộ trình): không bật.' };
-  if (!(await chrome.permissions.contains({ origins: [origin + '/*'] }))) return { ok: false, error: 'chưa được cấp quyền cho trang này' };
+// Trang đã bật nhớ trong storage (webSites): Chrome xoá các bộ đọc đã đăng ký mỗi khi extension cập nhật hay tải lại (thử thật
+// 7/11: lên 0.2.48 là TikTok mất sub dù vẫn còn quyền). Worker khởi động thì đăng ký lại các trang còn quyền (webResync).
+const webSites = async () => ((await chrome.storage.local.get('webSites')).webSites || []);
+async function webRegister(origin) {
   const id = webId(origin);
   const old = await chrome.scripting.getRegisteredContentScripts({ ids: [id, id + '-main'] });
   if (old.length) await chrome.scripting.unregisterContentScripts({ ids: old.map((x) => x.id) });
@@ -24,11 +24,34 @@ async function webEnable(origin, tabId) {
     { id: id + '-main', matches: [origin + '/*'], js: ['msehook.main.js'], world: 'MAIN', runAt: 'document_start', persistAcrossSessions: true },
     { id, matches: [origin + '/*'], js: ['fmp4.js', 'web.js'], runAt: 'document_start', persistAcrossSessions: true },
   ]);
+}
+async function webEnable(origin, tabId) {
+  const host = new URL(origin).hostname;
+  if (WEB_BLOCKED.test(host)) return { ok: false, error: host.endsWith('douyin.com') ? 'Douyin đã có sẵn đường dịch riêng.' : 'Trang này chặn chặt (mã hoá hay đã bỏ khỏi lộ trình): không bật.' };
+  if (!(await chrome.permissions.contains({ origins: [origin + '/*'] }))) return { ok: false, error: 'chưa được cấp quyền cho trang này' };
+  await webRegister(origin);
+  const list = await webSites();
+  if (!list.includes(origin)) await chrome.storage.local.set({ webSites: [...list, origin] });
   if (typeof tabId === 'number') await chrome.tabs.reload(tabId).catch(() => {});
   return { ok: true };
 }
+let resyncing = null;
+function webResync() {
+  if (!resyncing) resyncing = (async () => {
+    const have = new Set((await chrome.scripting.getRegisteredContentScripts()).map((x) => x.id));
+    for (const origin of await webSites()) {
+      if (WEB_BLOCKED.test(new URL(origin).hostname)) continue;
+      // Người xem gỡ quyền trang đó (trang cài đặt extension của Chrome): không đăng ký lại, nút trong popup hiện "tắt".
+      if (!(await chrome.permissions.contains({ origins: [origin + '/*'] }).catch(() => false))) continue;
+      if (!have.has(webId(origin)) || !have.has(webId(origin) + '-main')) await webRegister(origin).catch(() => {});
+    }
+  })().catch(() => {}).finally(() => { resyncing = null; });
+  return resyncing;
+}
+webResync();
 async function webDisable(origin, tabId) {
   const id = webId(origin);
+  await chrome.storage.local.set({ webSites: (await webSites()).filter((x) => x !== origin) });
   const old = await chrome.scripting.getRegisteredContentScripts({ ids: [id, id + '-main'] });
   if (old.length) await chrome.scripting.unregisterContentScripts({ ids: old.map((x) => x.id) });
   // Tắt ở mọi tab đang mở trang đó, không chỉ tab đang bấm (G14).
@@ -38,6 +61,7 @@ async function webDisable(origin, tabId) {
 }
 async function webStatus(origin) {
   if (!origin) return { on: false };
+  await webResync();
   const id = webId(origin);
   const on = (await chrome.scripting.getRegisteredContentScripts({ ids: [id] })).length > 0;
   return { on, blocked: WEB_BLOCKED.test(new URL(origin).hostname) };

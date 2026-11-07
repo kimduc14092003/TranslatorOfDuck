@@ -150,9 +150,15 @@
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = `<style>
     .line { max-width: 92%; text-align: center; font: 600 20px/1.35 system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.6); padding: 3px 10px; border-radius: 6px; white-space: pre-wrap; }
-    .badge { font: 11px/1.4 system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.45); padding: 1px 6px; border-radius: 4px; margin-top: 4px; }
-  </style><span class="line" hidden></span><span class="badge"></span>`;
+    .badge { position: absolute; left: 10px; top: 10px; font: 12px/1.4 system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.55); padding: 2px 8px; border-radius: 10px; }
+    .badge .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+  </style><span class="line" hidden></span><span class="badge"><span class="dot"></span><span class="txt"></span></span>`;
+  // Nhãn trạng thái như Douyin (chủ dự án 7/11): góc trên trái khung video, chấm màu + mã ngôn ngữ đích; chạy ổn thì chỉ có
+  // mã, đang dịch, chờ hay lỗi thì thêm chữ.
   const lineEl = root.querySelector('.line'), badge = root.querySelector('.badge');
+  const badgeDot = root.querySelector('.badge .dot'), badgeTxt = root.querySelector('.badge .txt');
+  const DOT = { ok: '#2ecc71', pending: '#f5a623', wait: '#9b9b9b', error: '#e74c3c' };
+  const dotOf = (n) => n === 'đọc trước' ? DOT.ok : n === 'đang dịch…' ? DOT.pending : /^lỗi|không dịch được|quá lớn|không nạp/.test(n) ? DOT.error : DOT.wait;
   let note = 'chờ video…';
   const place = () => { const fe = document.fullscreenElement; (fe && fe.tagName !== 'VIDEO' ? fe : document.documentElement).appendChild(host); };
   document.addEventListener('fullscreenchange', place);
@@ -196,6 +202,8 @@
     }
     const c = s && s.cues.filter((x) => x.start <= v.currentTime && v.currentTime < Math.max(x.end, x.start + 1.2)).at(-1);
     if (c) { lineEl.textContent = c.text; lineEl.hidden = false; } else lineEl.hidden = true;
-    badge.textContent = 'TOD · ' + note;
+    const tagTxt = (settings.target || 'vi').toUpperCase() + (note === 'đọc trước' ? '' : ' · ' + note);
+    if (badgeTxt.textContent !== tagTxt) badgeTxt.textContent = tagTxt;
+    badgeDot.style.background = dotOf(note);
   }, 200);
 })();

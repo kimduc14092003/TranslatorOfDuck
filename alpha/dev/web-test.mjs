@@ -54,20 +54,20 @@ await t('mẩu thường: mốc bắt đầu (tfdt) và độ dài (trun), liề
 });
 
 // background.js: bật bộ đọc cho một trang (đăng ký script, tải lại tab); trang chặn chặt thì không.
-function loadBackground(granted = true) {
+function loadBackground(granted = true, store = {}) {
   let listener = null;
   const reg = [], reloads = [], offs = [];
   const chrome = { runtime: { onMessage: { addListener: (f) => { listener = f; } }, sendMessage: async () => ({}) },
     tabs: { sendMessage: async (id, m) => { offs.push([id, m.type]); }, query: async () => [{ id: 5 }, { id: 9 }], get: async () => ({}), reload: async (id) => { reloads.push(id); }, onUpdated: { addListener: () => {} } },
     permissions: { contains: async () => granted },
-    scripting: { executeScript: async () => {}, getRegisteredContentScripts: async ({ ids }) => reg.filter((x) => ids.includes(x.id)),
+    scripting: { executeScript: async () => {}, getRegisteredContentScripts: async (q) => reg.filter((x) => !q || !q.ids || q.ids.includes(x.id)),
       registerContentScripts: async (xs) => { reg.push(...xs); }, unregisterContentScripts: async ({ ids }) => { for (const id of ids) reg.splice(reg.findIndex((x) => x.id === id), 1); } },
-    storage: { local: { get: async () => ({}) }, session: { get: async () => ({}), set: async () => {}, remove: async () => {} } } };
+    storage: { local: { get: async (k) => (k in store ? { [k]: store[k] } : {}), set: async (o) => { Object.assign(store, o); } }, session: { get: async () => ({}), set: async () => {}, remove: async () => {} } } };
   const c = { chrome, AbortController, fetch, TextDecoder, URL };
   vm.createContext(c);
   vm.runInContext(fs.readFileSync(path.join(EXT, 'background.js'), 'utf8'), c);
   const send = (msg) => new Promise((resolve) => { const ret = listener(msg, {}, resolve); if (ret !== true) resolve(undefined); });
-  return { send, reg, reloads, offs };
+  return { send, reg, reloads, offs, store };
 }
 await t('bật cho một trang: đăng ký bộ đọc (thế giới trang + extension) đúng trang đó, tải lại tab; tắt thì gỡ', async () => {
   const b = loadBackground();
@@ -88,6 +88,20 @@ await t('bật cho một trang: đăng ký bộ đọc (thế giới trang + ext
   await c.send({ type: 'web-enable', origin: 'https://a-b.example', tabId: 1 });
   await c.send({ type: 'web-enable', origin: 'https://a.b.example', tabId: 1 });
   assert.equal(c.reg.length, 4);
+});
+await t('extension cập nhật (Chrome xoá bộ đọc đã đăng ký): worker khởi động thì đăng ký lại trang đã bật còn quyền; tắt rồi thì thôi', async () => {
+  const a = loadBackground();
+  await a.send({ type: 'web-enable', origin: 'https://www.tiktok.com', tabId: 5 });
+  await a.send({ type: 'web-enable', origin: 'https://www.instagram.com', tabId: 5 });
+  await a.send({ type: 'web-disable', origin: 'https://www.instagram.com', tabId: 5 });
+  assert.equal(JSON.stringify(a.store.webSites), '["https://www.tiktok.com"]');
+  const b = loadBackground(true, a.store);   // bản mới: chưa có đăng ký nào
+  assert.equal((await b.send({ type: 'web-status', origin: 'https://www.tiktok.com' })).on, true);
+  assert.equal(b.reg.length, 2);
+  assert.equal((await b.send({ type: 'web-status', origin: 'https://www.instagram.com' })).on, false);
+  const c = loadBackground(false, a.store);  // người xem đã gỡ quyền
+  assert.equal((await c.send({ type: 'web-status', origin: 'https://www.tiktok.com' })).on, false);
+  assert.equal(c.reg.length, 0);
 });
 await t('trang chặn chặt (YouTube, Netflix) và Douyin: không bật; chưa được cấp quyền: không bật', async () => {
   for (const o of ['https://www.youtube.com', 'https://m.youtube.com', 'https://www.youtube-nocookie.com', 'https://www.netflix.com', 'https://www.douyin.com']) {
