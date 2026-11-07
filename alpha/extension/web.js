@@ -69,7 +69,7 @@
     } else if (m.type === 'close') s.closed = true;
   });
   // Người xem tắt trang này trong popup: dừng ngay ở tab này (background báo mọi tab của trang, G14).
-  chrome.runtime.onMessage.addListener((msg) => { if (msg && msg.type === 'web-off') { off = true; sources.clear(); host.remove(); } });
+  chrome.runtime.onMessage.addListener((msg) => { if (msg && msg.type === 'web-off') stop(); });
 
   // Track âm thanh của một nguồn: track có init và nhiều mẩu nhất (thường chỉ một).
   const trackOf = (s) => [...s.tracks.values()].filter((t) => t.init).sort((a, b) => b.segs.length - a.segs.length)[0] || null;
@@ -105,7 +105,12 @@
   // Gửi đoạn k của nguồn s nếu âm thanh đã nạp đủ. dur: thời lượng video (Infinity nếu chưa biết). quick: mẩu nhanh [qa, qb) khi
   // đoạn đầy đủ chưa đủ âm thanh (tua xa, trình phát nạp ít, livestream: G09); khoá riêng 'q' + k.
   const r3 = (x) => Math.round(x * 1000) / 1000;
+  // Extension vừa cập nhật hay tải lại: bản bộ đọc cũ còn trên trang mất kết nối (chrome.runtime.id rỗng, gọi
+  // sendMessage ném "Extension context invalidated", Cốc Cốc 7/11). Dừng bản cũ, gỡ lớp sub; tải lại trang để chạy bản mới.
+  const alive = () => { try { return !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; } };
+  function stop() { off = true; sources.clear(); host.remove(); }
   function trySend(s, k, dur, quick = null) {
+    if (!alive()) { stop(); return false; }
     const key = quick ? 'q' + k : k;
     if (s.sent.has(key) || (quick && s.sent.has(k))) return false;
     const tr = trackOf(s);
@@ -129,7 +134,10 @@
       target: settings.target || 'vi', lyrics: settings.lyrics !== false, desc: document.title || '', hashtags: [],
     };
     const want = (settings.target || 'vi') + '|' + (settings.lyrics !== false);
-    chrome.runtime.sendMessage({ type: 'subtitles', key: s.id + ':' + key + ':' + want, server: settings.server, payload }).then((r) => {
+    let sending;
+    try { sending = chrome.runtime.sendMessage({ type: 'subtitles', key: s.id + ':' + key + ':' + want, server: settings.server, payload }); }
+    catch (_) { s.sent.delete(key); stop(); return false; }
+    sending.then((r) => {
       // Ngôn ngữ đã đổi trong lúc dịch: bỏ kết quả (trạng thái đã được xoá khi đổi).
       if (want !== (settings.target || 'vi') + '|' + (settings.lyrics !== false)) return;
       const inf = s.info.get(key) || {};
@@ -219,6 +227,7 @@
   let waitSince = 0, waitKey = null;
   setInterval(() => {
     if (off) return;
+    if (!alive()) { stop(); return; }
     // Dọn nguồn cũ trước mọi thứ (kể cả lúc không thấy video nào, G10).
     for (const [ms, x] of sources) if (Date.now() - x.seen > 120000 && !x.cues.length) sources.delete(ms);
     if (settings.enabled === false) { host.remove(); return; }
