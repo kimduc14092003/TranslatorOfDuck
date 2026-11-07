@@ -14,6 +14,20 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ffmpeg = process.env.FFMPEG || (await import('ffmpeg-static').then(m => m.default).catch(() => null)) || 'ffmpeg';
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'tod-source-'));
+// fMP4 như trình phát của trang nạp: init + các mảnh từ giây `fromSec` (tfdt khác 0), không có mảnh trước đó.
+const fmp4From = (sec, fromSec) => {
+  const f = path.join(TMP, `${sec}-frag.mp4`);
+  execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=440:duration=${sec}`, '-c:a', 'aac', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-frag_duration', '1000000', f]);
+  const b = fs.readFileSync(f), parts = [];
+  let keep = true, t = 0;
+  for (let o = 0; o + 8 <= b.length;) {
+    const size = b.readUInt32BE(o), type = b.toString('latin1', o + 4, o + 8);
+    if (type === 'moof') { keep = t >= fromSec - 0.01; t += 1024 * 43 / 44100; }   // ~1 s mỗi mảnh (43 khung AAC)
+    if (type === 'ftyp' || type === 'moov' || ((type === 'moof' || type === 'mdat') && keep)) parts.push(b.subarray(o, o + size));
+    o += size;
+  }
+  return Buffer.concat(parts).toString('base64');
+};
 const wavAt = (sec) => { const f = path.join(TMP, `${sec}.wav`); execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=440:duration=${sec}`, '-ar', '16000', '-ac', '1', f]); return fs.readFileSync(f).toString('base64'); };
 const webm = (sec) => { const f = path.join(TMP, `${sec}.webm`); execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=440:duration=${sec}`, '-c:a', 'libopus', f]); return fs.readFileSync(f).toString('base64'); };
 const aac = (sec) => { const f = path.join(TMP, `${sec}.aac`); execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=440:duration=${sec}`, '-c:a', 'aac', f]); return fs.readFileSync(f).toString('base64'); };
@@ -240,6 +254,14 @@ try {
   t('âm thanh tab: chưa có câu nào xong thì không trả dòng dở (held, next)', () => {
     assert.equal(h2.status, 'skipped', JSON.stringify(h2)); assert.equal(h2.label, 'held');
     assert.ok(h2.next >= 4.9 && h2.next < 5.2, String(h2.next)); assert.equal(h2.cues, undefined);
+  });
+
+  // 13. Bộ đọc chung: âm thanh fMP4 trình phát của trang đã nạp, đoạn giữa video (mảnh đầu có tfdt ~5 s): server đọc đúng phần đó,
+  // không chèn khoảng lặng từ 0.
+  const wb = await post(base('web123456789016', { target: 'vi', aac: fmp4From(12, 5), fmt: 'fmp4', from: 6, to: 10, audioStart: 5.1 }));
+  t('bộ đọc chung: fMP4 đoạn giữa video, không chèn khoảng lặng từ 0', () => {
+    assert.notEqual(wb.status, 'error', JSON.stringify(wb));
+    assert.ok(wb.seconds > 5 && wb.seconds < 9, String(wb.seconds));
   });
 
   t('log server ghi nguồn tiếng Anh, và lần hiện bản chép không dịch', () => {

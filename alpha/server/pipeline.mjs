@@ -82,6 +82,7 @@ const latinShareOf = (t) => {
 // Độ dài một dòng tính theo chữ Hán: dòng chữ Latin lấy 42 ký tự (một dòng chuẩn Netflix) ứng với 16 chữ Hán. Dòng không phải
 // chữ Latin vẫn đếm chữ Hán như trước.
 // Giai đoạn 4: kana, chữ Hàn đếm như chữ Hán (trước đây câu nhiều kana không bao giờ bị cắt). Tiếng Trung không đổi.
+const VI_LETTER = /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/iu;
 const CJK_ALL = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu;
 // Đếm chữ để đo độ kéo dài (s/chữ): thêm dấu kéo dài nguyên âm ー (không thuộc hệ chữ katakana): "すごーーーい" là 6 chữ, không
 // phải 3 (verifier 5/11). Câu tiếng Trung không có dấu này nên không đổi.
@@ -119,13 +120,16 @@ export async function extractAudio(buf, kind = 'mp4') {
   const bin = await resolveFfmpeg();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tod-'));
   const src = path.join(dir, ['aac', 'webm', 'wav'].includes(kind) ? 'in.' + kind : 'in.mp4');
+  // fmp4: mẩu MP4 phân mảnh trình phát của trang đã nạp (bộ đọc chung), mốc đầu là mốc thật trong video (tfdt): không chèn khoảng
+  // lặng từ 0 (first_pts=0), không thì đoạn ở phút thứ 10 thành 10 phút im lặng. Mốc 0 của bản mp3 = mẫu đầu = audioStart.
+  const af = kind === 'fmp4' ? 'aresample=async=1' : 'aresample=async=1:first_pts=0';
   const out = path.join(dir, 'out.mp3');
   fs.writeFileSync(src, buf);
   try {
     // aresample first_pts=0: nếu track âm thanh bắt đầu muộn hơn mốc 0 của video (edit list), chèn khoảng lặng
     // tương ứng; không thì mọi mốc thời gian bị sớm đúng bằng khoảng đó và sub hiện trước lời nói.
-    const run = await new Promise((resolve) => execFile(bin, ['-v', 'error', '-y', '-i', src, '-t', String(['aac', 'webm', 'wav'].includes(kind) ? 120 : MAX_SECONDS), '-vn', '-ac', '1', '-ar', '16000',
-      '-af', 'aresample=async=1:first_pts=0',
+    const run = await new Promise((resolve) => execFile(bin, ['-v', 'error', '-y', '-i', src, '-t', String(['aac', 'webm', 'wav', 'fmp4'].includes(kind) ? 120 : MAX_SECONDS), '-vn', '-ac', '1', '-ar', '16000',
+      '-af', af,
       '-c:a', 'libmp3lame', '-b:a', '48k', out], (err, _o, stderr) => resolve({ err, stderr: String(stderr || '') })));
     // Mã lỗi dạng chữ (ENOENT, EACCES): không chạy được ffmpeg.
     if (run.err && typeof run.err.code === 'string') throw new Error(`không chạy được ffmpeg (${bin}): ${run.err.code}`);
@@ -616,6 +620,12 @@ export function classifySpeech(meta, r) {
   const latinWords = (text.match(/[A-Za-z]+/g) || []).length;
   f.kana = kana;   // có trường này là kết quả của bản biết tiếng Nhật, tiếng Hàn (server.mjs: làm lại kết quả cũ)
   f.src = latinWords > han + other ? 'en' : hangul > han + kana && hangul > latinWords ? 'ko' : hira >= 2 && kana * 5 >= han + kana ? 'ja' : 'zh';
+  // Tiếng Việt: từ Latin mà ≥ 30% có dấu riêng của tiếng Việt (feed TikTok ở Việt Nam, 7/11: video tiếng Việt bị coi là tiếng Anh
+  // rồi "dịch" ra chữ vô nghĩa). Đích tiếng Việt thì hiện bản chép như video nói đúng ngôn ngữ đích; đích tiếng Anh thì dịch.
+  if (f.src === 'en') {
+    const lw = text.match(/[\p{Script=Latin}]+/gu) || [];
+    if (lw.length && lw.filter((w) => VI_LETTER.test(w)).length >= 0.3 * lw.length) f.src = 'vi';
+  }
   if (f.src === 'en') {
     const wd = words.filter(w => w.end > w.start && /[A-Za-z]/.test(w.text)).map(w => w.end - w.start);
     f.medWordDur = round(pct(wd, 0.5), 3);
@@ -983,11 +993,12 @@ export function cuesFromAsr(meta, asr, opts = {}) {
   const cls = classifySpeech(meta, asr);
   // Âm thanh tab (opts.live): không có hashtag, mô tả như video Douyin; giọng đọc chậm (dạy tiếng, kể chuyện) bị nhận là hát theo
   // độ kéo dài (thử thật trên TikTok 7/11). Chỉ coi là hát khi lặp lời; không xét câu hát theo độ kéo dài.
-  if (opts.live && cls.label === 'singing' && !cls.repeat) cls.label = 'speech';
+  // Bộ đọc chung (id web…, opts.noSlowSing) cũng vậy: trang không có hashtag nhạc, giọng kể chậm bị gắn ♪ (TikTok 7/11).
+  if ((opts.live || opts.noSlowSing) && cls.label === 'singing' && !cls.repeat) cls.label = 'speech';
   // Đoạn tiếng Nhật, tiếng Hàn: câu chỉ là câu hát theo độ kéo dài khi có hashtag nhạc hay cả đoạn nghe như hát. Đo thật 5/11
   // (video dạy tiếng Hàn): giọng dạy nói chậm, mốc kết thúc từ kéo tới tận từ sau (0,4–1,2 s/chữ), mọi câu bị gắn ♪, và ở chế
   // độ thường thì bị bỏ. Tiếng Trung giữ như cũ.
-  const split = splitSung(asr, { slow: !opts.live && (!(cls.src === 'ja' || cls.src === 'ko') || cls.tagMusic || cls.label === 'singing') });
+  const split = splitSung(asr, { slow: !opts.live && !opts.noSlowSing && (!(cls.src === 'ja' || cls.src === 'ko') || cls.tagMusic || cls.label === 'singing') });
   // Cả đoạn là bài hát khi: lặp lời, hoặc quá nửa số câu là câu hát, hoặc chữ kéo dài kèm hashtag nhạc.
   // Hashtag nhạc cộng nói thưa (vlog có nhạc nền, nhiều khoảng lặng) thì không đủ: chỉ lọc từng câu.
   const song = cls.label === 'singing' && (cls.src === 'en' || (cls.repeat && slowChars(cls.medCharDur)) || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33));

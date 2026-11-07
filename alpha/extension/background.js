@@ -6,7 +6,39 @@ const pending = new Map();   // "tab:key" -> AbortController
 // để biết service worker đang chạy có phải bản cũ không (Chrome có thể giữ background.js bản trước: content.js, workerReady)
 // và có đọc được NDJSON không (ndjson: gửi stream: true được), có chuyển bản rút gọn sau không (condensed: gửi condenseLater: true
 // được, từ 0.2.42).
-const BUILD = '0.2.46';
+const BUILD = '0.2.47';
+// Bộ đọc chung (dịch trước trên trang bất kỳ người xem bật): popup xin quyền đúng trang web đó (optional_host_permissions), rồi
+// background đăng ký msehook.main.js (thế giới trang) + fmp4.js, web.js cho trang đó và tải lại tab. Trang chặn chặt (DRM) hay đã
+// có đường riêng thì không bật.
+const WEB_BLOCKED = /(^|\.)(youtube\.com|youtu\.be|netflix\.com|primevideo\.com|disneyplus\.com|max\.com|hbomax\.com|hulu\.com|tv\.apple\.com|douyin\.com)$/i;
+const webId = (origin) => 'tod-web-' + origin.replace(/[^a-z0-9]/gi, '_');
+async function webEnable(origin, tabId) {
+  const host = new URL(origin).hostname;
+  if (WEB_BLOCKED.test(host)) return { ok: false, error: host.endsWith('douyin.com') ? 'Douyin đã có sẵn đường dịch riêng.' : 'Trang này chặn chặt (mã hoá hay đã bỏ khỏi lộ trình): không bật.' };
+  if (!(await chrome.permissions.contains({ origins: [origin + '/*'] }))) return { ok: false, error: 'chưa được cấp quyền cho trang này' };
+  const id = webId(origin);
+  const old = await chrome.scripting.getRegisteredContentScripts({ ids: [id, id + '-main'] });
+  if (old.length) await chrome.scripting.unregisterContentScripts({ ids: old.map((x) => x.id) });
+  await chrome.scripting.registerContentScripts([
+    { id: id + '-main', matches: [origin + '/*'], js: ['msehook.main.js'], world: 'MAIN', runAt: 'document_start', persistAcrossSessions: true },
+    { id, matches: [origin + '/*'], js: ['fmp4.js', 'web.js'], runAt: 'document_start', persistAcrossSessions: true },
+  ]);
+  if (typeof tabId === 'number') await chrome.tabs.reload(tabId).catch(() => {});
+  return { ok: true };
+}
+async function webDisable(origin, tabId) {
+  const id = webId(origin);
+  const old = await chrome.scripting.getRegisteredContentScripts({ ids: [id, id + '-main'] });
+  if (old.length) await chrome.scripting.unregisterContentScripts({ ids: old.map((x) => x.id) });
+  if (typeof tabId === 'number') await chrome.tabs.reload(tabId).catch(() => {});
+  return { ok: true };
+}
+async function webStatus(origin) {
+  if (!origin) return { on: false };
+  const id = webId(origin);
+  const on = (await chrome.scripting.getRegisteredContentScripts({ ids: [id] })).length > 0;
+  return { on, blocked: WEB_BLOCKED.test(new URL(origin).hostname) };
+}
 // Đường dự phòng cho trang bất kỳ (bản thử): popup bật trên tab đang mở; offscreen.js thu âm thanh tab và gọi server, tab.js
 // (tiêm vào tab) hiện sub. Background lấy mã luồng thu (tabCapture), mở trang ẩn, chuyển tin giữa trang ẩn và tab.
 const inject = (tabId) => chrome.scripting.executeScript({ target: { tabId }, files: ['tablive.js', 'tab.js'] });
@@ -41,6 +73,9 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     if (typeof msg.tabId === 'number') chrome.tabs.sendMessage(msg.tabId, { ...msg, type: 'tab-' + msg.type }).catch(() => {});
     return false;
   }
+  if (msg && msg.type === 'web-enable' && !sender.tab) { webEnable(msg.origin, msg.tabId).then(reply, (e) => reply({ ok: false, error: String((e && e.message) || e) })); return true; }
+  if (msg && msg.type === 'web-disable' && !sender.tab) { webDisable(msg.origin, msg.tabId).then(reply, (e) => reply({ ok: false, error: String((e && e.message) || e) })); return true; }
+  if (msg && msg.type === 'web-status' && !sender.tab) { webStatus(msg.origin).then(reply, () => reply({ on: false })); return true; }
   if (msg && msg.type === 'tab-start' && !sender.tab) { tabStart(msg.tabId).then(reply, (e) => reply({ ok: false, error: String((e && e.message) || e) })); return true; }
   if (msg && msg.type === 'tab-stop' && !sender.tab) { toOffscreen({ type: 'stop' }).then(() => reply({ ok: true })); return true; }
   if (msg && msg.type === 'tab-status' && !sender.tab) { toOffscreen({ type: 'status' }).then((st) => reply(st || { on: false })); return true; }

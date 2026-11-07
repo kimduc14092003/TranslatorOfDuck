@@ -58,6 +58,31 @@ async function showStats() {
   }
 }
 
+// Bộ đọc chung: bật, tắt cho trang web của tab đang mở. Xin quyền ngay trong lượt bấm (popup), background đăng ký bộ đọc và tải lại tab.
+async function webSetup() {
+  const btn = $('web'), st = $('webState');
+  if (!btn || !chrome.runtime || !chrome.runtime.sendMessage || !chrome.permissions) return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let origin = null;
+  try { const u = new URL(tab.url); if (/^https?:$/.test(u.protocol)) origin = u.origin; } catch (_) { /* trang của Chrome */ }
+  if (!origin) { btn.disabled = true; st.textContent = 'Không dùng được trên trang này.'; return; }
+  const show = (x) => {
+    btn.textContent = x && x.on ? 'Tắt dịch trang này' : 'Dịch trang này (đọc trước, đúng lúc)';
+    btn.disabled = !!(x && x.blocked);
+    st.textContent = x && x.blocked ? 'Trang này không hỗ trợ.' : x && x.on ? 'Đang bật cho ' + new URL(origin).hostname + '.' : '';
+    return !!(x && x.on);
+  };
+  let on = show(await chrome.runtime.sendMessage({ type: 'web-status', origin }).catch(() => null));
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    if (!on && !(await chrome.permissions.request({ origins: [origin + '/*'] }).catch(() => false))) { st.textContent = 'Chưa được cấp quyền.'; btn.disabled = false; return; }
+    const r = await chrome.runtime.sendMessage({ type: on ? 'web-disable' : 'web-enable', origin, tabId: tab.id }).catch((e) => ({ ok: false, error: String(e) }));
+    if (!r || !r.ok) st.textContent = 'Không bật được: ' + ((r && r.error) || 'không rõ lỗi');
+    else on = show(await chrome.runtime.sendMessage({ type: 'web-status', origin }).catch(() => null));
+    btn.disabled = false;
+  });
+}
+
 // Đường dự phòng (trang bất kỳ): nút bật, tắt thu âm thanh tab đang mở; trạng thái hỏi background (trang ẩn offscreen.js).
 async function liveSetup() {
   const btn = $('live'), st = $('liveState');
@@ -109,6 +134,7 @@ async function liveSetup() {
   $('dplus').addEventListener('click', () => nudge(0.1));
   $('check').addEventListener('click', checkServer);
   liveSetup();
+  webSetup();
   checkServer();
   showStats();
 })();

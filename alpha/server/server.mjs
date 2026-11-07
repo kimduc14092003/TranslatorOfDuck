@@ -134,8 +134,9 @@ async function handleSubtitles(req, res) {
   const chunked = typeof meta.aac === 'string' || retarget;
   // id "tab<số>": âm thanh thu từ tab của trang bất kỳ (đường dự phòng, extension tab.js/offscreen.js); mốc from/to tính từ lúc
   // bắt đầu thu, âm thanh là WebM/Opus (fmt: 'webm') gửi trong trường aac.
-  if (!/^(?:tab)?\d{6,25}$/.test(id) || !(chunked || typeof meta.b64 === 'string')) return send(res, 400, { error: 'need id (digits) and aac or b64' });
-  if (meta.fmt != null && !['aac', 'webm', 'wav'].includes(meta.fmt)) return send(res, 400, { error: 'fmt must be aac, webm or wav' });
+  // id "web<số>": bộ đọc chung (web.js) gửi âm thanh trình phát của trang đã nạp (fMP4, fmt: 'fmp4'); mốc theo giờ video.
+  if (!/^(?:tab|web)?\d{6,25}$/.test(id) || !(chunked || typeof meta.b64 === 'string')) return send(res, 400, { error: 'need id (digits) and aac or b64' });
+  if (meta.fmt != null && !['aac', 'webm', 'wav', 'fmp4'].includes(meta.fmt)) return send(res, 400, { error: 'fmt must be aac, webm, wav or fmp4' });
   if (chunked && !(num(meta.from) && num(meta.to) && meta.to > meta.from && (retarget || num(meta.audioStart)))) return send(res, 400, { error: 'need from < to and audioStart' });
   const span = (a, b) => `${a}-${b}`;
   const cacheFile = (sp, kind = 'vi') => path.join(CACHE, `${id}.${sp ? sp + '.' : ''}${kind}.${PIPELINE_VERSION}.json`);
@@ -276,6 +277,7 @@ async function handleSubtitles(req, res) {
     opts.target = target;
     // Đường dự phòng (id tab…): giữ câu cuối còn dở cho lần gửi sau (pipeline.mjs liveHold); final: dịch hết.
     if (chunked && id.startsWith('tab')) { opts.live = true; opts.final = meta.final === true; }
+    if (chunked && id.startsWith('web')) opts.noSlowSing = true;
     // Kết quả nhận dạng giọng nói giữ theo mã băm âm thanh (cùng đoạn mà gửi dư khác nhau thì âm thanh, mốc thời gian
     // khác nhau): dịch lỗi rồi extension gửi lại thì không trả tiền ASR lần nữa. Có kết quả cuối thì xoá, trừ đoạn có câu
     // hát (cùng điều kiện noSinging): đổi chế độ lời bài hát thì đoạn đó phải làm lại, giữ ASR để khỏi trả tiền lần nữa.

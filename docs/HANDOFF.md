@@ -1726,6 +1726,20 @@ Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt
 - **Astra (Codex, effort high, 8 phút, bản `git archive` không .env, probe offline):** 12 phát hiện. Đã sửa: F01 chọn video đang phát và trong khung nhìn; F03 quay về đầu không có sự kiện tua; F05 báo tắt tiếng; F08 lớp sub bị gỡ thì gắn lại; F10 lỗi server thì gửi lại đoạn đó (bỏ sau 3 lần); F11 mốc âm thanh khi bộ đệm vòng bị ghi đè; F12 không tiêm được lớp sub thì báo lỗi, không thu.
 - **Chưa sửa:** F04 video trong shadow DOM hay iframe; F06 vị trí sub theo khung video; F07 toàn màn hình kiểu gốc của thẻ video (lớp sub nằm ngoài lớp toàn màn hình); F09 một lượt thu chung id nên ngữ cảnh dịch, bảng xưng hô mang sang video sau.
 
+## 6az. Bộ đọc chung: dịch trước trên trang bất kỳ (7/11, extension 0.2.47, nhánh `claude/any-site-tab-audio`)
+
+- **Chủ dự án:** không hài lòng độ trễ của đường thu âm thanh tab; muốn dịch mọi trang trừ trang chặn chặt (Netflix, YouTube); tạm bỏ trang có mã hoá và livestream.
+- **Đo trước** (`alpha/dev/real/media-probe.mjs`, chỉ đọc, khách): TikTok (một video và feed), Instagram Reels, Vimeo, Douyin đều nạp âm thanh AAC thành SourceBuffer riêng của Media Source Extensions; nạp trước chỗ đang xem trung vị 41 s (TikTok một video), 6,5 s (TikTok feed, video 11 s), 12 s (Instagram), 26 s (Vimeo), 13 s (Douyin). Bilibili không phát cho khách trong lượt đo.
+- **Cách làm:**
+  - `msehook.main.js` (thế giới trang, từ lúc trang bắt đầu tải): chép các mẩu SourceBuffer chỉ có âm thanh mà trình phát tự nạp, kèm timestampOffset; gắn MediaSource với đường dẫn blob: của nó.
+  - `fmp4.js`: đọc mốc thời gian (tfdt, trun) và vị trí byte từng mảnh.
+  - `web.js`: chia đoạn theo giờ video (đoạn đầu 8 s, sau đó 15 s; dư 2 s trước, 3 s sau), gửi khi trình phát đã nạp đủ, tối đa 2 đoạn cùng lúc; video tải sẵn trong feed được dịch đoạn đầu; sub hiện theo `video.currentTime` trên khung video; bỏ dòng trùng ở ranh giới đoạn.
+  - Bật theo từng trang: popup "Dịch trang này" xin quyền đúng trang đó (`optional_host_permissions`), background đăng ký bộ đọc (`registerContentScripts`) rồi tải lại tab. Không bật trên YouTube, Netflix, các trang phim có mã hoá, Douyin (đã có đường riêng).
+  - Server: id `web…`, `fmt: 'fmp4'` (ffmpeg không chèn khoảng lặng từ 0); chỉ coi là hát khi lặp lời.
+  - Nhận ra tiếng Việt (≥ 30% từ có dấu riêng): đích tiếng Việt thì hiện bản chép, đích tiếng Anh thì dịch. Trước đó video tiếng Việt trên feed TikTok bị coi là tiếng Anh, "dịch" ra chữ vô nghĩa.
+- **Thử thật** (`tablive-real.mjs --web`, video để tắt tiếng): TikTok một video (tiếng Trung, tiếng Anh): sub đúng lúc nói, nhãn "đọc trước"; lướt sang video kế có sub ngay từ giây 1,2 (đã dịch sẵn). TikTok feed video tiếng Việt: hiện lời chép. Instagram: có sub nhưng reel hay đứng với khách. Vimeo: không tự phát trong trình duyệt thử (kể cả không bật bộ đọc), chưa rõ.
+- **Chưa làm:** video gộp hình và tiếng một SourceBuffer; trang gắn thẳng file (không Media Source); video trong iframe; tua giữa video (chưa có mẩu nhanh như Douyin); kiểm trên trình duyệt thật bằng cú bấm popup.
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).
