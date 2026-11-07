@@ -58,6 +58,8 @@ Mục đích: chọn nền tảng làm tiếp sau Douyin ở giai đoạn 5 (ROA
 
 ## Đề xuất cho giai đoạn 5
 
+> **7/11, chủ dự án:** bỏ YouTube khỏi lộ trình (ROADMAP §6, quyết định 9). Mục 2 bên dưới giữ lại để tham khảo, không làm.
+
 1. **Bilibili trước.** Nội dung tiếng Trung, khách xem được, âm thanh tách sẵn: dùng lại gần như nguyên đường ống Douyin (tải âm thanh theo khoảng byte, nhận dạng, dịch). Phụ đề có sẵn cần đăng nhập nên không trông vào nó. Việc chính: đọc `__playinfo__`, chia đoạn theo DASH, xử lý video nhiều phần (`p=`).
 2. **YouTube sau**, theo hướng khác: đọc phụ đề trình phát đã tải (khi video có phụ đề) rồi chỉ dịch, không nhận dạng. Đã xác nhận trên trình duyệt thật là đọc được, và có chữ cả video ngay từ đầu (rẻ: không tốn tiền nhận dạng). Video không có phụ đề thì chưa có đường lấy âm thanh. Không kiểm được bằng bộ công cụ đo tự động (YouTube trả phụ đề rỗng cho trình duyệt tự động): đo phần này phải theo cách chỉ đọc trên trình duyệt thật.
 3. **TikTok để cuối.** Phụ đề có ở một phần video, media gộp, nội dung ở Việt Nam ít tiếng Trung.

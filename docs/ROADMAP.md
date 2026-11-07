@@ -193,12 +193,12 @@ Tới khi chọn model nhận dạng cuối (giai đoạn 3), bảng điểm dù
 
 ### Giai đoạn 2: Thử nhanh nền tảng khác
 
-> **Trạng thái 4/11:** đã thử, chỉ đọc, không đăng nhập: [`docs/PLATFORMS.md`](PLATFORMS.md). Đề xuất: Bilibili trước, YouTube sau (đọc phụ đề trình phát đã tải), TikTok để cuối.
+> **Trạng thái 4/11:** đã thử, chỉ đọc, không đăng nhập: [`docs/PLATFORMS.md`](PLATFORMS.md). Đề xuất: Bilibili trước, YouTube sau (đọc phụ đề trình phát đã tải), TikTok để cuối. **7/11: bỏ YouTube** (quyết định 9, §6).
 
 **Mục tiêu:** biết nền tảng nào làm tiếp, và bằng cách nào. Nền tảng có phụ đề sẵn không cần nhận dạng giọng nói, có chữ của cả video từ đầu, nhiều ngôn ngữ. Đó là đường rẻ nhất tới "mọi ngôn ngữ, cả video" (PLAN §5.7, §7.2).
 
 **Việc cần làm:** mỗi nền tảng một lượt thử ngắn: ít video, chỉ đọc, trên bản sao extension và hồ sơ trình duyệt riêng. Mỗi lượt trả lời ba câu: có phụ đề sẵn không; lấy được âm thanh trước chỗ đang xem không; rủi ro điều khoản là gì.
-- **YouTube:** dùng phụ đề sẵn. Không lấy âm thanh, vì chính sách Chrome Web Store nêu đích danh việc giúp tải video YouTube (PLAN §5.7).
+- **YouTube (đã bỏ 7/11, §6 quyết định 9):** dùng phụ đề sẵn. Không lấy âm thanh, vì chính sách Chrome Web Store nêu đích danh việc giúp tải video YouTube (PLAN §5.7).
 - **Bilibili:** tiếng Trung nên không cần giai đoạn 3; âm thanh tách riêng (DASH); có phụ đề CC ở một số video.
 - **TikTok:** gần Douyin nhất, nhưng điều khoản cấm script tự động và cấm dịch hay tạo tác phẩm phái sinh (PLAN §12), và muốn tải media thì phải dùng cookie của trang (PLAN §5.7), trái luật không dùng cookie. **Chỉ thử khi bạn đã quyết.**
 
@@ -315,8 +315,11 @@ Một ngoại lệ có thể kéo sớm: cho vài người ngoài dùng thử mi
 7. Giai đoạn 1 đợt này chỉ thêm tiếng Anh; bạn tự đọc bản tiếng Anh của 3 video thật.
 8. Giai đoạn 2: thử YouTube, Bilibili và TikTok (TikTok chỉ đọc vài video, không tải âm thanh, không cookie); không đăng nhập, phụ đề cần đăng nhập thì ghi lại.
 
+**Đã chốt ngày 7/11:**
+9. Bỏ YouTube khỏi lộ trình: không làm bộ đọc riêng cho YouTube (kể cả hướng đọc phụ đề có sẵn). Video YouTube chỉ còn đường dự phòng thu âm thanh tab (sub trễ, nhánh `claude/any-site-tab-audio`).
+
 **Còn mở:**
-1. Nền tảng thứ hai cho giai đoạn 5 (đề xuất sau lượt thử 4/11: Bilibili; xem `docs/PLATFORMS.md`).
+1. Nền tảng thứ hai cho giai đoạn 5 (đề xuất sau lượt thử 4/11: Bilibili; YouTube đã bỏ ngày 7/11; xem `docs/PLATFORMS.md`).
 2. Ngôn ngữ nguồn đầu tiên ngoài tiếng Trung (đề xuất: tiếng Anh).
 3. Video đã nói đúng ngôn ngữ đích thì ẩn sub hay vẫn hiện.
 4. Ai duyệt bản dịch ở những ngôn ngữ bạn không đọc được.
