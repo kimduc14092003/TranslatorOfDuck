@@ -31,7 +31,7 @@
     const mvex = child(dv, moov, 'mvex');
     const trex = mvex && child(dv, mvex, 'trex');
     if (trex) defaultDuration = dv.getUint32(trex.start + 12);
-    return { timescale, defaultDuration };
+    return { timescale, defaultDuration, end: moov.end };
   }
 
   // Các đoạn thời gian (giây, chưa cộng timestampOffset) trong một lần nạp: mỗi cặp moof có tfdt và trun. byteStart, byteEnd: vị
@@ -41,8 +41,10 @@
     if (!init || !init.timescale) return out;
     const tops = top(u8);
     for (const moof of tops.filter((b) => b.type === 'moof')) {
+      // Chỉ nhận mảnh có mdat theo sau trong cùng lần nạp (thiếu dữ liệu mẫu thì ffmpeg không giải được: Astra 7/11, G02).
       const next = tops[tops.indexOf(moof) + 1];
-      const byteEnd = next && next.type === 'mdat' ? next.end : moof.end;
+      if (!next || next.type !== 'mdat') continue;
+      const byteEnd = next.end;
       for (const traf of boxes(dv, moof.start, moof.end)) {
         if (traf.type !== 'traf') continue;
         let base = null, dur = 0, defDur = init.defaultDuration;
@@ -56,10 +58,12 @@
           } else if (b.type === 'tfdt') {
             base = ver === 1 ? Number(dv.getBigUint64(b.start + 4)) : dv.getUint32(b.start + 4);
           } else if (b.type === 'trun') {
-            const n = dv.getUint32(b.start + 4);
+            // Số mẫu do trang đưa: chặn theo cỡ hộp, không lặp quá số mục hộp chứa được (trang giả dữ liệu, G01).
+            const per = 4 * ((flags & 0x100 ? 1 : 0) + (flags & 0x200 ? 1 : 0) + (flags & 0x400 ? 1 : 0) + (flags & 0x800 ? 1 : 0));
             let o = b.start + 8;
             if (flags & 0x1) o += 4;
             if (flags & 0x4) o += 4;
+            const n = Math.min(dv.getUint32(b.start + 4), per ? Math.floor((b.end - o) / per) : 1e5);
             for (let i = 0; i < n; i++) {
               if (flags & 0x100) { dur += dv.getUint32(o); o += 4; } else dur += defDur;
               if (flags & 0x200) o += 4;

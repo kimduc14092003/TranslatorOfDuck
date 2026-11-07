@@ -355,6 +355,8 @@ t('nhận ra nguồn tiếng Nhật, tiếng Hàn; câu tiếng Trung có một 
   // Tiếng Việt (feed TikTok VN, 7/11): không phải tiếng Anh; câu tiếng Anh có tên tiếng Việt vẫn là tiếng Anh.
   assert.equal(classifySpeech({}, { text: 'tôi có một quy tắc mỗi năm chỉ livestream ba lần', words: [] }).src, 'vi');
   assert.equal(classifySpeech({}, { text: 'Today I visited Hà Nội with my friend from London and we ate pho.', words: [] }).src, 'en');
+  for (const x of ['Meet Nguyễn Văn Hùng today.', 'We visited Hà Nội yesterday.', 'Nǐ hǎo wǒ shì Zhōngguó rén.']) assert.notEqual(classifySpeech({}, { text: x, words: [] }).src, 'vi', x);
+  assert.equal(classifySpeech({}, { text: 'anh ơi chọn đi bạn ơi cho mọi người em ạ', words: [] }).src, 'vi');
   // Bài hát tiếng Nhật: hashtag nhạc, chữ kéo dài 0,5 s/chữ.
   const song = Array.from('あなたのことをずっとわすれない').map((c, i) => W(c, i * 0.5, i * 0.5 + 0.48));
   assert.equal(classifySpeech({ hashtags: ['翻唱'] }, { text: 'あなたのことをずっとわすれない', words: song }).label, 'singing');

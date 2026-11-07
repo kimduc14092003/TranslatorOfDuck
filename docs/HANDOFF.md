@@ -1740,6 +1740,19 @@ Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt
 - **Thử thật** (`tablive-real.mjs --web`, video để tắt tiếng): TikTok một video (tiếng Trung, tiếng Anh): sub đúng lúc nói, nhãn "đọc trước"; lướt sang video kế có sub ngay từ giây 1,2 (đã dịch sẵn). TikTok feed video tiếng Việt: hiện lời chép. Instagram: có sub nhưng reel hay đứng với khách. Vimeo: không tự phát trong trình duyệt thử (kể cả không bật bộ đọc), chưa rõ.
 - **Chưa làm:** video gộp hình và tiếng một SourceBuffer; trang gắn thẳng file (không Media Source); video trong iframe; tua giữa video (chưa có mẩu nhanh như Douyin); kiểm trên trình duyệt thật bằng cú bấm popup.
 
+### 6az (tiếp). Astra soát bộ đọc chung (7/11)
+
+- Codex effort high, 11 phút, bản `git archive` f63cd07, probe offline; 18 phát hiện (request_changes). Đã sửa:
+  - G02 init và dữ liệu chung một lần nạp; mảnh thiếu mdat không nhận;
+  - G08 kiểm phần nạp liền bằng mép xa nhất; G09 mẩu nhanh từ chỗ đang xem khi đoạn đầy đủ chưa đủ âm thanh sau 1,5 s;
+  - G12 mảnh dài hơn đoạn: server chỉ giải `[audioStart + skip, + span]` (đoạn 15 s gửi 20,7 s thay vì 36–55 s); giới hạn 24 MB mỗi lần gửi;
+  - G16 tiếng Việt: chỉ đếm chữ riêng tiếng Việt, ≥ 4 từ, ≥ 40%, ít từ chức năng tiếng Anh ("Meet Nguyễn Văn Hùng today.", pinyin có dấu: không còn bị nhận là tiếng Việt);
+  - G13 chặn youtube-nocookie; G14 tắt thì báo mọi tab của trang; G15 mã đăng ký một-một theo origin;
+  - G18 đổi ngôn ngữ đích hay chế độ lời bài hát thì dịch lại;
+  - G01, G10: kiểm kiểu và cỡ tin từ trang, giới hạn số nguồn, byte mỗi track, số mẫu trun; chép đúng phần mảnh; dọn nguồn cũ cả khi không thấy video; dấu đã gắn hook nằm trên hàm, không trên window.
+- Chưa sửa: G03 (ghi mẩu trước khi trình phát nhận; appendWindow), G04 (timestampOffset đổi giữa chừng, nạp lại đè đoạn đã dịch), G05 edit list, G06 base_data_offset tuyệt đối, G07 nhiều track trong một mảnh, G11 video gắn bằng srcObject, G17 ngữ cảnh xa với mốc thập phân.
+- Thử lại: TikTok 63 s, tua từ 0:08 tới 0:40: dòng có ngay ở 0:43,5; toàn video đúng lúc.
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).

@@ -4,8 +4,9 @@
 // thanh AAC thành SourceBuffer riêng, trước chỗ đang xem 6–40 s. Bản chép gửi cho web.js (thế giới riêng của extension) qua
 // window.postMessage.
 (() => {
-  if (window.__todMse) return;
-  window.__todMse = true;
+  // Đã gắn rồi (tiêm hai lần): nhận ra bằng dấu trên chính hàm thay thế, không bằng cờ trên window mà trang tự đặt được (G01).
+  const MS0 = window.MediaSource || window.ManagedMediaSource;
+  if (MS0 && MS0.prototype.addSourceBuffer.__tod) return;
   const VIDEO_CODEC = /avc|hvc|hev|vp0?[89]|av01|mp4v/i;
   const AUDIO_CODEC = /mp4a|opus|vorbis|ac-3|ec-3|flac/i;
   // Âm thanh riêng: codecs chỉ có âm thanh (TikTok ghi kiểu "video/mp4;codecs=mp4a…"); mẩu gộp hình + tiếng thì bỏ (quá nặng).
@@ -46,5 +47,6 @@
       this.addEventListener('sourceclose', () => post({ type: 'close', ms }), { once: true });
       return sb;
     };
+    ctor.prototype.addSourceBuffer.__tod = true;
   }
 })();

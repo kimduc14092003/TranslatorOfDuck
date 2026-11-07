@@ -64,6 +64,8 @@ try {
   // --seek-at giây --seek-to giây: tua video (giờ thử) ; --pause-at giây --pause-for giây: tạm dừng.
   const t0 = Date.now();
   const acts = [];
+  // --key-at giây --key phím (vd ArrowRight): nhấn phím như người xem (trình phát tự tua).
+  if (a['key-at']) acts.push({ at: Number(a['key-at']) * 1000, run: async () => { for (let i = 0; i < Number(a['key-times'] || 1); i++) { await page.keyboard.press(a.key || 'ArrowRight'); await sleep(150); } }, name: 'nhấn ' + (a.key || 'ArrowRight') + ' ×' + (a['key-times'] || 1) });
   if (a['seek-at']) acts.push({ at: Number(a['seek-at']) * 1000, run: () => page.evaluate((x) => { ([...document.querySelectorAll('video')].filter((x) => x.getBoundingClientRect().width * x.getBoundingClientRect().height > 0).sort((p, q) => { const r = (x) => x.getBoundingClientRect(); return r(q).width * r(q).height - r(p).width * r(p).height; })[0]).currentTime = x; }, Number(a['seek-to'] || 0)), name: 'tua tới ' + (a['seek-to'] || 0) });
   if (a['pause-at']) {
     acts.push({ at: Number(a['pause-at']) * 1000, run: () => page.evaluate(() => ([...document.querySelectorAll('video')].filter((x) => x.getBoundingClientRect().width * x.getBoundingClientRect().height > 0).sort((p, q) => { const r = (x) => x.getBoundingClientRect(); return r(q).width * r(q).height - r(p).width * r(p).height; })[0]).pause()), name: 'tạm dừng' });

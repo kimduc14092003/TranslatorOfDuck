@@ -277,7 +277,11 @@ async function handleSubtitles(req, res) {
     opts.target = target;
     // Đường dự phòng (id tab…): giữ câu cuối còn dở cho lần gửi sau (pipeline.mjs liveHold); final: dịch hết.
     if (chunked && id.startsWith('tab')) { opts.live = true; opts.final = meta.final === true; }
-    if (chunked && id.startsWith('web')) opts.noSlowSing = true;
+    if (chunked && id.startsWith('web')) {
+      opts.noSlowSing = true;
+      // skip, span: chỉ giải [audioStart + skip, + span] của các mảnh gửi lên; mốc 0 của bản giải là audioStart + skip.
+      if (meta.fmt === 'fmp4' && num(meta.skip) && num(meta.span) && meta.span > 0) { opts.trim = { ss: meta.skip, t: meta.span }; opts.offset = meta.audioStart + meta.skip; }
+    }
     // Kết quả nhận dạng giọng nói giữ theo mã băm âm thanh (cùng đoạn mà gửi dư khác nhau thì âm thanh, mốc thời gian
     // khác nhau): dịch lỗi rồi extension gửi lại thì không trả tiền ASR lần nữa. Có kết quả cuối thì xoá, trừ đoạn có câu
     // hát (cùng điều kiện noSinging): đổi chế độ lời bài hát thì đoạn đó phải làm lại, giữ ASR để khỏi trả tiền lần nữa.

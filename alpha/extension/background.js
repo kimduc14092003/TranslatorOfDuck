@@ -10,8 +10,9 @@ const BUILD = '0.2.47';
 // Bộ đọc chung (dịch trước trên trang bất kỳ người xem bật): popup xin quyền đúng trang web đó (optional_host_permissions), rồi
 // background đăng ký msehook.main.js (thế giới trang) + fmp4.js, web.js cho trang đó và tải lại tab. Trang chặn chặt (DRM) hay đã
 // có đường riêng thì không bật.
-const WEB_BLOCKED = /(^|\.)(youtube\.com|youtu\.be|netflix\.com|primevideo\.com|disneyplus\.com|max\.com|hbomax\.com|hulu\.com|tv\.apple\.com|douyin\.com)$/i;
-const webId = (origin) => 'tod-web-' + origin.replace(/[^a-z0-9]/gi, '_');
+const WEB_BLOCKED = /(^|\.)(youtube\.com|youtube-nocookie\.com|youtu\.be|netflix\.com|primevideo\.com|disneyplus\.com|max\.com|hbomax\.com|hulu\.com|tv\.apple\.com|douyin\.com)$/i;
+// Mã đăng ký theo từng trang: mã hex của origin (một-một; trước đây đổi ký tự lạ thành _ nên a-b.example trùng a.b.example, G15).
+const webId = (origin) => 'tod-web-' + Array.from(origin).map((c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
 async function webEnable(origin, tabId) {
   const host = new URL(origin).hostname;
   if (WEB_BLOCKED.test(host)) return { ok: false, error: host.endsWith('douyin.com') ? 'Douyin đã có sẵn đường dịch riêng.' : 'Trang này chặn chặt (mã hoá hay đã bỏ khỏi lộ trình): không bật.' };
@@ -30,6 +31,8 @@ async function webDisable(origin, tabId) {
   const id = webId(origin);
   const old = await chrome.scripting.getRegisteredContentScripts({ ids: [id, id + '-main'] });
   if (old.length) await chrome.scripting.unregisterContentScripts({ ids: old.map((x) => x.id) });
+  // Tắt ở mọi tab đang mở trang đó, không chỉ tab đang bấm (G14).
+  for (const t of await chrome.tabs.query({ url: origin + '/*' }).catch(() => [])) chrome.tabs.sendMessage(t.id, { type: 'web-off' }).catch(() => {});
   if (typeof tabId === 'number') await chrome.tabs.reload(tabId).catch(() => {});
   return { ok: true };
 }

@@ -13,47 +13,78 @@
   const startOf = (k) => (k === 0 ? 0 : FIRST + (k - 1) * W);
   const indexAt = (t) => (t < FIRST ? 0 : 1 + Math.floor((t - FIRST) / W));
   let settings = { enabled: true, server: 'http://127.0.0.1:8787', target: 'vi', lyrics: true };
-  const loadSettings = () => chrome.storage.local.get('settings').then(({ settings: s = {} }) => { settings = { ...settings, ...s }; }).catch(() => {});
+  // Đổi ngôn ngữ đích hay chế độ lời bài hát: bỏ kết quả cũ, dịch lại (trước đây đoạn đã dịch giữ dòng của ngôn ngữ cũ, G18).
+  const loadSettings = () => chrome.storage.local.get('settings').then(({ settings: s = {} }) => {
+    const before = (settings.target || 'vi') + '|' + (settings.lyrics !== false);
+    settings = { ...settings, ...s };
+    if (before !== (settings.target || 'vi') + '|' + (settings.lyrics !== false)) for (const x of sources.values()) { x.sent.clear(); x.cues = []; }
+  }).catch(() => {});
   loadSettings();
   chrome.storage.onChanged.addListener((c) => { if (c.settings) loadSettings(); });
 
   // ms (mã MediaSource) -> { url, tracks: Map sb -> { init, info, segs: [{ start, end, bytes }] }, id, sent: Map k -> trạng thái, cues }
   const sources = new Map();
-  let reqN = 0;
+  let reqN = 0, off = false;
+  // Giới hạn: số nguồn, cỡ mỗi lần nạp, tổng byte mỗi track (trang có thể gửi tin giả cùng dấu hiệu, G01; bộ nhớ, G10).
+  const MAX_SOURCES = 30, MAX_APPEND = 16 << 20, MAX_TRACK = 48 << 20;
   const src = (ms) => {
-    if (!sources.has(ms)) sources.set(ms, { url: null, tracks: new Map(), id: 'web' + Date.now() + String(++reqN).padStart(3, '0'), sent: new Map(), cues: [], seen: Date.now() });
+    if (!sources.has(ms)) {
+      if (sources.size >= MAX_SOURCES) sources.delete([...sources.entries()].sort((a, b) => a[1].seen - b[1].seen)[0][0]);
+      sources.set(ms, { url: null, tracks: new Map(), id: 'web' + Date.now() + String(++reqN).padStart(3, '0'), sent: new Map(), cues: [], seen: Date.now() });
+    }
     return sources.get(ms);
   };
+  const okId = (x) => Number.isInteger(x) && x > 0 && x < 1e7;
   window.addEventListener('message', (e) => {
     const m = e.data;
-    if (e.source !== window || !m || m.__todMse !== 1) return;
+    if (off || e.source !== window || !m || m.__todMse !== 1 || !okId(m.ms)) return;
+    if (!['url', 'sb', 'data', 'close'].includes(m.type)) return;
     const s = src(m.ms);
     s.seen = Date.now();
-    if (m.type === 'url') s.url = m.url;
-    else if (m.type === 'sb') { if (m.url) s.url = m.url; s.tracks.set(m.sb, { init: null, info: null, segs: [], mime: m.mime }); }
+    if (m.type === 'url') { if (typeof m.url === 'string' && m.url.startsWith('blob:')) s.url = m.url; }
+    else if (m.type === 'sb') { if (!okId(m.sb)) return; if (typeof m.url === 'string' && m.url.startsWith('blob:')) s.url = m.url; if (!s.tracks.has(m.sb)) s.tracks.set(m.sb, { init: null, info: null, segs: [], bytes: 0 }); }
     else if (m.type === 'data') {
-      const tr = s.tracks.get(m.sb) || s.tracks.set(m.sb, { init: null, info: null, segs: [] }).get(m.sb);
+      if (!okId(m.sb) || !(m.bytes instanceof ArrayBuffer) || m.bytes.byteLength > MAX_APPEND || !Number.isFinite(m.offset)) return;
+      const tr = s.tracks.get(m.sb) || s.tracks.set(m.sb, { init: null, info: null, segs: [], bytes: 0 }).get(m.sb);
       const u8 = new Uint8Array(m.bytes);
-      const info = F.readInit(u8);
-      if (info) { tr.init = u8; tr.info = info; return; }
-      for (const g of F.readSegments(u8, tr.info)) {
+      let segs = [];
+      try {
+        // Mẩu init và mẩu dữ liệu có thể nằm chung một lần nạp (G02): lấy init, rồi đọc tiếp các mảnh phía sau.
+        const info = F.readInit(u8);
+        if (info) { tr.init = u8.slice(0, info.end); tr.info = info; }
+        segs = F.readSegments(u8, tr.info);
+      } catch (_) { return; }
+      for (const g of segs) {
         const start = g.start + m.offset, end = g.end + m.offset;
-        // Nạp lại cùng đoạn (tua, đổi chất lượng): thay mẩu cũ cùng mốc.
+        if (!(end > start) || end - start > 600) continue;
+        // Nạp lại cùng đoạn (tua, đổi chất lượng): thay mẩu cũ cùng mốc. Chép đúng phần của mảnh, không giữ cả lần nạp (G10).
         tr.segs = tr.segs.filter((x) => Math.abs(x.start - start) > 0.01);
-        tr.segs.push({ start, end, bytes: g.byteEnd > g.byteStart ? u8.subarray(g.byteStart, g.byteEnd) : u8 });
+        tr.segs.push({ start, end, bytes: u8.slice(g.byteStart, g.byteEnd) });
       }
       tr.segs.sort((a, b) => a.start - b.start);
+      tr.bytes = tr.segs.reduce((n, x) => n + x.bytes.length, 0);
+      while (tr.bytes > MAX_TRACK && tr.segs.length > 1) tr.bytes -= tr.segs.shift().bytes.length;
     } else if (m.type === 'close') s.closed = true;
   });
+  // Người xem tắt trang này trong popup: dừng ngay ở tab này (background báo mọi tab của trang, G14).
+  chrome.runtime.onMessage.addListener((msg) => { if (msg && msg.type === 'web-off') { off = true; sources.clear(); host.remove(); } });
 
   // Track âm thanh của một nguồn: track có init và nhiều mẩu nhất (thường chỉ một).
   const trackOf = (s) => [...s.tracks.values()].filter((t) => t.init).sort((a, b) => b.segs.length - a.segs.length)[0] || null;
   // Phần đã nạp liền nhau quanh [a, b]: trả các mẩu phủ nó, hay null nếu còn hở (sai số 0,05 s giữa hai mẩu).
+  // Quét theo mép xa nhất đã phủ (mẩu nằm trong mẩu khác không làm hở, G08).
   function cover(tr, a, b) {
     const segs = tr.segs.filter((x) => x.end > a && x.start < b);
     if (!segs.length || segs[0].start > a + 0.05) return null;
-    for (let i = 1; i < segs.length; i++) if (segs[i].start > segs[i - 1].end + 0.05) return null;
-    return segs.at(-1).end >= b - 0.05 ? segs : null;
+    let edge = segs[0].end;
+    for (const x of segs.slice(1)) { if (x.start > edge + 0.05) return null; edge = Math.max(edge, x.end); }
+    return edge >= b - 0.05 ? segs : null;
+  }
+  // Mép xa nhất phủ liền từ a (để gửi mẩu nhanh khi tua xa hay khi trình phát nạp ít): null nếu a chưa được phủ.
+  function reach(tr, a) {
+    let edge = null;
+    for (const x of tr.segs) { if (x.end <= a) continue; if (edge == null) { if (x.start > a + 0.05) return null; edge = x.end; } else if (x.start > edge + 0.05) break; else edge = Math.max(edge, x.end); }
+    return edge;
   }
   const area = (v) => { const r = v.getBoundingClientRect(); return Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)) * Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0)); };
   const mainVideo = () => [...document.querySelectorAll('video')].filter((v) => area(v) > 0)
@@ -69,30 +100,38 @@
     return btoa(str);
   }
 
-  // Gửi đoạn k của nguồn s nếu âm thanh đã nạp đủ. dur: thời lượng video (Infinity nếu chưa biết).
-  function trySend(s, k, dur) {
-    if (s.sent.has(k)) return false;
+  // Gửi đoạn k của nguồn s nếu âm thanh đã nạp đủ. dur: thời lượng video (Infinity nếu chưa biết). quick: mẩu nhanh [qa, qb) khi
+  // đoạn đầy đủ chưa đủ âm thanh (tua xa, trình phát nạp ít, livestream: G09); khoá riêng 'q' + k.
+  const r3 = (x) => Math.round(x * 1000) / 1000;
+  function trySend(s, k, dur, quick = null) {
+    const key = quick ? 'q' + k : k;
+    if (s.sent.has(key) || (quick && s.sent.has(k))) return false;
     const tr = trackOf(s);
     if (!tr) return false;
-    const from = startOf(k), to = Math.min(startOf(k + 1), dur);
+    const from = quick ? quick.from : startOf(k), to = quick ? quick.to : Math.min(startOf(k + 1), dur);
     if (!(to > from)) return false;
-    const a = Math.max(0, from - PRE), b = Math.min(to + POST, isFinite(dur) ? dur - 0.1 : to + POST);
+    const a = Math.max(0, from - PRE), b = quick ? quick.b : Math.min(to + POST, isFinite(dur) ? dur - 0.1 : to + POST);
     const segs = cover(tr, a, b);
     if (!segs) return false;
-    // Mẩu một lần nạp có thể chứa nhiều đoạn thời gian: gộp theo mảng byte, giữ thứ tự.
-    const parts = [tr.init];
-    for (const x of segs) if (parts.at(-1) !== x.bytes) parts.push(x.bytes);
-    const audioStart = Math.round(segs[0].start * 1000) / 1000;
-    s.sent.set(k, 'pending');
+    // Ghép init + các mảnh (mỗi mảnh moof + mdat đủ). Mảnh dài hơn đoạn (TikTok 36 s một mảnh): server chỉ giải [a, b] (skip, span).
+    const parts = [tr.init, ...segs.map((x) => x.bytes)];
+    const size = parts.reduce((n, p) => n + p.length, 0);
+    if (size > 24 << 20) { s.sent.set(key, 'error'); note = 'mẩu âm thanh quá lớn'; return false; }
+    const audioStart = r3(segs[0].start);
+    s.sent.set(key, 'pending');
     const payload = {
-      id: s.id, aac: toBase64(parts), fmt: 'fmp4', from: Math.round(from * 1000) / 1000, to: Math.round(to * 1000) / 1000, audioStart,
-      ...(k > 0 && s.sent.get(k - 1) === 'ok' ? { prev: [startOf(k - 1), from] } : {}),
+      id: s.id, aac: toBase64(parts), fmt: 'fmp4', from: r3(from), to: r3(to), audioStart, skip: r3(Math.max(0, a - segs[0].start)), span: r3(b - a + 0.5),
+      ...(quick ? { quick: true } : {}),
+      ...(!quick && k > 0 && s.sent.get(k - 1) === 'ok' ? { prev: [startOf(k - 1), from] } : {}),
       target: settings.target || 'vi', lyrics: settings.lyrics !== false, desc: document.title || '', hashtags: [],
     };
-    chrome.runtime.sendMessage({ type: 'subtitles', key: s.id + ':' + k, server: settings.server, payload }).then((r) => {
-      if (!r || r.status === 'error' || r.status === 'cancelled') { s.sent.delete(k); s.fails = (s.fails || 0) + 1; note = 'lỗi: ' + ((r && r.error) || 'không có phản hồi'); if (s.fails >= 3) s.sent.set(k, 'error'); return; }
+    const want = (settings.target || 'vi') + '|' + (settings.lyrics !== false);
+    chrome.runtime.sendMessage({ type: 'subtitles', key: s.id + ':' + key + ':' + want, server: settings.server, payload }).then((r) => {
+      // Ngôn ngữ đã đổi trong lúc dịch: bỏ kết quả (trạng thái đã được xoá khi đổi).
+      if (want !== (settings.target || 'vi') + '|' + (settings.lyrics !== false)) return;
+      if (!r || r.status === 'error' || r.status === 'cancelled') { s.sent.delete(key); s.fails = (s.fails || 0) + 1; note = 'lỗi: ' + ((r && r.error) || 'không có phản hồi'); if (s.fails >= 3) s.sent.set(key, 'error'); return; }
       s.fails = 0;
-      s.sent.set(k, r.status === 'ok' ? 'ok' : 'skipped');
+      s.sent.set(key, r.status === 'ok' ? 'ok' : 'skipped');
       if (r.status === 'ok' && Array.isArray(r.cues)) {
         if (r.target && r.target !== (settings.target || 'vi')) return;
         // Câu vắt qua ranh giới có thể ra ở cả hai đoạn (thử TikTok 7/11: hai bản dịch của cùng một câu): dòng mới chiếm quá nửa
@@ -101,7 +140,7 @@
         for (const c of r.cues) if (!dup(c)) s.cues.push({ start: c.start, end: c.end, text: (c.sung ? '♪ ' : '') + (c.vi || c.zh || '') });
         s.cues.sort((x, y) => x.start - y.start);
       }
-    }).catch(() => { s.sent.delete(k); });
+    }).catch(() => { s.sent.delete(key); });
     return true;
   }
 
@@ -118,7 +157,11 @@
   const place = () => { const fe = document.fullscreenElement; (fe && fe.tagName !== 'VIDEO' ? fe : document.documentElement).appendChild(host); };
   document.addEventListener('fullscreenchange', place);
 
+  let waitSince = 0, waitKey = null;
   setInterval(() => {
+    if (off) return;
+    // Dọn nguồn cũ trước mọi thứ (kể cả lúc không thấy video nào, G10).
+    for (const [ms, x] of sources) if (Date.now() - x.seen > 120000 && !x.cues.length) sources.delete(ms);
     if (settings.enabled === false) { host.remove(); return; }
     if (!document.documentElement) return;
     if (!host.isConnected) place();
@@ -137,16 +180,22 @@
       for (let k = indexAt(t); startOf(k) < Math.min(dur, t + AHEAD) && inflight < MAX_INFLIGHT; k++) if (trySend(s, k, dur)) inflight++;
       // Video tải sẵn trong feed (chưa xem): đoạn đầu, để lướt sang là có sub ngay.
       for (const [, x] of sources) if (x !== s && inflight < MAX_INFLIGHT + 1 && !x.closed && Date.now() - x.seen < 60000 && trySend(x, 0, Infinity)) inflight++;
-      const k = indexAt(t), st = s.sent.get(k);
-      note = st === 'ok' || st === 'skipped' ? 'đọc trước' : st === 'pending' ? 'đang dịch…' : st === 'error' ? note : 'chờ trình phát nạp âm thanh…';
+      const k = indexAt(t), st = s.sent.get(k), tr = trackOf(s);
+      // Đoạn đang xem chưa gửi được sau 1,5 s (tua xa: trình phát chỉ nạp từ chỗ mới; livestream): gửi mẩu nhanh từ chỗ đang xem
+      // tới hết phần đã nạp liền, tối đa tới hết đoạn (G09). Câu trùng với đoạn đầy đủ gửi sau bị bỏ khi hiện.
+      const wk = s.id + ':' + k;
+      if (st || s.sent.has('q' + k)) waitKey = null; else if (waitKey !== wk) { waitKey = wk; waitSince = Date.now(); }
+      if (tr && waitKey === wk && Date.now() - waitSince > 1500 && !v.paused && inflight < MAX_INFLIGHT + 1) {
+        const qa = Math.max(0, t - 0.5), edge = reach(tr, Math.max(0, qa - PRE));
+        if (edge != null && edge - qa >= 4) trySend(s, k, dur, { from: Math.max(startOf(k), qa), to: Math.min(startOf(k + 1), dur, edge - 1), b: edge });
+      }
+      const sq = s.sent.get('q' + k);
+      note = st === 'ok' || st === 'skipped' || sq === 'ok' || sq === 'skipped' ? 'đọc trước' : st === 'pending' || sq === 'pending' ? 'đang dịch…' : st === 'error' ? note : 'chờ trình phát nạp âm thanh…';
       // Bỏ mẩu đã xem xa phía sau (giữ bộ nhớ nhỏ).
-      const tr = trackOf(s);
-      if (tr && tr.segs.length > 40) tr.segs = tr.segs.filter((x) => x.end > t - 30);
+      if (tr) tr.segs = tr.segs.filter((x) => x.end > t - 30 || x.start > t);
     }
     const c = s && s.cues.filter((x) => x.start <= v.currentTime && v.currentTime < Math.max(x.end, x.start + 1.2)).at(-1);
     if (c) { lineEl.textContent = c.text; lineEl.hidden = false; } else lineEl.hidden = true;
     badge.textContent = 'TOD · ' + note;
-    // Nguồn cũ không còn thẻ video nào phát, quá 2 phút: bỏ.
-    for (const [ms, x] of sources) if (x !== s && Date.now() - x.seen > 120000) sources.delete(ms);
   }, 200);
 })();

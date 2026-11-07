@@ -259,9 +259,14 @@ try {
   // 13. Bộ đọc chung: âm thanh fMP4 trình phát của trang đã nạp, đoạn giữa video (mảnh đầu có tfdt ~5 s): server đọc đúng phần đó,
   // không chèn khoảng lặng từ 0.
   const wb = await post(base('web123456789016', { target: 'vi', aac: fmp4From(12, 5), fmt: 'fmp4', from: 6, to: 10, audioStart: 5.1 }));
+  const wc = await post(base('web123456789017', { target: 'vi', aac: fmp4From(12, 0), fmt: 'fmp4', from: 7, to: 9, audioStart: 0, skip: 6, span: 4 }));
   t('bộ đọc chung: fMP4 đoạn giữa video, không chèn khoảng lặng từ 0', () => {
     assert.notEqual(wb.status, 'error', JSON.stringify(wb));
     assert.ok(wb.seconds > 5 && wb.seconds < 9, String(wb.seconds));
+  });
+  t('bộ đọc chung: mảnh dài hơn đoạn, server chỉ giải phần cần (skip, span)', () => {
+    assert.notEqual(wc.status, 'error', JSON.stringify(wc));
+    assert.ok(wc.seconds > 3 && wc.seconds < 5, String(wc.seconds));
   });
 
   t('log server ghi nguồn tiếng Anh, và lần hiện bản chép không dịch', () => {

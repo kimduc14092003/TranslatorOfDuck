@@ -82,7 +82,8 @@ const latinShareOf = (t) => {
 // Độ dài một dòng tính theo chữ Hán: dòng chữ Latin lấy 42 ký tự (một dòng chuẩn Netflix) ứng với 16 chữ Hán. Dòng không phải
 // chữ Latin vẫn đếm chữ Hán như trước.
 // Giai đoạn 4: kana, chữ Hàn đếm như chữ Hán (trước đây câu nhiều kana không bao giờ bị cắt). Tiếng Trung không đổi.
-const VI_LETTER = /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/iu;
+const VI_ONLY = /[ảãạăằắẳẵặâầấẩẫậẻẽẹêềếểễệỉĩịỏõọôồốổỗộơờớởỡợủũụưừứửữựỳỷỹỵđ]/iu;
+const EN_STOP = new Set(['the', 'a', 'an', 'to', 'and', 'of', 'in', 'is', 'are', 'was', 'we', 'i', 'you', 'he', 'she', 'it', 'they', 'my', 'with', 'for', 'on', 'at', 'this', 'that', 'today', 'yesterday', 'meet', 'visited']);
 const CJK_ALL = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu;
 // Đếm chữ để đo độ kéo dài (s/chữ): thêm dấu kéo dài nguyên âm ー (không thuộc hệ chữ katakana): "すごーーーい" là 6 chữ, không
 // phải 3 (verifier 5/11). Câu tiếng Trung không có dấu này nên không đổi.
@@ -116,7 +117,8 @@ export async function checkFfmpeg() {
 // Trả null (no_audio, được cache) chỉ khi ffmpeg chạy xong mà không có tiếng. Không chạy được ffmpeg hay ffmpeg lỗi
 // mà không tách ra được gì thì báo lỗi: trước đây cả hai thành no_audio và bị cache mãi (đo với FFMPEG=/nonexistent:
 // đoạn vẫn "không có âm thanh" sau khi cài lại ffmpeg và chạy lại server).
-export async function extractAudio(buf, kind = 'mp4') {
+// trim (bộ đọc chung): { ss, t } giây. Mảnh dài (TikTok nạp 36 s một mảnh) chỉ giải phần cần cho đoạn (Astra 7/11, G12).
+export async function extractAudio(buf, kind = 'mp4', trim = null) {
   const bin = await resolveFfmpeg();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tod-'));
   const src = path.join(dir, ['aac', 'webm', 'wav'].includes(kind) ? 'in.' + kind : 'in.mp4');
@@ -128,7 +130,7 @@ export async function extractAudio(buf, kind = 'mp4') {
   try {
     // aresample first_pts=0: nếu track âm thanh bắt đầu muộn hơn mốc 0 của video (edit list), chèn khoảng lặng
     // tương ứng; không thì mọi mốc thời gian bị sớm đúng bằng khoảng đó và sub hiện trước lời nói.
-    const run = await new Promise((resolve) => execFile(bin, ['-v', 'error', '-y', '-i', src, '-t', String(['aac', 'webm', 'wav', 'fmp4'].includes(kind) ? 120 : MAX_SECONDS), '-vn', '-ac', '1', '-ar', '16000',
+    const run = await new Promise((resolve) => execFile(bin, ['-v', 'error', '-y', '-i', src, ...(trim && trim.ss > 0 ? ['-ss', String(trim.ss)] : []), '-t', String(trim && trim.t > 0 ? Math.min(trim.t, 120) : ['aac', 'webm', 'wav', 'fmp4'].includes(kind) ? 120 : MAX_SECONDS), '-vn', '-ac', '1', '-ar', '16000',
       '-af', af,
       '-c:a', 'libmp3lame', '-b:a', '48k', out], (err, _o, stderr) => resolve({ err, stderr: String(stderr || '') })));
     // Mã lỗi dạng chữ (ENOENT, EACCES): không chạy được ffmpeg.
@@ -622,9 +624,12 @@ export function classifySpeech(meta, r) {
   f.src = latinWords > han + other ? 'en' : hangul > han + kana && hangul > latinWords ? 'ko' : hira >= 2 && kana * 5 >= han + kana ? 'ja' : 'zh';
   // Tiếng Việt: từ Latin mà ≥ 30% có dấu riêng của tiếng Việt (feed TikTok ở Việt Nam, 7/11: video tiếng Việt bị coi là tiếng Anh
   // rồi "dịch" ra chữ vô nghĩa). Đích tiếng Việt thì hiện bản chép như video nói đúng ngôn ngữ đích; đích tiếng Anh thì dịch.
+  // Chỉ đếm chữ riêng của tiếng Việt (ă â đ ê ô ơ ư và dấu nặng, hỏi, ngã): à á è é… còn có ở pinyin, tiếng Pháp. Cần ≥ 4 từ như
+  // vậy, ≥ 40% số từ, và ít từ chức năng tiếng Anh: câu tiếng Anh có tên người Việt vẫn là tiếng Anh (Astra 7/11, G16).
   if (f.src === 'en') {
     const lw = text.match(/[\p{Script=Latin}]+/gu) || [];
-    if (lw.length && lw.filter((w) => VI_LETTER.test(w)).length >= 0.3 * lw.length) f.src = 'vi';
+    const vi = lw.filter((w) => VI_ONLY.test(w)).length, enStop = lw.filter((w) => EN_STOP.has(w.toLowerCase())).length;
+    if (vi >= 4 && vi >= 0.4 * lw.length && enStop < 2) f.src = 'vi';
   }
   if (f.src === 'en') {
     const wd = words.filter(w => w.end > w.start && /[A-Za-z]/.test(w.text)).map(w => w.end - w.start);
@@ -1074,7 +1079,7 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   if (paused) throw paused;
   const t0 = Date.now();
   const saved = opts.asrCache?.load();
-  const audio = saved ? { seconds: saved.seconds } : await extractAudio(buf, opts.kind);
+  const audio = saved ? { seconds: saved.seconds } : await extractAudio(buf, opts.kind, opts.trim);
   const tAudio = Date.now();
   if (!audio) return { status: 'no_audio', timings: { audioMs: tAudio - t0 } };
   // Từng lần gọi HTTP của bước ASR và bước dịch (net.asr, net.mt: headMs, fresh, connectMs): server ghi vào dòng log.
