@@ -160,10 +160,16 @@
 
   // Lớp sub: đặt trên khung video đang xem.
   const host = document.createElement('div');
-  host.style.cssText = 'all:initial;position:fixed;z-index:2147483647;pointer-events:none;display:flex;flex-direction:column;align-items:center;justify-content:flex-end';
+  host.style.cssText = 'all:initial;position:fixed;z-index:2147483647;pointer-events:none;overflow:hidden';
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = `<style>
-    .line { max-width: 92%; text-align: center; font: 600 20px/1.35 system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.6); padding: 3px 10px; border-radius: 6px; white-space: pre-wrap; }
+    .line { position: absolute; left: 50%; transform: translateX(-50%); max-width: 88%; text-align: center; font: 600 20px/1.35 system-ui, sans-serif; color: #fff;
+      background: rgba(0,0,0,.6); padding: .15em .5em; border-radius: .3em; white-space: pre-wrap; text-shadow: 0 0 2px #000; }
+    /* Che sub gốc (tuỳ chọn trong popup, chủ dự án 7/11): dải ngang hết bề rộng video, làm mờ hình phía sau để chữ in sẵn
+       trong video không còn đọc được; chữ đậm, viền đen. */
+    .cover { left: 0 !important; right: 0; transform: none !important; max-width: none !important; width: 100%; box-sizing: border-box;
+      border-radius: 0 !important; background: rgba(12,12,12,.42) !important; backdrop-filter: blur(16px) saturate(.85); -webkit-backdrop-filter: blur(16px) saturate(.85);
+      padding: .42em .6em !important; font-weight: 800 !important; -webkit-text-stroke: .1em #000; paint-order: stroke fill; text-shadow: 0 .05em .14em rgba(0,0,0,.75) !important; }
     .badge { position: absolute; left: 10px; top: 10px; font: 12px/1.4 system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.55); padding: 2px 8px; border-radius: 10px; }
     .badge .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
     .info { position: absolute; left: 10px; top: 36px; max-width: min(380px, 90%); max-height: 75%; overflow: hidden; font: 12px/1.5 system-ui, sans-serif;
@@ -224,6 +230,24 @@
   const place = () => { const fe = document.fullscreenElement; (fe && fe.tagName !== 'VIDEO' ? fe : document.documentElement).appendChild(host); };
   document.addEventListener('fullscreenchange', place);
 
+  // Alt+↑ / Alt+↓: dời sub lên, xuống 2% chiều cao video, nhớ theo trang (subPos, chung với đường Douyin); chọn lại "Vị trí sub"
+  // trong popup thì về mặc định.
+  let subOff = 0, subPosWrite = null, toastText = '', toastUntil = 0;
+  chrome.storage.local.get('subPos').then((x) => { subOff = Number((x.subPos || {})[location.host]) || 0; }).catch(() => {});
+  chrome.storage.onChanged.addListener((c) => { if (c.subPos && !subPosWrite) subOff = Number((c.subPos.newValue || {})[location.host]) || 0; });
+  window.addEventListener('keydown', (e) => {
+    if (off || !e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    const t = e.target;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    e.preventDefault(); e.stopPropagation();
+    subOff = Math.max(-0.5, Math.min(0.8, Math.round((subOff + (e.key === 'ArrowUp' ? 0.02 : -0.02)) * 100) / 100));
+    clearTimeout(subPosWrite);
+    subPosWrite = setTimeout(() => {
+      if (alive()) chrome.storage.local.get('subPos').then((x) => chrome.storage.local.set({ subPos: { ...(x.subPos || {}), [location.host]: subOff } })).catch(() => {}).finally(() => { subPosWrite = null; });
+    }, 300);
+    toastText = 'sub ' + (subOff ? (subOff > 0 ? 'cao hơn ' : 'thấp hơn ') + Math.round(Math.abs(subOff) * 100) + '%' : 'ở vị trí mặc định');
+    toastUntil = Date.now() + 1500;
+  }, true);
   let waitSince = 0, waitKey = null;
   setInterval(() => {
     if (off) return;
@@ -236,8 +260,8 @@
     const v = mainVideo();
     if (!v) { host.style.display = 'none'; return; }
     const r = v.getBoundingClientRect();
-    Object.assign(host.style, { display: 'flex', left: Math.max(0, r.left) + 'px', width: Math.min(r.width, innerWidth) + 'px', top: Math.max(0, r.top) + 'px',
-      height: Math.max(40, Math.min(r.bottom, innerHeight) - Math.max(0, r.top) - Math.min(r.height * 0.12, 90)) + 'px' });
+    const hl = Math.max(0, r.left), ht = Math.max(0, r.top), hw = Math.min(r.right, innerWidth) - hl, hh = Math.min(r.bottom, innerHeight) - ht;
+    Object.assign(host.style, { display: 'block', left: hl + 'px', width: Math.max(0, hw) + 'px', top: ht + 'px', height: Math.max(0, hh) + 'px' });
     const [, s] = sourceOf(v);
     if (v.mediaKeys) note = 'video có mã hoá: không dịch được';
     else if (!s) note = (v.currentSrc || '').startsWith('blob:') ? 'chưa thấy âm thanh của video này' : 'trang không nạp kiểu Media Source: dùng "Dịch âm thanh tab"';
@@ -263,8 +287,19 @@
       if (tr) tr.segs = tr.segs.filter((x) => x.end > t - 30 || x.start > t);
     }
     const c = s && s.cues.filter((x) => x.start <= v.currentTime && v.currentTime < Math.max(x.end, x.start + 1.2)).at(-1);
-    if (c) { lineEl.textContent = c.text; lineEl.hidden = false; } else lineEl.hidden = true;
-    const tagTxt = (settings.target || 'vi').toUpperCase() + (note === 'đọc trước' ? '' : ' · ' + note);
+    if (c) {
+      if (lineEl.textContent !== c.text) lineEl.textContent = c.text;
+      lineEl.hidden = false;
+      // Cỡ chữ, vị trí như đường Douyin (popup: cỡ chữ, vị trí sub), tính theo cả khung video; Alt+↑/↓ dời thêm (subOff).
+      const scale = ({ s: 0.034, m: 0.042, l: 0.052 }[settings.size] || 0.042) * (settings.cover ? 1.15 : 1);
+      lineEl.style.fontSize = Math.max(14, Math.min(44, r.height * scale)) + 'px';
+      lineEl.classList.toggle('cover', !!settings.cover);
+      lineEl.style.top = ''; lineEl.style.bottom = '';
+      if (settings.position === 'top') lineEl.style.top = (r.top + r.height * (0.08 - subOff) - ht) + 'px';
+      else if (settings.position === 'middle') lineEl.style.top = (r.top + r.height * (0.55 - subOff) - ht) + 'px';
+      else lineEl.style.bottom = (ht + hh - (r.bottom - r.height * (0.13 + subOff))) + 'px';
+    } else lineEl.hidden = true;
+    const tagTxt = (settings.target || 'vi').toUpperCase() + (Date.now() < toastUntil ? ' · ' + toastText : note === 'đọc trước' ? '' : ' · ' + note);
     if (badgeTxt.textContent !== tagTxt) badgeTxt.textContent = tagTxt;
     badgeDot.style.background = dotOf(note);
     if (infoOpen && overBadge()) {

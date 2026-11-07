@@ -109,6 +109,7 @@ async function liveSetup() {
   const s = await load();
   $('enabled').checked = s.enabled;
   $('lyrics').checked = s.lyrics !== false;
+  $('cover').checked = !!s.cover;
   $('first10').checked = s.first10 !== false || !s.first10Set;
   $('target').value = ['vi', 'en'].includes(s.target) ? s.target : 'vi';
   $('position').value = s.position;
@@ -119,7 +120,9 @@ async function liveSetup() {
   // first10Set: chính người xem đã chọn (content.js: first10 false do popup cũ tự lưu thì không tính).
   $('first10').addEventListener('change', (e) => save({ first10: e.target.checked, first10Set: true }));
   $('target').addEventListener('change', async (e) => { await save({ target: e.target.value }); checkServer(); });
-  $('position').addEventListener('change', (e) => save({ position: e.target.value }));
+  $('cover').addEventListener('change', (e) => save({ cover: e.target.checked }));
+  // Chọn lại vị trí: bỏ các lần dời bằng Alt+↑/↓ đã nhớ theo trang.
+  $('position').addEventListener('change', async (e) => { await chrome.storage.local.set({ subPos: {} }); save({ position: e.target.value }); });
   $('size').addEventListener('change', (e) => save({ size: e.target.value }));
   $('server').addEventListener('change', (e) => save({ server: e.target.value.trim() || DEFAULTS.server }));
   const showDelay = (d) => { $('delay').textContent = (d > 0 ? '+' : '') + d.toFixed(1) + ' s'; };
