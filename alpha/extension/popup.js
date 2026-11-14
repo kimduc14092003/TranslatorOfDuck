@@ -58,10 +58,58 @@ async function showStats() {
   }
 }
 
+// Bộ đọc chung: bật, tắt cho trang web của tab đang mở. Xin quyền ngay trong lượt bấm (popup), background đăng ký bộ đọc và tải lại tab.
+async function webSetup() {
+  const btn = $('web'), st = $('webState');
+  if (!btn || !chrome.runtime || !chrome.runtime.sendMessage || !chrome.permissions) return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let origin = null;
+  try { const u = new URL(tab.url); if (/^https?:$/.test(u.protocol)) origin = u.origin; } catch (_) { /* trang của Chrome */ }
+  if (!origin) { btn.disabled = true; st.textContent = 'Không dùng được trên trang này.'; return; }
+  const show = (x) => {
+    btn.textContent = x && x.on ? 'Tắt dịch trang này' : 'Dịch trang này (đọc trước, đúng lúc)';
+    btn.disabled = !!(x && x.blocked);
+    st.textContent = x && x.blocked ? 'Trang này không hỗ trợ.' : x && x.on ? 'Đang bật cho ' + new URL(origin).hostname + '.' : '';
+    return !!(x && x.on);
+  };
+  let on = show(await chrome.runtime.sendMessage({ type: 'web-status', origin }).catch(() => null));
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    if (!on && !(await chrome.permissions.request({ origins: [origin + '/*'] }).catch(() => false))) { st.textContent = 'Chưa được cấp quyền.'; btn.disabled = false; return; }
+    const r = await chrome.runtime.sendMessage({ type: on ? 'web-disable' : 'web-enable', origin, tabId: tab.id }).catch((e) => ({ ok: false, error: String(e) }));
+    if (!r || !r.ok) st.textContent = 'Không bật được: ' + ((r && r.error) || 'không rõ lỗi');
+    else on = show(await chrome.runtime.sendMessage({ type: 'web-status', origin }).catch(() => null));
+    btn.disabled = false;
+  });
+}
+
+// Đường dự phòng (trang bất kỳ): nút bật, tắt thu âm thanh tab đang mở; trạng thái hỏi background (trang ẩn offscreen.js).
+async function liveSetup() {
+  const btn = $('live'), st = $('liveState');
+  if (!btn || !chrome.runtime || !chrome.runtime.sendMessage) return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const show = (x) => {
+    const here = x && x.on && tab && x.tabId === tab.id;
+    btn.textContent = here ? 'Tắt dịch tab này' : 'Dịch âm thanh tab này';
+    st.textContent = !x || !x.on ? '' : here ? `Đang thu: gửi ${x.sent} khúc, có lời ${x.ok}, im lặng ${x.quiet}, lỗi ${x.errors}.` : 'Đang thu một tab khác (bật ở đây sẽ chuyển sang tab này).';
+    return here;
+  };
+  let on = show(await chrome.runtime.sendMessage({ type: 'tab-status' }).catch(() => null));
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    const r = on ? await chrome.runtime.sendMessage({ type: 'tab-stop' }).catch(() => null)
+      : await chrome.runtime.sendMessage({ type: 'tab-start', tabId: tab && tab.id }).catch((e) => ({ ok: false, error: String(e) }));
+    if (!on && (!r || !r.ok)) st.textContent = 'Không bật được: ' + ((r && r.error) || 'không rõ lỗi');
+    else on = show(await chrome.runtime.sendMessage({ type: 'tab-status' }).catch(() => null));
+    btn.disabled = false;
+  });
+}
+
 (async () => {
   const s = await load();
   $('enabled').checked = s.enabled;
   $('lyrics').checked = s.lyrics !== false;
+  $('cover').checked = !!s.cover;
   $('first10').checked = s.first10 !== false || !s.first10Set;
   $('target').value = ['vi', 'en'].includes(s.target) ? s.target : 'vi';
   $('position').value = s.position;
@@ -72,7 +120,9 @@ async function showStats() {
   // first10Set: chính người xem đã chọn (content.js: first10 false do popup cũ tự lưu thì không tính).
   $('first10').addEventListener('change', (e) => save({ first10: e.target.checked, first10Set: true }));
   $('target').addEventListener('change', async (e) => { await save({ target: e.target.value }); checkServer(); });
-  $('position').addEventListener('change', (e) => save({ position: e.target.value }));
+  $('cover').addEventListener('change', (e) => save({ cover: e.target.checked }));
+  // Chọn lại vị trí: bỏ các lần dời bằng Alt+↑/↓ đã nhớ theo trang.
+  $('position').addEventListener('change', async (e) => { await chrome.storage.local.set({ subPos: {} }); save({ position: e.target.value }); });
   $('size').addEventListener('change', (e) => save({ size: e.target.value }));
   $('server').addEventListener('change', (e) => save({ server: e.target.value.trim() || DEFAULTS.server }));
   const showDelay = (d) => { $('delay').textContent = (d > 0 ? '+' : '') + d.toFixed(1) + ' s'; };
@@ -86,6 +136,8 @@ async function showStats() {
   $('dminus').addEventListener('click', () => nudge(-0.1));
   $('dplus').addEventListener('click', () => nudge(0.1));
   $('check').addEventListener('click', checkServer);
+  liveSetup();
+  webSetup();
   checkServer();
   showStats();
 })();

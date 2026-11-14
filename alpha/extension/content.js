@@ -1409,6 +1409,11 @@
     .sub { position: absolute; left: 50%; transform: translateX(-50%); max-width: 88%; text-align: center;
       color: #fff; background: rgba(0,0,0,.62); padding: .18em .55em; border-radius: .3em; line-height: 1.35;
       text-shadow: 0 0 2px #000; white-space: pre-line; display: none; }
+    /* Che sub gốc (tuỳ chọn trong popup, chủ dự án 7/11): dải ngang hết bề rộng video, làm mờ hình phía sau để chữ in sẵn
+       trong video không còn đọc được; chữ đậm, viền đen. */
+    .cover { left: 0 !important; right: 0; transform: none !important; max-width: none !important; width: 100%; box-sizing: border-box;
+      border-radius: 0 !important; background: rgba(12,12,12,.42) !important; backdrop-filter: blur(16px) saturate(.85); -webkit-backdrop-filter: blur(16px) saturate(.85);
+      padding: .42em .6em !important; font-weight: 800 !important; -webkit-text-stroke: .1em #000; paint-order: stroke fill; text-shadow: 0 .05em .14em rgba(0,0,0,.75) !important; }
     .badge { position: absolute; left: 10px; top: 10px; font-size: 12px; color: #fff; background: rgba(0,0,0,.55);
       padding: 2px 8px; border-radius: 10px; display: none; }
     .badge .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
@@ -1504,7 +1509,15 @@
   let delayWrite = null;
   const fmtDelay = (d) => (d > 0 ? '+' : '') + d.toFixed(1) + ' s';
   // Phím [ và ]: sub hiện sớm hơn / muộn hơn 0,1 s (lưu lại cho mọi video).
+  let subOff = 0, subPosWrite = null;
   window.addEventListener('keydown', (e) => {
+    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      const t = e.target;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      e.preventDefault(); e.stopPropagation();
+      nudgeSub(e);
+      return;
+    }
     if (e.key !== '[' && e.key !== ']') return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target;
@@ -1519,6 +1532,18 @@
     toastText = tag() + ' · lệch sub ' + fmtDelay(settings.delay) + (settings.delay > 0 ? ' (muộn hơn)' : settings.delay < 0 ? ' (sớm hơn)' : '');
     toastUntil = performance.now() + 1500;
   }, true);
+  // Alt+↑ / Alt+↓: dời sub lên, xuống 2% chiều cao video (cho khớp chỗ sub in sẵn trong video khi bật "Che sub gốc"). Nhớ theo
+  // trang (subPos trong storage); chọn lại "Vị trí sub" trong popup thì về mặc định.
+  // (Gọi từ cùng trình nghe phím với [ ].)
+  function nudgeSub(e) {
+    subOff = Math.max(-0.5, Math.min(0.8, Math.round((subOff + (e.key === 'ArrowUp' ? 0.02 : -0.02)) * 100) / 100));
+    clearTimeout(subPosWrite);
+    subPosWrite = setTimeout(() => {
+      if (alive()) chrome.storage.local.get('subPos', (s) => chrome.storage.local.set({ subPos: { ...(s.subPos || {}), [location.host]: subOff } }, () => { subPosWrite = null; }));
+    }, 300);
+    toastText = tag() + ' · sub ' + (subOff ? (subOff > 0 ? 'cao hơn ' : 'thấp hơn ') + Math.round(Math.abs(subOff) * 100) + '%' : 'ở vị trí mặc định');
+    toastUntil = performance.now() + 1500;
+  }
   function frame(now) {
     if (!alive()) return;
     requestAnimationFrame(frame);
@@ -1621,12 +1646,14 @@
     if (hold) { subEl.style.display = 'none'; return; }
     const c = cv ? TodCues.at(cv.cues, playhead - (Number(settings.delay) || 0)) : null;
     if (!c) { subEl.style.display = 'none'; return; }
-    const scale = { s: 0.034, m: 0.042, l: 0.052 }[settings.size] || 0.042;
-    subEl.style.fontSize = Math.max(14, Math.min(40, r.height * scale)) + 'px';
+    const scale = ({ s: 0.034, m: 0.042, l: 0.052 }[settings.size] || 0.042) * (settings.cover ? 1.15 : 1);
+    subEl.style.fontSize = Math.max(14, Math.min(44, r.height * scale)) + 'px';
+    subEl.className = settings.cover ? 'sub cover' : 'sub';
     subEl.style.top = ''; subEl.style.bottom = '';
-    if (settings.position === 'top') subEl.style.top = (r.height * 0.08) + 'px';
-    else if (settings.position === 'middle') subEl.style.top = (r.height * 0.55) + 'px';
-    else subEl.style.bottom = (r.height * 0.13) + 'px';
+    // subOff: Alt+↑/↓ dời sub lên, xuống (phần chiều cao video, nhớ theo trang).
+    if (settings.position === 'top') subEl.style.top = (r.height * (0.08 - subOff)) + 'px';
+    else if (settings.position === 'middle') subEl.style.top = (r.height * (0.55 - subOff)) + 'px';
+    else subEl.style.bottom = (r.height * (0.13 + subOff)) + 'px';
     const text = (c.sung ? '♪ ' : '') + c.vi;   // dòng hát (chế độ lời bài hát)
     if (subEl.textContent !== text) subEl.textContent = text;
     subEl.style.display = 'block';
@@ -1634,12 +1661,14 @@
   }
 
   // ---------------------------------------------------------------- cài đặt, khởi động
-  chrome.storage.local.get('settings', (s) => {
+  chrome.storage.local.get(['settings', 'subPos'], (s) => {
     settings = { ...settings, ...(s.settings || {}) };
+    subOff = Number((s.subPos || {})[location.host]) || 0;
     window.dispatchEvent(new CustomEvent(DOWN, { detail: JSON.stringify({ type: 'ready' }) }));
     requestAnimationFrame(frame);
   });
   chrome.storage.onChanged.addListener((ch, area) => {
+    if (area === 'local' && ch.subPos && !subPosWrite) subOff = Number((ch.subPos.newValue || {})[location.host]) || 0;
     if (area === 'local' && ch.settings) {
       const nv = { ...(ch.settings.newValue || {}) };
       if (delayWrite) delete nv.delay;         // đang có chỉnh lệch bằng phím chưa ghi xong

@@ -1891,5 +1891,21 @@ await t('Ngôn ngữ đích: nhãn lệch sub (phím ]) ghi mã ngôn ngữ đan
   assert.match(e.badge() || '', /^EN · lệch sub \+0\.1 s/);
 });
 
+await t('Alt+↑ / Alt+↓: dời sub lên, xuống 2% mỗi lần, nhãn báo; phím khác không đổi', async () => {
+  const e = makeEnv({ settings: { ...OLD } });
+  e.up('items', [e.item(A, 100000)]);
+  e.activeId = A; e.video(A, 2).paused = true;
+  await e.tick();
+  let prevented = 0;
+  const key = (k, altKey) => e.listeners.keydown({ key: k, altKey, target: {}, preventDefault() { prevented++; }, stopPropagation() {} });
+  key('ArrowUp', true); key('ArrowUp', true);
+  await e.tick();
+  assert.match(e.badge() || '', /^VI · sub cao hơn 4%/);
+  key('ArrowDown', true); key('ArrowDown', true); key('ArrowDown', true);
+  await e.tick();
+  assert.match(e.badge() || '', /^VI · sub thấp hơn 2%/);
+  key('ArrowUp', false);
+  assert.equal(prevented, 5);
+});
 console.log(failed ? `\n${failed} kiểm tra trượt, ${n} đạt.` : `\n${n} kiểm tra đều đạt.`);
 process.exit(failed ? 1 : 0);

@@ -1,0 +1,180 @@
+// Kiểm tra đường dự phòng cho trang bất kỳ (bản thử): hàm chung trong extension/tablive.js, và phần background.js bật thu âm
+// thanh tab, chuyển tin giữa trang ẩn (offscreen.js) và tab. Không cần trình duyệt.   Chạy: node alpha/dev/tablive-test.mjs
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
+
+const EXT = path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), 'extension');
+const ctx = {};
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(path.join(EXT, 'tablive.js'), 'utf8'), ctx);
+const L = ctx.TodLive;
+
+let n = 0;
+const t = async (name, fn) => { await fn(); n++; console.log('PASS ' + name); };
+
+await t('kế hoạch gửi: chờ đủ 5 s chưa dịch và 2 s âm thanh mới; gửi từ con trỏ, âm thanh dư 1,5 s phía trước', () => {
+  assert.equal(L.plan(0, 0, 4.9), null);
+  assert.equal(JSON.stringify(L.plan(0, 0, 5.04)), JSON.stringify({ from: 0, to: 5, audioFrom: 0, final: false }));
+  // Câu cuối bị giữ lại ở 8,2: lần sau gửi lại từ 7,9 khi đã có thêm 2 s mới và phần chưa dịch đủ 5 s.
+  assert.equal(L.plan(8.2, 10, 11.5), null);
+  assert.equal(L.plan(8.2, 10, 13.25).from, 8.2);
+  assert.equal(L.plan(8.2, 10, 13.25).audioFrom.toFixed(1), '6.7');
+  // Một câu dài mãi không hết: sau 15 s thì gửi final (server dịch hết).
+  assert.equal(L.plan(20, 33, 35.1).final, true);
+});
+
+await t('khoảng ngừng nói: tìm cái gần cuối nhất trong 2,5 s cuối; nói liền (không ngừng) thì không có', () => {
+  const R = L.RATE, tone = (sec, amp) => Array.from({ length: Math.round(sec * R) }, (_, i) => Math.round(amp * Math.sin(i / 3)));
+  // nói 3 s, ngừng 0,9 s (từ 3 tới 3,9), nói tiếp 1 s
+  const a = new Int16Array([...tone(3, 8000), ...tone(0.9, 50), ...tone(1, 8000)]);
+  const p = L.findPause(a);
+  assert.ok(p > 3 && p < 3.9, String(p));
+  // ngừng 0,5 s (giữa câu, nói chậm): không cắt
+  assert.equal(L.findPause(new Int16Array([...tone(3, 8000), ...tone(0.5, 50), ...tone(1, 8000)])), null);
+  assert.equal(L.findPause(new Int16Array(tone(5, 8000))), null);
+  // ngừng xa hơn 2,5 s trước cuối: không tính
+  assert.equal(L.findPause(new Int16Array([...tone(1, 8000), ...tone(0.5, 50), ...tone(3, 8000)])), null);
+});
+
+await t('con trỏ sau lần gửi: dời tới next server trả (không lùi, không vượt to); lỗi hay server cũ: tới to', () => {
+  assert.equal(L.advance(5, 12, { next: 9.4 }), 9.4);
+  assert.equal(L.advance(5, 12, { next: 3 }), 5);
+  assert.equal(L.advance(5, 12, { next: 20 }), 12);
+  assert.equal(L.advance(5, 12, null), 12);
+  assert.equal(L.advance(5, 12, {}), 12);
+});
+
+await t('WAV 16 bit một kênh 16 kHz; mức to nhất để bỏ khúc im lặng', () => {
+  const pcm = new Int16Array([0, 1000, -32768, 32767]);
+  const w = L.wav(pcm);
+  assert.equal(w.length, 44 + 8);
+  assert.equal(String.fromCharCode(...w.slice(0, 4)) + String.fromCharCode(...w.slice(8, 12)), 'RIFFWAVE');
+  const v = new DataView(w.buffer);
+  assert.equal(v.getUint32(24, true), 16000); assert.equal(v.getUint16(34, true), 16); assert.equal(v.getInt16(46, true), 1000);
+  assert.ok(L.peak(new Int16Array([10, -200, 50])) < L.QUIET);
+  assert.ok(L.peak(pcm) > 0.99);
+});
+
+await t('độ trễ hiển thị: theo dòng muộn nhất trong 8 dòng gần đây (tròn 0,5 s, trong 3–20 s), giảm lại sau một lượt chậm', () => {
+  assert.equal(L.delayFrom([]), 6000);
+  assert.equal(L.delayFrom([7200, 6000]), 8000);
+  assert.equal(L.delayFrom([60000]), 20000);
+  assert.equal(L.delayFrom([1000]), 3000);
+  // Một lượt chậm (17 s) rồi 8 dòng về đúng nhịp (8 s): độ trễ giảm lại.
+  assert.equal(L.delayFrom([17000, ...Array(8).fill(8000)]), 8500);
+});
+
+await t('giờ máy của mẫu: theo mốc gần nhất sau mẫu đó; máy ngủ (số mẫu đứng, giờ máy chạy) không làm lệch dòng sau', () => {
+  const R = L.RATE;
+  const anchors = [{ n: 0, w: 1000 }, { n: 10 * R, w: 11000 }, { n: 20 * R, w: 6 * 3600e3 + 21000 }];
+  assert.equal(L.wallOf(anchors, 5), 6000);
+  // Sau khi máy ngủ 6 giờ ở giây 10: mẫu ở giây 15 thuộc phần sau giấc ngủ.
+  assert.equal(L.wallOf(anchors, 15), 6 * 3600e3 + 16000);
+  assert.equal(L.wallOf([], 3), null);
+});
+
+await t('dòng đang hiện: dòng mới nhất đã tới giờ, còn trong thời gian của nó (dòng ngắn giữ ít nhất 1,2 s)', () => {
+  const cues = [{ at: 1000, until: 1500, text: 'a' }, { at: 3000, until: 6000, text: 'b' }];
+  assert.equal(L.current(cues, 500), null);
+  assert.equal(L.current(cues, 2100).text, 'a');
+  assert.equal(L.current(cues, 2300), null);
+  assert.equal(L.current(cues, 4000).text, 'b');
+});
+
+// background.js với chrome giả: ghi lại các lời gọi.
+function loadBackground({ injectFails = false } = {}) {
+  const calls = [], toTab = [], session = {};
+  let listener = null, hasDoc = false;
+  const chrome = {
+    runtime: {
+      onMessage: { addListener: (f) => { listener = f; } },
+      sendMessage: async (m) => { calls.push(['runtime', m]); return m.type === 'start' ? { ok: true } : m.type === 'status' ? { on: true, tabId: 7, sent: 3 } : { ok: true }; },
+    },
+    tabs: { sendMessage: (tab, m) => { toTab.push({ tab, ...m }); return Promise.resolve(); }, get: async (id) => ({ id, title: 'A page' }), onUpdated: { addListener: () => {} } },
+    tabCapture: { getMediaStreamId: async (o) => { calls.push(['capture', o]); return 'stream-1'; } },
+    offscreen: { hasDocument: async () => hasDoc, createDocument: async (o) => { calls.push(['offscreen', o]); hasDoc = true; } },
+    scripting: { executeScript: async (o) => { calls.push(['inject', o]); if (injectFails) throw new Error('Cannot access a chrome:// URL'); } },
+    storage: { local: { get: async () => ({ settings: { target: 'en', server: 'http://127.0.0.1:8787' } }) },
+      session: { set: async (o) => Object.assign(session, o), get: async () => session, remove: async (k) => { delete session[k]; } } },
+  };
+  const c = { chrome, AbortController, fetch, TextDecoder };
+  vm.createContext(c);
+  vm.runInContext(fs.readFileSync(path.join(EXT, 'background.js'), 'utf8'), c);
+  const send = (msg, sender = {}) => new Promise((resolve) => { const ret = listener(msg, sender, resolve); if (ret !== true) resolve(undefined); });
+  return { send, calls, toTab, session };
+}
+
+await t('dòng theo độ trễ riêng: dòng dịch lúc xem hiện sau lag; tua lại (lag 0) hiện đúng lúc nói', () => {
+  const cues = [{ at: 10000, until: 12000, lag: 8000, text: 'a' }, { at: 13000, until: 15000, lag: 8000, text: 'b' }];
+  assert.equal(L.current(cues, 12000), null);
+  assert.equal(L.current(cues, 18500).text, 'a');
+  assert.equal(L.current(cues, 21500).text, 'b');
+  cues[0].lag = 0;
+  assert.equal(L.current(cues, 10500).text, 'a');
+});
+
+await t('giờ video lúc câu được nghe: từ mẫu gần nhất trước đó, cộng thời gian đã phát; đang dừng thì không cộng', () => {
+  const s = [{ w: 1000, vt: 30, playing: true, rate: 1 }, { w: 1100, vt: 30.1, playing: true, rate: 1 }, { w: 1200, vt: 30.1, playing: false, rate: 1 }];
+  assert.equal(L.videoTimeAt(s, 1150).toFixed(2), '30.15');
+  assert.equal(L.videoTimeAt(s, 1700), 30.1);
+  assert.equal(L.videoTimeAt(s, 500), null);
+  assert.equal(L.videoTimeAt(s, 5000), null);
+  assert.equal(L.videoTimeAt([{ w: 0, vt: 10, playing: true, rate: 2 }], 500), 11);
+});
+
+await t('video nào: mẫu mang khoá video, dòng lấy khoá của mẫu lúc câu được nghe', () => {
+  const s = [{ w: 0, vt: 20, playing: true, rate: 1, key: 'A' }, { w: 1000, vt: 0.1, playing: true, rate: 1, key: 'B' }];
+  assert.equal(JSON.stringify(L.videoAt(s, 500)), JSON.stringify({ vt: 20.5, key: 'A' }));
+  assert.equal(L.videoAt(s, 1200).key, 'B');
+});
+
+await t('dòng trùng giờ: chiếm quá nửa dòng ngắn hơn thì coi là trùng', () => {
+  const x = { at: 45000, until: 48000 };
+  assert.equal(L.overlaps(x, 45400, 48600), true);
+  assert.equal(L.overlaps(x, 47500, 50000), false);
+  assert.equal(L.overlaps(x, 48000, 49000), false);
+});
+
+await t('popup bật: lấy mã luồng thu của tab, mở trang ẩn, tiêm lớp sub, gửi cài đặt cho trang ẩn, nhớ tab đang thu', async () => {
+  const b = loadBackground();
+  const r = await b.send({ type: 'tab-start', tabId: 7 });
+  assert.equal(JSON.stringify(r), '{"ok":true}');
+  assert.deepEqual(b.calls.map(c => c[0]), ['capture', 'offscreen', 'inject', 'runtime']);
+  assert.equal(b.calls[0][1].targetTabId, 7);
+  assert.equal(JSON.stringify(b.calls[1][1].reasons), '["USER_MEDIA"]');
+  assert.equal(JSON.stringify(b.calls[2][1].files), '["tablive.js","tab.js"]');
+  const start = b.calls[3][1];
+  assert.equal(start.to, 'offscreen'); assert.equal(start.streamId, 'stream-1'); assert.equal(start.settings.target, 'en'); assert.equal(start.title, 'A page');
+  assert.equal(b.session.liveTab, 7);
+});
+
+await t('không tiêm được lớp sub (trang của Chrome): báo lỗi, không bắt đầu thu', async () => {
+  const b = loadBackground({ injectFails: true });
+  const r = await b.send({ type: 'tab-start', tabId: 7 });
+  assert.equal(r.ok, false); assert.match(r.error, /không hiện được sub/);
+  assert.ok(!b.calls.some(c => c[0] === 'runtime' && c[1].type === 'start'));
+  assert.equal(b.session.liveTab, undefined);
+});
+
+await t('tin của trang ẩn chuyển cho đúng tab (tab-cues, tab-state); tắt thì quên tab đang thu; tin từ tab không được giả làm trang ẩn', async () => {
+  const b = loadBackground();
+  await b.send({ type: 'tab-start', tabId: 7 });
+  await b.send({ to: 'background', type: 'cues', tabId: 7, cues: [{ start: 1, end: 2, vi: 'x', ws: 5 }] });
+  await b.send({ to: 'background', type: 'cues', tabId: 9, cues: [] }, { tab: { id: 9 } });
+  await b.send({ to: 'background', type: 'state', tabId: 7, on: false });
+  assert.deepEqual(b.toTab.map(m => [m.tab, m.type]), [[7, 'tab-cues'], [7, 'tab-state']]);
+  assert.equal(b.toTab[0].cues[0].ws, 5);
+  assert.equal(b.session.liveTab, undefined);
+});
+
+await t('trạng thái: hỏi trang ẩn khi có; chưa có trang ẩn thì tắt', async () => {
+  const b = loadBackground();
+  assert.equal(JSON.stringify(await b.send({ type: 'tab-status' })), '{"on":false}');
+  await b.send({ type: 'tab-start', tabId: 7 });
+  assert.equal((await b.send({ type: 'tab-status' })).sent, 3);
+});
+
+console.log(`\n${n} kiểm tra đều đạt.`);

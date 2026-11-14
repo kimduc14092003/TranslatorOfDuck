@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { classifySpeech, segmentCues, fixViText, splitSung, extractAudio, windowAsr, resplitSentences, speechBefore, lyricCues, isFiller, QUIET_FILLER, cuesFromAsr } from '../pipeline.mjs';
+import { liveHold, liveTrim, classifySpeech, segmentCues, fixViText, splitSung, extractAudio, windowAsr, resplitSentences, speechBefore, lyricCues, isFiller, QUIET_FILLER, cuesFromAsr } from '../pipeline.mjs';
 
 const W = (text, start, end) => ({ text, start, end });
 let n = 0;
@@ -108,6 +108,23 @@ t('dấu chấm ASCII sau chữ Hán là hết câu (video dạy tiếng Hàn xe
   const words = [W('我', 0, 0.3), W('是', 0.3, 0.6), W('大', 0.6, 0.9), W('学', 0.9, 1.2), W('生.', 1.2, 1.6), W('저는', 2.2, 2.8), W(' 회사원', 2.8, 3.6), W('이에요.', 3.6, 4.4)];
   const r = resplitSentences({ text: '我是大学生.저는 회사원이에요.', words, segments: [{ start: 0, end: 4.4, text: '我是大学生.저는 회사원이에요.' }] });
   assert.deepEqual(r.segments.map(x => x.text.trim()), ['我是大学生.', '저는 회사원이에요.']);
+});
+t('âm thanh tab (live): câu cuối còn đang nói lúc âm thanh hết thì giữ lại, trả mốc bắt đầu của nó', () => {
+  // Âm thanh 6,5 s bắt đầu ở 23,5 (giây thu); câu cuối nói tới 6,3 s: còn dở.
+  const asr = { segments: [{ start: 1.5, end: 3, text: '我叫玛丽，' }, { start: 4.2, end: 6.3, text: '我的名' }],
+    words: [W('我', 1.5, 1.8), W('叫', 1.8, 2.1), W('玛丽，', 2.1, 3), W('我', 4.2, 4.5), W('的', 4.5, 4.8), W('名', 4.8, 6.3)] };
+  assert.deepEqual(liveHold(asr, 23.5, 6.5, 25), { next: 27.7, open: true });
+  // Câu cuối đã xong 1 s trước khi hết âm thanh: dịch hết, next là hết âm thanh.
+  assert.deepEqual(liveHold({ ...asr, segments: asr.segments.slice(0, 1), words: asr.words.slice(0, 3) }, 23.5, 6.5, 25), { next: 30, open: false });
+  // Lượt sau chia câu khác: "你是美国人" bắt đầu trước con trỏ (66,46): giữ các chữ từ con trỏ, không bỏ cả câu.
+  const t2 = liveTrim({ segments: [{ start: 0.5, end: 3.2, text: '你是美国人。' }], words: [W('你', 0.5, 0.8), W('是', 0.8, 1.6), W('美国', 1.65, 2.5), W('人。', 2.5, 3.2)] }, 64.8, 66.46);
+  assert.deepEqual(t2.segments, [{ start: 1.65, end: 3.2, text: '美国人。' }]);
+  // Câu cuối dài còn dở có dấu phẩy: chỉ giữ phần sau dấu phẩy cuối.
+  const longOpen = { segments: [{ start: 0, end: 7.9, text: '可是我的心里在说，我还想做很多别的事情，我想学' }],
+    words: [W('可是我的', 0, 1), W('心里在说，', 1, 2), W('我还想', 2.1, 3), W('做很多别的事情，', 3, 5), W('我想', 5.2, 6), W('学', 6, 7.9)] };
+  assert.deepEqual(liveHold(longOpen, 0, 8, 0), { next: 5.2, open: true });
+  // Không câu nào bắt đầu từ from: không giữ.
+  assert.deepEqual(liveHold({ segments: [], words: [] }, 0, 5, 0), { next: 5, open: false });
 });
 t('tiếng Nhật, tiếng Hàn: điệp khúc lặp là lặp lời; dấu ー đếm là một chữ', () => {
   assert.equal(classifySpeech({}, { text: 'さよならさよならさよならさよなら', words: [] }).repeat, true);
@@ -335,6 +352,11 @@ t('nhận ra nguồn tiếng Nhật, tiếng Hàn; câu tiếng Trung có một 
   assert.equal(classifySpeech({}, { text: '감사합니다. 여기 여기.', words: [] }).src, 'ko');
   assert.equal(classifySpeech({}, { text: '这家店の招牌菜真的很好吃。', words: [] }).src, 'zh');
   assert.equal(classifySpeech({}, { text: '今天去ユニクロ买了件衣服，真的很便宜。', words: [] }).src, 'zh');
+  // Tiếng Việt (feed TikTok VN, 7/11): không phải tiếng Anh; câu tiếng Anh có tên tiếng Việt vẫn là tiếng Anh.
+  assert.equal(classifySpeech({}, { text: 'tôi có một quy tắc mỗi năm chỉ livestream ba lần', words: [] }).src, 'vi');
+  assert.equal(classifySpeech({}, { text: 'Today I visited Hà Nội with my friend from London and we ate pho.', words: [] }).src, 'en');
+  for (const x of ['Meet Nguyễn Văn Hùng today.', 'We visited Hà Nội yesterday.', 'Nǐ hǎo wǒ shì Zhōngguó rén.']) assert.notEqual(classifySpeech({}, { text: x, words: [] }).src, 'vi', x);
+  assert.equal(classifySpeech({}, { text: 'anh ơi chọn đi bạn ơi cho mọi người em ạ', words: [] }).src, 'vi');
   // Bài hát tiếng Nhật: hashtag nhạc, chữ kéo dài 0,5 s/chữ.
   const song = Array.from('あなたのことをずっとわすれない').map((c, i) => W(c, i * 0.5, i * 0.5 + 0.48));
   assert.equal(classifySpeech({ hashtags: ['翻唱'] }, { text: 'あなたのことをずっとわすれない', words: song }).label, 'singing');

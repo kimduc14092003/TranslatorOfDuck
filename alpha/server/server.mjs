@@ -132,7 +132,11 @@ async function handleSubtitles(req, res) {
   // thì trả need_audio để extension gửi âm thanh như thường.
   const retarget = meta.retarget === true && meta.aac == null && meta.b64 == null;
   const chunked = typeof meta.aac === 'string' || retarget;
-  if (!/^\d{6,25}$/.test(id) || !(chunked || typeof meta.b64 === 'string')) return send(res, 400, { error: 'need id (digits) and aac or b64' });
+  // id "tab<số>": âm thanh thu từ tab của trang bất kỳ (đường dự phòng, extension tab.js/offscreen.js); mốc from/to tính từ lúc
+  // bắt đầu thu, âm thanh là WebM/Opus (fmt: 'webm') gửi trong trường aac.
+  // id "web<số>": bộ đọc chung (web.js) gửi âm thanh trình phát của trang đã nạp (fMP4, fmt: 'fmp4'); mốc theo giờ video.
+  if (!/^(?:tab|web)?\d{6,25}$/.test(id) || !(chunked || typeof meta.b64 === 'string')) return send(res, 400, { error: 'need id (digits) and aac or b64' });
+  if (meta.fmt != null && !['aac', 'webm', 'wav', 'fmp4'].includes(meta.fmt)) return send(res, 400, { error: 'fmt must be aac, webm, wav or fmp4' });
   if (chunked && !(num(meta.from) && num(meta.to) && meta.to > meta.from && (retarget || num(meta.audioStart)))) return send(res, 400, { error: 'need from < to and audioStart' });
   const span = (a, b) => `${a}-${b}`;
   const cacheFile = (sp, kind = 'vi') => path.join(CACHE, `${id}.${sp ? sp + '.' : ''}${kind}.${PIPELINE_VERSION}.json`);
@@ -211,7 +215,7 @@ async function handleSubtitles(req, res) {
     if (process.env.TOD_DUMP && buf) {
       const dir = path.join(CACHE, '..', 'dump');
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, path.basename(file, '.json') + (chunked ? `.at${meta.audioStart}.aac` : '.mp4')), Buffer.from(chunked ? meta.aac : meta.b64, 'base64'));
+      fs.writeFileSync(path.join(dir, path.basename(file, '.json') + (chunked ? `.at${meta.audioStart}.${meta.fmt || 'aac'}` : '.mp4')), Buffer.from(chunked ? meta.aac : meta.b64, 'base64'));
     }
     let opts = {}, later = false;
     if (chunked) {
@@ -263,7 +267,7 @@ async function handleSubtitles(req, res) {
       // Khi bật rút gọn (CONDENSE): mẩu nhanh, đoạn dịch sẵn (video kế tiếp) và đoạn gấp (chứa hay sắp tới chỗ đang xem: urgent) bỏ lượt rút gọn: bớt một
       // lần gọi model, xong sớm hơn. Đo 2/11 trên 503 đoạn trong cache: có rút gọn thì dịch mất 4,0 s (trung vị) thay vì 1,8 s.
       // Đoạn gấp là lúc đang trễ (vừa tua, mạng chậm): sub sớm hơn ~2 s đáng hơn dòng ngắn hơn.
-      opts = { kind: 'aac', offset: retarget ? meta.from : meta.audioStart, from: meta.from, to: meta.to, context, condense: CONDENSE && !quick && meta.prefetch !== true && meta.urgent !== true };
+      opts = { kind: meta.fmt || 'aac', offset: retarget ? meta.from : meta.audioStart, from: meta.from, to: meta.to, context, condense: CONDENSE && !quick && meta.prefetch !== true && meta.urgent !== true };
       // Rút gọn sau (extension từ 0.2.42 gửi condenseLater: true cùng stream: true): đoạn gấp, dịch sẵn vẫn trả kết quả ngay như
       // trên, rồi mới rút gọn dòng dài; bản rút gọn gửi thêm một dòng { condensed: [dòng…] } sau dòng kết quả, và ghi đè vào cache.
       // Extension chỉ thay những dòng chưa hiện (chủ dự án 4/11: giữ sub ra sớm, ROADMAP §6).
@@ -271,6 +275,13 @@ async function handleSubtitles(req, res) {
     }
     opts.lyrics = lyrics;
     opts.target = target;
+    // Đường dự phòng (id tab…): giữ câu cuối còn dở cho lần gửi sau (pipeline.mjs liveHold); final: dịch hết.
+    if (chunked && id.startsWith('tab')) { opts.live = true; opts.final = meta.final === true; }
+    if (chunked && id.startsWith('web')) {
+      opts.noSlowSing = true;
+      // skip, span: chỉ giải [audioStart + skip, + span] của các mảnh gửi lên; mốc 0 của bản giải là audioStart + skip.
+      if (meta.fmt === 'fmp4' && num(meta.skip) && num(meta.span) && meta.span > 0) { opts.trim = { ss: meta.skip, t: meta.span }; opts.offset = meta.audioStart + meta.skip; }
+    }
     // Kết quả nhận dạng giọng nói giữ theo mã băm âm thanh (cùng đoạn mà gửi dư khác nhau thì âm thanh, mốc thời gian
     // khác nhau): dịch lỗi rồi extension gửi lại thì không trả tiền ASR lần nữa. Có kết quả cuối thì xoá, trừ đoạn có câu
     // hát (cùng điều kiện noSinging): đổi chế độ lời bài hát thì đoạn đó phải làm lại, giữ ASR để khỏi trả tiền lần nữa.
@@ -457,7 +468,7 @@ server.listen(PORT, HOST, () => {
   // Báo tên biến (không bao giờ in giá trị) để tìm lỗi gõ sai tên trong .env.
   const KNOWN = ['OPENAI_API_KEY', 'OPENAI_MODEL', 'OPENAI_BASE', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_BASE', 'DASHSCOPE_API_KEY',
     'DASHSCOPE_BASE', 'FUNASR_MODEL', 'ASR_FALLBACK_MODEL', 'ASR_QUOTA_RETRY_MS', 'OPENAI_REASONING_EFFORT', 'MAX_PARALLEL', 'FFMPEG',
-    'HOST', 'PORT', 'MAX_SECONDS', 'TOD_DUMP', 'TOD_WORK', 'TOD_KEEP_ASR', 'TOD_CONDENSE', 'MT_TIMEOUT_MS',
+    'HOST', 'PORT', 'MAX_SECONDS', 'TOD_DUMP', 'TOD_WORK', 'TOD_KEEP_ASR', 'TOD_CONDENSE', 'MT_TIMEOUT_MS', 'MT_PROVIDER', 'QWEN_MODEL', 'QWEN_BASE',
     // So sánh nhận dạng giọng nói (alpha/dev/real/asr-bench.mjs): server không dùng, nhưng cùng nằm trong .env.
     'ASR_BENCH_DASHSCOPE_MODELS', 'ELEVENLABS_API_KEY', 'ELEVENLABS_BASE', 'AZURE_SPEECH_KEY', 'AZURE_SPEECH_REGION', 'AZURE_SPEECH_BASE'];
   const odd = dotEnvInfo.names.filter(n => !KNOWN.includes(n));

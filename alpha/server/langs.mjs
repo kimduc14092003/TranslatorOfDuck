@@ -50,10 +50,11 @@ const SCRIPT_VI = { en: 'nguyên tiếng Anh', ja: 'chữ Nhật (kanji, kana)',
 const NAMES_VI = { en: NAMES_FROM_EN_VI,
   ja: 'Tên người, địa danh Nhật viết theo phiên âm Latin (romaji, ví dụ 田中 → Tanaka); tên thương hiệu viết theo tên quốc tế; từ lóng dịch theo nghĩa.',
   ko: 'Tên người, địa danh Hàn viết theo phiên âm Latin thông dụng (ví dụ 김지수 → Kim Ji-soo); tên thương hiệu viết theo tên quốc tế; từ lóng dịch theo nghĩa.' };
-const SRC_EN = { ja: 'Japanese', ko: 'Korean' };
+const SRC_EN = { ja: 'Japanese', ko: 'Korean', vi: 'Vietnamese' };
 const NAMES_SRC_EN = {
   ja: 'Write Japanese names of people and places in Hepburn romaji (e.g. 田中 → Tanaka); brands by their usual international names; translate slang by its meaning.',
-  ko: 'Write Korean names of people and places in the usual romanization (e.g. 김지수 → Kim Ji-soo); brands by their usual international names; translate slang by its meaning.' };
+  ko: 'Write Korean names of people and places in the usual romanization (e.g. 김지수 → Kim Ji-soo); brands by their usual international names; translate slang by its meaning.',
+  vi: 'Keep Vietnamese names of people and places as written, with their diacritics; brands by their usual international names; translate slang by its meaning.' };
 
 // Dòng đã dịch gửi kèm làm ngữ cảnh: khoá 'text' thay cho 'vi' (trường lưu trữ giữ tên vi ở mọi ngôn ngữ đích).
 const asText = (lines) => lines.map(({ zh, vi }) => ({ zh, text: vi }));

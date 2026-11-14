@@ -1643,6 +1643,116 @@ Kết quả và đề xuất ở [`docs/PLATFORMS.md`](PLATFORMS.md). Tóm tắt
 - **Ghi lại, chưa xem:** vlog Seoul mất 7 vế ở 0–10 s; đoạn đầu bị huỷ ("đã tua đi chỗ khác") ngay lúc mở video, sub đầu 13,8 s. Chưa rõ do extension hay do công cụ đo.
 - Dữ liệu lượt đo đã xoá.
 
+## 6ay. Thử đường dự phòng cho trang bất kỳ (6/11, nhánh `claude/any-site-tab-audio`, extension 0.2.46)
+
+- **Cách làm:** popup có nút "Dịch âm thanh tab này". Background lấy mã luồng thu (`chrome.tabCapture.getMediaStreamId`, quyền activeTab của lần bấm), mở trang ẩn `offscreen.html` (`USER_MEDIA`) và tiêm `tablive.js` + `tab.js` vào tab.
+  - Trang ẩn thu âm thanh, phát lại ra loa (đang thu thì Chrome không phát tiếng tab), ghi từng khúc WebM/Opus, gửi `/v1/subtitles`.
+  - Mỗi khúc dịch các câu bắt đầu trong 5 s, thu dư 1,5 s hai đầu. Khúc im lặng không gửi.
+  - `tab.js` hiện dòng ở lúc người nói + độ trễ. Độ trễ tự tăng khi dòng về muộn, bắt đầu 6 s, tối đa 20 s.
+- **Server:** id `tab<số>` (mốc tính từ lúc bắt đầu thu), trường `fmt: 'webm'`; mọi bước sau như đoạn Douyin. `source-test` có ca WebM.
+- **Quyền mới:** `tabCapture`, `offscreen`, `activeTab`, `scripting`. Không xin quyền mọi trang.
+- **Test:** `alpha/dev/tablive-test.mjs` 7 kiểm tra; các test cũ của server và extension đều đạt.
+- **Thử thật** (`alpha/dev/real/tablive-real.mjs`, YouTube "日常中文对话 Ep.1", 75 s, dịch sang tiếng Việt): 14/14 khúc có lời, 0 lỗi, 116–118/149 lần chụp có sub, trễ 8,5–9,5 s.
+- **Vấn đề thấy được:**
+  - câu nói chậm bị cắt ở ranh giới khúc ("我的名。" rồi "名字 | 是乐乐"), dịch sai theo ("我也很高。" thành "Mình cũng rất cao."). Thu dư 3 s không đỡ: thêm dòng lặp, trễ 12,5 s. Hướng sửa: giữ câu cuối chưa xong của khúc, gửi lại cùng âm thanh khúc sau;
+  - giọng dạy tiếng Trung chậm bị gắn ♪ (luật sẵn có của đường tiếng Trung);
+  - sang trang web khác trong cùng tab thì Chrome không cho tiêm lại lớp sub (activeTab mất); âm thanh vẫn thu;
+  - chưa thử bằng cú bấm popup thật trên Chrome của chủ dự án (lúc thử tự động dùng cờ `--allowlisted-extension-id` và bản sao có quyền mọi trang).
+
+### 6ay (tiếp). Sửa câu bị cắt ở ranh giới khúc (6/11)
+
+- **Bỏ khúc 5 s cố định.** Trang ẩn giữ âm thanh liên tục trong bộ đệm 90 s (16 kHz, gửi WAV, `fmt: 'wav'`) và một con trỏ: mốc đầu phần chưa dịch.
+  - Khi phần chưa dịch đủ 5 s và có thêm ≥ 2 s mới: gửi âm thanh từ con trỏ − 1,5 s tới hiện tại (`tablive.js` `plan`).
+  - Có khoảng ngừng nói ≥ 0,45 s trong 2,5 s cuối (độ to dưới 20% cả đoạn): cắt ở đó, gửi `final` (`findPause`).
+  - Không có khoảng ngừng (nhạc nền, nói liền): server giữ câu cuối nếu chữ cuối kết thúc trong 0,8 s cuối, trả `next` = mốc bắt đầu câu đó; con trỏ dời tới `next` (`liveHold`).
+  - Phần chưa dịch dài quá 15 s thì gửi `final`.
+- **Server cắt theo từng chữ** từ con trỏ (`liveTrim`), vì lượt nhận dạng sau có thể chia câu khác lượt trước: trước đó "你是美国人" bắt đầu trước con trỏ bị bỏ cả câu.
+- **Thử thật** (75 s mỗi video, dịch sang tiếng Việt):
+
+  | Video | Lần gửi | Giữ câu | Có sub | Trễ | Ghi chú |
+  |---|---|---|---|---|---|
+  | M4pc8Epwens, khúc 5 s cố định (trước) | 15 | — | 118/149 | 9,5 s | câu cắt đôi ở ranh giới |
+  | M4pc8Epwens, chỉ giữ câu ở server | 21 | 17 | 102/149 | 14 s | ASR kéo mốc chữ cuối tới hết âm thanh nên gần như lần nào cũng giữ; mất chữ khi lượt sau chia câu khác |
+  | M4pc8Epwens, bản cuối | 17 | 1 | 104/149 | 8 s | video dạy rất chậm, ngừng giữa các chữ lâu như giữa các câu: vẫn vụn ("我的名字。" \| "是乐乐") |
+  | U4h59nMjb0A (vlog dạy tiếng, nói thường), bản cuối | 16 | 1 | 125/149 | 8,5 s | câu liền, không thấy mất chữ |
+
+- Còn lại: giọng dạy tiếng Trung chậm bị gắn ♪ (luật của đường tiếng Trung); chưa thử bằng cú bấm popup thật; chưa thử trang có nhạc nền liên tục (đường giữ câu ở server).
+
+### 6ay (tiếp). Sub theo giờ video (6/11)
+
+- Chủ dự án thử lần đầu thấy "dịch không đúng". Log cho thấy chữ nhận dạng và bản dịch đều đúng, nhưng: ô "Dịch sang" đang là English; sub theo đồng hồ máy nên trễ 8–10 s so với lời, và khi tua vẫn hiện nốt dòng của đoạn cũ.
+- **Sửa (`tab.js`):** trang có video thì ghi giờ video mỗi 100 ms; mỗi dòng gắn vào giờ video lúc câu được nghe (`videoTimeAt`), hiện theo giờ video + độ trễ riêng của dòng (`lag`).
+  - tạm dừng thì sub đứng yên;
+  - tua thì mọi dòng đã có bỏ độ trễ: tua lại chỗ đã dịch thì dòng hiện đúng lúc nói, dòng trước điểm tua không hiện lại;
+  - dòng mới trùng quá nửa thời gian với dòng đã có (nghe lại sau khi tua) thì bỏ (`overlaps`);
+  - không có video (trang chỉ có tiếng, video trong iframe): theo đồng hồ máy như cũ.
+- **Thử thật** (U4h59nMjb0A, 95 s, tạm dừng 6 s ở giây 30, tua từ 0:54 về 0:20): sub đứng yên khi dừng; sau khi tua, các dòng hiện đúng lúc nói, đúng thứ tự, không dòng lặp. Lần thử trước bản sửa: dòng nói ở 0:13 hiện lại ở 0:21, một dòng hiện hai lần.
+
+### 6ay (tiếp). Lần thử thứ hai của chủ dự án (7/11)
+
+- Chủ dự án thấy "không ổn". Từ log: lượt thu ngừng ở 0:21 lúc 3:33 sáng, chạy lại 9:09 sáng (có lẽ máy ngủ), từ đó sub không hiện. Nguyên nhân: lớp sub đổi giờ thu (đếm theo số mẫu) sang giờ máy bằng một mốc cố định lúc bắt đầu; máy ngủ thì số mẫu đứng mà giờ máy chạy, mọi dòng sau đó lệch 6 giờ.
+  - Sửa: trang ẩn ghi mốc giờ máy mỗi lần nhận âm thanh, gửi giờ máy của từng dòng (`ws`, `we`; `tablive.js` `wallOf`).
+- Lượt thử của tôi trên cùng video (ZBp9_7JQ9eQ, 120 s): bản dịch liền mạch, nhưng độ trễ chỉ tăng: một lượt dịch chậm 14 s đẩy lên 17,5 s tới hết video.
+  - Sửa: độ trễ tính từ 8 dòng gần đây (muộn nhất + 0,5 s, trong 3–20 s), giảm lại được (`delayFrom`). Thử lại 150 s, có tạm dừng 8 s: trễ 7,5–9 s suốt lượt.
+- Còn thấy trong log lượt của chủ dự án: câu bị cắt ở chỗ ngừng giữa câu, dịch sai theo ("请你忘掉我是一个中文" | "学生这个身份…"). Chưa sửa: lượt của tôi trên cùng video không gặp; cần thêm mẫu.
+
+### 6ay (tiếp). Thử trên TikTok (7/11)
+
+- Video: [@xiaoguachinese 7474475102868901152](https://www.tiktok.com/@xiaoguachinese/video/7474475102868901152) (tiếng Trung, nói nhanh), [@slayspeech 7589057200262319391](https://www.tiktok.com/@slayspeech/video/7589057200262319391) (tiếng Anh kể chậm). Xem không đăng nhập; TikTok mở video ở chế độ tắt tiếng, người xem phải bật tiếng (script thử tự bật). Video TikTok tự phát lại từ đầu: sub hiện ngay đúng lúc nói (như tua lại).
+- Lần đầu: chạy được, trễ 8–10 s; lỗi: giọng kể chậm bị cắt vụn ở mọi khoảng ngừng 0,45 s ("Misaki and how we." | "became friends when I was in."), và gắn ♪ (luật hát theo độ kéo dài).
+- **Sửa:**
+  - khoảng ngừng để cắt: 0,45 s → 0,7 s (0,7 và 1,0 s đều ra câu liền; 1,0 s giữ câu nhiều hơn);
+  - âm thanh tab chỉ coi là hát khi lặp lời, không xét độ kéo dài (`opts.live`);
+  - chưa có câu nào nói xong thì server trả `skipped`/`held` kèm `next`, không trả dòng dở (trước đó gửi lại cùng câu ba lần);
+  - câu cuối dài còn dở: chỉ giữ phần sau dấu phẩy cuối (trước đó giữ cả câu, sub trễ 18,5 s với người nói nhanh);
+  - cắt theo chữ lệch 0,3 s thay vì 0,15 s ("meet" bị mất).
+- **Lần cuối** (70 s mỗi video, sang tiếng Việt): tiếng Trung 15/15 lần gửi có lời, 125/139 lần chụp có sub, trễ 6–9 s; tiếng Anh 105/139, trễ 4,5–10 s; không ♪ nhầm, không mất chữ thấy được.
+- Còn lại: đôi khi một chữ ở chỗ cắt hiện ở cả hai dòng ("…眼中的好。" | "好老师…"); người nói chậm vẫn có dòng cụt ("year," | "my friend Jocelyn.").
+
+### 6ay (tiếp). Các trang video ngắn kiểu Douyin, có Astra soát (7/11)
+
+- **Thử thật** (khách, không đăng nhập, `tablive-real.mjs --next-at 20,40`: nhấn mũi tên xuống sang video kế):
+
+  | Trang | Kết quả |
+  |---|---|
+  | YouTube Shorts (`/shorts`) | chạy; trễ 8 s sau lúc đầu (lượt đầu tới 17,5 s) |
+  | TikTok For You | chạy; video tự lặp thì dòng hiện đúng lúc nói |
+  | Instagram Reels (`/reels/`) | chạy với khách; Instagram hay tự tắt tiếng reel, lớp sub báo "video đang tắt tiếng" |
+  | Facebook Reels | không có video: đòi đăng nhập |
+  | Kuaishou (`/new-reco`) | trang không tải trong 30 s từ Việt Nam |
+  | Xiaohongshu (`/explore`) | trang khám phá là ảnh, không tự phát video; chưa thử trang một ghi chú video |
+
+- **Lỗi lớn tìm thấy khi lướt** (cả tôi đo thật lẫn Astra dựng probe, F02): dòng của video trước hiện trên video mới (dòng chỉ gắn giờ video). Sửa: mỗi mẫu giờ video và mỗi dòng mang khoá video (thẻ video, nguồn phát, đường dẫn trang; `videoAt`), chỉ hiện dòng của video đang xem.
+- **Astra (Codex, effort high, 8 phút, bản `git archive` không .env, probe offline):** 12 phát hiện. Đã sửa: F01 chọn video đang phát và trong khung nhìn; F03 quay về đầu không có sự kiện tua; F05 báo tắt tiếng; F08 lớp sub bị gỡ thì gắn lại; F10 lỗi server thì gửi lại đoạn đó (bỏ sau 3 lần); F11 mốc âm thanh khi bộ đệm vòng bị ghi đè; F12 không tiêm được lớp sub thì báo lỗi, không thu.
+- **Chưa sửa:** F04 video trong shadow DOM hay iframe; F06 vị trí sub theo khung video; F07 toàn màn hình kiểu gốc của thẻ video (lớp sub nằm ngoài lớp toàn màn hình); F09 một lượt thu chung id nên ngữ cảnh dịch, bảng xưng hô mang sang video sau.
+
+## 6az. Bộ đọc chung: dịch trước trên trang bất kỳ (7/11, extension 0.2.47, nhánh `claude/any-site-tab-audio`)
+
+- **Chủ dự án:** không hài lòng độ trễ của đường thu âm thanh tab; muốn dịch mọi trang trừ trang chặn chặt (Netflix, YouTube); tạm bỏ trang có mã hoá và livestream.
+- **Đo trước** (`alpha/dev/real/media-probe.mjs`, chỉ đọc, khách): TikTok (một video và feed), Instagram Reels, Vimeo, Douyin đều nạp âm thanh AAC thành SourceBuffer riêng của Media Source Extensions; nạp trước chỗ đang xem trung vị 41 s (TikTok một video), 6,5 s (TikTok feed, video 11 s), 12 s (Instagram), 26 s (Vimeo), 13 s (Douyin). Bilibili không phát cho khách trong lượt đo.
+- **Cách làm:**
+  - `msehook.main.js` (thế giới trang, từ lúc trang bắt đầu tải): chép các mẩu SourceBuffer chỉ có âm thanh mà trình phát tự nạp, kèm timestampOffset; gắn MediaSource với đường dẫn blob: của nó.
+  - `fmp4.js`: đọc mốc thời gian (tfdt, trun) và vị trí byte từng mảnh.
+  - `web.js`: chia đoạn theo giờ video (đoạn đầu 8 s, sau đó 15 s; dư 2 s trước, 3 s sau), gửi khi trình phát đã nạp đủ, tối đa 2 đoạn cùng lúc; video tải sẵn trong feed được dịch đoạn đầu; sub hiện theo `video.currentTime` trên khung video; bỏ dòng trùng ở ranh giới đoạn.
+  - Bật theo từng trang: popup "Dịch trang này" xin quyền đúng trang đó (`optional_host_permissions`), background đăng ký bộ đọc (`registerContentScripts`) rồi tải lại tab. Không bật trên YouTube, Netflix, các trang phim có mã hoá, Douyin (đã có đường riêng).
+  - Server: id `web…`, `fmt: 'fmp4'` (ffmpeg không chèn khoảng lặng từ 0); chỉ coi là hát khi lặp lời.
+  - Nhận ra tiếng Việt (≥ 30% từ có dấu riêng): đích tiếng Việt thì hiện bản chép, đích tiếng Anh thì dịch. Trước đó video tiếng Việt trên feed TikTok bị coi là tiếng Anh, "dịch" ra chữ vô nghĩa.
+- **Thử thật** (`tablive-real.mjs --web`, video để tắt tiếng): TikTok một video (tiếng Trung, tiếng Anh): sub đúng lúc nói, nhãn "đọc trước"; lướt sang video kế có sub ngay từ giây 1,2 (đã dịch sẵn). TikTok feed video tiếng Việt: hiện lời chép. Instagram: có sub nhưng reel hay đứng với khách. Vimeo: không tự phát trong trình duyệt thử (kể cả không bật bộ đọc), chưa rõ.
+- **Chưa làm:** video gộp hình và tiếng một SourceBuffer; trang gắn thẳng file (không Media Source); video trong iframe; tua giữa video (chưa có mẩu nhanh như Douyin); kiểm trên trình duyệt thật bằng cú bấm popup.
+
+### 6az (tiếp). Astra soát bộ đọc chung (7/11)
+
+- Codex effort high, 11 phút, bản `git archive` f63cd07, probe offline; 18 phát hiện (request_changes). Đã sửa:
+  - G02 init và dữ liệu chung một lần nạp; mảnh thiếu mdat không nhận;
+  - G08 kiểm phần nạp liền bằng mép xa nhất; G09 mẩu nhanh từ chỗ đang xem khi đoạn đầy đủ chưa đủ âm thanh sau 1,5 s;
+  - G12 mảnh dài hơn đoạn: server chỉ giải `[audioStart + skip, + span]` (đoạn 15 s gửi 20,7 s thay vì 36–55 s); giới hạn 24 MB mỗi lần gửi;
+  - G16 tiếng Việt: chỉ đếm chữ riêng tiếng Việt, ≥ 4 từ, ≥ 40%, ít từ chức năng tiếng Anh ("Meet Nguyễn Văn Hùng today.", pinyin có dấu: không còn bị nhận là tiếng Việt);
+  - G13 chặn youtube-nocookie; G14 tắt thì báo mọi tab của trang; G15 mã đăng ký một-một theo origin;
+  - G18 đổi ngôn ngữ đích hay chế độ lời bài hát thì dịch lại;
+  - G01, G10: kiểm kiểu và cỡ tin từ trang, giới hạn số nguồn, byte mỗi track, số mẫu trun; chép đúng phần mảnh; dọn nguồn cũ cả khi không thấy video; dấu đã gắn hook nằm trên hàm, không trên window.
+- Chưa sửa: G03 (ghi mẩu trước khi trình phát nhận; appendWindow), G04 (timestampOffset đổi giữa chừng, nạp lại đè đoạn đã dịch), G05 edit list, G06 base_data_offset tuyệt đối, G07 nhiều track trong một mảnh, G11 video gắn bằng srcObject, G17 ngữ cảnh xa với mốc thập phân.
+- Thử lại: TikTok 63 s, tua từ 0:08 tới 0:40: dòng có ngay ở 0:43,5; toàn video đúng lúc.
+
 ## 7. Việc tiếp theo trên Mac
 
 Lộ trình từ 3/11/2026 (làm sản phẩm ngon trước, dịch mọi ngôn ngữ sang mọi ngôn ngữ, bán để sau): [`ROADMAP.md`](ROADMAP.md).

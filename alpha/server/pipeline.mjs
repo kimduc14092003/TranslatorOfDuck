@@ -49,14 +49,25 @@ const looksOpenAI = (v) => /^sk-(proj|svcacct|admin)-/.test(v || '') || /^sk-[A-
 export const misplacedOpenAIKey = ['GEMINI_API_KEY', 'DASHSCOPE_API_KEY', 'GROQ_API_KEY'].find(n => looksOpenAI(ENV[n])) || null;
 if (!ENV.OPENAI_API_KEY && misplacedOpenAIKey) ENV.OPENAI_API_KEY = ENV[misplacedOpenAIKey];
 for (const n of ['GEMINI_API_KEY', 'DASHSCOPE_API_KEY']) if (looksOpenAI(ENV[n])) delete ENV[n];
-const mtProvider = () => (ENV.OPENAI_API_KEY ? 'openai' : ENV.GEMINI_API_KEY ? 'gemini' : null);
+// Dịch bằng Qwen của Alibaba (DashScope, cổng cùng kiểu API với OpenAI, dùng chung DASHSCOPE_API_KEY với nhận dạng giọng
+// nói): MT_PROVIDER=qwen, hoặc tự chọn khi không có key OpenAI, Gemini. Chủ dự án hết key OpenAI 7/11.
+const QWEN_BASE = ENV.QWEN_BASE || DASHSCOPE_BASE + '/compatible-mode/v1';
+const QWEN_MODEL = ENV.QWEN_MODEL || 'qwen-flash';
+const MT_PROVIDER = String(ENV.MT_PROVIDER || '').toLowerCase();
+const mtProvider = () => {
+  if (MT_PROVIDER === 'qwen') return ENV.DASHSCOPE_API_KEY ? 'qwen' : null;
+  if (MT_PROVIDER === 'openai') return ENV.OPENAI_API_KEY ? 'openai' : null;
+  if (MT_PROVIDER === 'gemini') return ENV.GEMINI_API_KEY ? 'gemini' : null;
+  return ENV.OPENAI_API_KEY ? 'openai' : ENV.GEMINI_API_KEY ? 'gemini' : ENV.DASHSCOPE_API_KEY ? 'qwen' : null;
+};
+const MT_MODEL = { openai: OPENAI_MODEL, gemini: GEMINI_MODEL, qwen: QWEN_MODEL };
 export function config() {
   const mt = mtProvider();
   // asrModel: model nhận dạng đang dùng (null khi mọi model đều hết hạn mức); asrFallback: đang dùng model dự phòng.
   const dash = !!ENV.DASHSCOPE_API_KEY, asrModel = dash ? asrModelNow() : null;
   return { asr: dash ? 'funasr' : (ENV.GEMINI_API_KEY ? 'gemini' : null),
     ...(dash ? { asrModel, asrModels: asrModels(), ...(asrModel && asrModel !== FUNASR_MODEL ? { asrFallback: true } : {}) } : {}), mt,
-    model: mt === 'openai' ? OPENAI_MODEL : GEMINI_MODEL, ...(mt === 'openai' && OPENAI_REASONING_EFFORT ? { effort: OPENAI_REASONING_EFFORT } : {}),
+    model: MT_MODEL[mt] || null, ...(mt === 'openai' && OPENAI_REASONING_EFFORT ? { effort: OPENAI_REASONING_EFFORT } : {}),
     maxSeconds: MAX_SECONDS };
 }
 
@@ -82,6 +93,8 @@ const latinShareOf = (t) => {
 // Độ dài một dòng tính theo chữ Hán: dòng chữ Latin lấy 42 ký tự (một dòng chuẩn Netflix) ứng với 16 chữ Hán. Dòng không phải
 // chữ Latin vẫn đếm chữ Hán như trước.
 // Giai đoạn 4: kana, chữ Hàn đếm như chữ Hán (trước đây câu nhiều kana không bao giờ bị cắt). Tiếng Trung không đổi.
+const VI_ONLY = /[ảãạăằắẳẵặâầấẩẫậẻẽẹêềếểễệỉĩịỏõọôồốổỗộơờớởỡợủũụưừứửữựỳỷỹỵđ]/iu;
+const EN_STOP = new Set(['the', 'a', 'an', 'to', 'and', 'of', 'in', 'is', 'are', 'was', 'we', 'i', 'you', 'he', 'she', 'it', 'they', 'my', 'with', 'for', 'on', 'at', 'this', 'that', 'today', 'yesterday', 'meet', 'visited']);
 const CJK_ALL = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu;
 // Đếm chữ để đo độ kéo dài (s/chữ): thêm dấu kéo dài nguyên âm ー (không thuộc hệ chữ katakana): "すごーーーい" là 6 chữ, không
 // phải 3 (verifier 5/11). Câu tiếng Trung không có dấu này nên không đổi.
@@ -115,17 +128,21 @@ export async function checkFfmpeg() {
 // Trả null (no_audio, được cache) chỉ khi ffmpeg chạy xong mà không có tiếng. Không chạy được ffmpeg hay ffmpeg lỗi
 // mà không tách ra được gì thì báo lỗi: trước đây cả hai thành no_audio và bị cache mãi (đo với FFMPEG=/nonexistent:
 // đoạn vẫn "không có âm thanh" sau khi cài lại ffmpeg và chạy lại server).
-export async function extractAudio(buf, kind = 'mp4') {
+// trim (bộ đọc chung): { ss, t } giây. Mảnh dài (TikTok nạp 36 s một mảnh) chỉ giải phần cần cho đoạn (Astra 7/11, G12).
+export async function extractAudio(buf, kind = 'mp4', trim = null) {
   const bin = await resolveFfmpeg();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tod-'));
-  const src = path.join(dir, kind === 'aac' ? 'in.aac' : 'in.mp4');
+  const src = path.join(dir, ['aac', 'webm', 'wav'].includes(kind) ? 'in.' + kind : 'in.mp4');
+  // fmp4: mẩu MP4 phân mảnh trình phát của trang đã nạp (bộ đọc chung), mốc đầu là mốc thật trong video (tfdt): không chèn khoảng
+  // lặng từ 0 (first_pts=0), không thì đoạn ở phút thứ 10 thành 10 phút im lặng. Mốc 0 của bản mp3 = mẫu đầu = audioStart.
+  const af = kind === 'fmp4' ? 'aresample=async=1' : 'aresample=async=1:first_pts=0';
   const out = path.join(dir, 'out.mp3');
   fs.writeFileSync(src, buf);
   try {
     // aresample first_pts=0: nếu track âm thanh bắt đầu muộn hơn mốc 0 của video (edit list), chèn khoảng lặng
     // tương ứng; không thì mọi mốc thời gian bị sớm đúng bằng khoảng đó và sub hiện trước lời nói.
-    const run = await new Promise((resolve) => execFile(bin, ['-v', 'error', '-y', '-i', src, '-t', String(kind === 'aac' ? 120 : MAX_SECONDS), '-vn', '-ac', '1', '-ar', '16000',
-      '-af', 'aresample=async=1:first_pts=0',
+    const run = await new Promise((resolve) => execFile(bin, ['-v', 'error', '-y', '-i', src, ...(trim && trim.ss > 0 ? ['-ss', String(trim.ss)] : []), '-t', String(trim && trim.t > 0 ? Math.min(trim.t, 120) : ['aac', 'webm', 'wav', 'fmp4'].includes(kind) ? 120 : MAX_SECONDS), '-vn', '-ac', '1', '-ar', '16000',
+      '-af', af,
       '-c:a', 'libmp3lame', '-b:a', '48k', out], (err, _o, stderr) => resolve({ err, stderr: String(stderr || '') })));
     // Mã lỗi dạng chữ (ENOENT, EACCES): không chạy được ffmpeg.
     if (run.err && typeof run.err.code === 'string') throw new Error(`không chạy được ffmpeg (${bin}): ${run.err.code}`);
@@ -165,9 +182,9 @@ const MT_LIMIT = mtLimit(MT_TIMEOUT_MS);
 // DAY_QUOTA_PAUSE_MS, trong lúc đó báo lỗi ngay, không gọi dịch vụ.
 const DAY_QUOTA_PAUSE_MS = 10 * 60 * 1000;
 const dayQuotaUntil = new Map();   // dịch vụ → thời điểm thử lại
-const serviceOf = (url) => url.startsWith(OPENAI_BASE) ? 'OpenAI' : url.startsWith(GEMINI_BASE) ? 'Gemini'
+const serviceOf = (url) => url.startsWith(OPENAI_BASE) ? 'OpenAI' : url.startsWith(GEMINI_BASE) ? 'Gemini' : url.startsWith(QWEN_BASE) ? 'Qwen'
   : url.startsWith(DASHSCOPE_BASE) ? 'DashScope' : new URL(url).host;
-const QUOTA_WHY = { Gemini: 'đã hết lượt gọi trong ngày (gói miễn phí)', OpenAI: 'hết hạn mức hoặc hết tiền trong tài khoản' };
+const QUOTA_WHY = { Gemini: 'đã hết lượt gọi trong ngày (gói miễn phí)', OpenAI: 'hết hạn mức hoặc hết tiền trong tài khoản', Qwen: 'hết hạn mức (gói miễn phí) hoặc hết tiền trong tài khoản Alibaba Cloud' };
 function dayQuotaError(service) {
   const why = service !== 'DashScope' ? QUOTA_WHY[service] || 'hết hạn mức'
     : 'hết hạn mức nhận dạng giọng nói' + (asrModels().length > 1 ? ' (cả model dự phòng)' : '');
@@ -443,32 +460,38 @@ const toJsonSchema = (x) => {
   return out;
 };
 // onText (nếu có): gọi dạng stream, onText(nội dung JSON đã nhận tới lúc đó) mỗi lần có chữ mới.
-async function openaiJson(text, schema, temperature, signal, timeoutMs = 10000, onText = null) {
-  if (!onText) return openaiCall(text, schema, temperature, signal, timeoutMs, null);
+const OPENAI_CFG = { base: OPENAI_BASE, model: OPENAI_MODEL, key: () => ENV.OPENAI_API_KEY, effort: OPENAI_REASONING_EFFORT, name: 'OpenAI' };
+const QWEN_CFG = { base: QWEN_BASE, model: QWEN_MODEL, key: () => ENV.DASHSCOPE_API_KEY, effort: '', name: 'Qwen' };
+async function openaiJson(text, schema, temperature, signal, timeoutMs = 10000, onText = null, cfg = OPENAI_CFG) {
+  if (!onText) return openaiCall(text, schema, temperature, signal, timeoutMs, null, cfg);
   // Dịch vụ cùng kiểu API (OPENAI_BASE) không nhận stream: true (HTTP 400): gọi lại không stream.
-  try { return await openaiCall(text, schema, temperature, signal, timeoutMs, onText); } catch (e) {
-    if (e.status === 400) return openaiCall(text, schema, temperature, signal, timeoutMs, null);
+  try { return await openaiCall(text, schema, temperature, signal, timeoutMs, onText, cfg); } catch (e) {
+    if (e.status === 400) return openaiCall(text, schema, temperature, signal, timeoutMs, null, cfg);
     throw e;
   }
 }
-async function openaiCall(text, schema, temperature, signal, timeoutMs, onText) {
-  const reasoning = OPENAI_REASONING_EFFORT || /^(o\d|gpt-([5-9]|\d\d))/.test(OPENAI_MODEL);   // model suy luận không nhận temperature
-  const b = await httpJson(`${OPENAI_BASE}/chat/completions`, {
+async function openaiCall(text, schema, temperature, signal, timeoutMs, onText, cfg = OPENAI_CFG) {
+  const reasoning = cfg.effort || /^(o\d|gpt-([5-9]|\d\d))/.test(cfg.model);   // model suy luận không nhận temperature
+  const b = await httpJson(`${cfg.base}/chat/completions`, {
     method: 'POST', ...(onText ? { onText } : {}),
-    signal, headers: { Authorization: 'Bearer ' + ENV.OPENAI_API_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: OPENAI_MODEL, messages: [{ role: 'user', content: text }], ...(reasoning ? {} : { temperature }), ...(onText ? { stream: true } : {}),
-      ...(OPENAI_REASONING_EFFORT ? { reasoning_effort: OPENAI_REASONING_EFFORT } : {}),
+    signal, headers: { Authorization: 'Bearer ' + cfg.key(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: cfg.model, messages: [{ role: 'user', content: text }], ...(reasoning ? {} : { temperature }), ...(onText ? { stream: true } : {}),
+      ...(cfg.effort ? { reasoning_effort: cfg.effort } : {}),
+      // Qwen3 (qwen-flash, qwen-plus): tắt chế độ suy nghĩ, dịch phụ đề không cần và chậm hơn nhiều.
+      ...(cfg === QWEN_CFG ? { enable_thinking: false } : {}),
       response_format: { type: 'json_schema', json_schema: { name: 'subtitles', strict: true, schema: toJsonSchema(schema) } } }),
   }, timeoutMs);
   const m = b.choices && b.choices[0] && b.choices[0].message;
-  if (m && m.refusal) throw new Error('OpenAI từ chối: ' + String(m.refusal).slice(0, 100));
+  if (m && m.refusal) throw new Error(cfg.name + ' từ chối: ' + String(m.refusal).slice(0, 100));
   return JSON.parse((m && m.content) || '{}');
 }
 // Lượt gọi model dịch: hạn tăng dần (MT_LIMIT). httpJson nhận hạn là số (cố định) hay hàm (theo lần gọi).
 // onText: chỉ OpenAI (stream); Gemini trả một lần như trước.
 const mtJson = (text, schema, temperature, signal, onText = null) =>
-  (mtProvider() === 'openai' ? openaiJson(text, schema, temperature, signal, MT_LIMIT, onText) : geminiJson([{ text }], schema, temperature, signal, MT_LIMIT));
-const mtService = () => (mtProvider() === 'openai' ? 'OpenAI' : 'Gemini');
+  (mtProvider() === 'openai' ? openaiJson(text, schema, temperature, signal, MT_LIMIT, onText)
+    : mtProvider() === 'qwen' ? openaiJson(text, schema, temperature, signal, MT_LIMIT, onText, QWEN_CFG)
+    : geminiJson([{ text }], schema, temperature, signal, MT_LIMIT));
+const mtService = () => ({ openai: 'OpenAI', qwen: 'Qwen' })[mtProvider()] || 'Gemini';
 async function geminiAsr(mp3, signal) {
   const schema = { type: 'OBJECT', properties: { segments: { type: 'ARRAY', items: { type: 'OBJECT', properties: {
     start: { type: 'NUMBER' }, end: { type: 'NUMBER' }, text: { type: 'STRING' } }, required: ['start', 'end', 'text'] } } }, required: ['segments'] };
@@ -510,7 +533,7 @@ export function warmProviders() {
   if (ENV.DASHSCOPE_API_KEY) { if (!pausedError('DashScope') && asrModelNow()) asrBase = DASHSCOPE_BASE; }
   else if (ENV.GEMINI_API_KEY && !pausedError('Gemini')) asrBase = GEMINI_BASE;
   if (!asrBase) return [];
-  const bases = [mt === 'openai' ? OPENAI_BASE : GEMINI_BASE, asrBase];
+  const bases = [{ openai: OPENAI_BASE, qwen: QWEN_BASE }[mt] || GEMINI_BASE, asrBase];
   const now = Date.now();
   const warmed = [];
   for (const origin of new Set(bases.map(b => new URL(b).origin))) {
@@ -616,6 +639,15 @@ export function classifySpeech(meta, r) {
   const latinWords = (text.match(/[A-Za-z]+/g) || []).length;
   f.kana = kana;   // có trường này là kết quả của bản biết tiếng Nhật, tiếng Hàn (server.mjs: làm lại kết quả cũ)
   f.src = latinWords > han + other ? 'en' : hangul > han + kana && hangul > latinWords ? 'ko' : hira >= 2 && kana * 5 >= han + kana ? 'ja' : 'zh';
+  // Tiếng Việt: từ Latin mà ≥ 30% có dấu riêng của tiếng Việt (feed TikTok ở Việt Nam, 7/11: video tiếng Việt bị coi là tiếng Anh
+  // rồi "dịch" ra chữ vô nghĩa). Đích tiếng Việt thì hiện bản chép như video nói đúng ngôn ngữ đích; đích tiếng Anh thì dịch.
+  // Chỉ đếm chữ riêng của tiếng Việt (ă â đ ê ô ơ ư và dấu nặng, hỏi, ngã): à á è é… còn có ở pinyin, tiếng Pháp. Cần ≥ 4 từ như
+  // vậy, ≥ 40% số từ, và ít từ chức năng tiếng Anh: câu tiếng Anh có tên người Việt vẫn là tiếng Anh (Astra 7/11, G16).
+  if (f.src === 'en') {
+    const lw = text.match(/[\p{Script=Latin}]+/gu) || [];
+    const vi = lw.filter((w) => VI_ONLY.test(w)).length, enStop = lw.filter((w) => EN_STOP.has(w.toLowerCase())).length;
+    if (vi >= 4 && vi >= 0.4 * lw.length && enStop < 2) f.src = 'vi';
+  }
   if (f.src === 'en') {
     const wd = words.filter(w => w.end > w.start && /[A-Za-z]/.test(w.text)).map(w => w.end - w.start);
     f.medWordDur = round(pct(wd, 0.5), 3);
@@ -905,7 +937,7 @@ export async function translate(meta, cues, context = [], signal, { far = false,
       .map(({ c, vi }) => ({ start: c.start, end: c.end, se: c.se, vi, zh: c.zh, ...(c.sung ? { sung: true } : {}) }));
     if (part.length) onPartial(part);
   });
-  if (!mtProvider()) throw new Error('Chưa có OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env');
+  if (!mtProvider()) throw new Error('Chưa có key dịch (OPENAI_API_KEY, GEMINI_API_KEY hoặc DASHSCOPE_API_KEY) trong alpha/server/.env');
   const known = pack.pronouns ? normalizePronouns(meta.pronouns) : null;   // bảng xưng hô chỉ có ở tiếng Việt
   const author = pack.author(meta.author);
   const first = await mtJson(pack.first({ meta, known, author, context, far, before, sung, cues, budget, round, PRONOUN_PAIRS, src }), pack.firstSchema, 0.2, signal, onText);
@@ -981,10 +1013,14 @@ export function cuesFromAsr(meta, asr, opts = {}) {
   const before = preRoll ? speechBefore(asr, opts.offset || 0, opts.from) : [];
   if (opts.from != null) asr = windowAsr(asr, opts.offset || 0, opts.from, opts.to, preRoll);
   const cls = classifySpeech(meta, asr);
+  // Âm thanh tab (opts.live): không có hashtag, mô tả như video Douyin; giọng đọc chậm (dạy tiếng, kể chuyện) bị nhận là hát theo
+  // độ kéo dài (thử thật trên TikTok 7/11). Chỉ coi là hát khi lặp lời; không xét câu hát theo độ kéo dài.
+  // Bộ đọc chung (id web…, opts.noSlowSing) cũng vậy: trang không có hashtag nhạc, giọng kể chậm bị gắn ♪ (TikTok 7/11).
+  if ((opts.live || opts.noSlowSing) && cls.label === 'singing' && !cls.repeat) cls.label = 'speech';
   // Đoạn tiếng Nhật, tiếng Hàn: câu chỉ là câu hát theo độ kéo dài khi có hashtag nhạc hay cả đoạn nghe như hát. Đo thật 5/11
   // (video dạy tiếng Hàn): giọng dạy nói chậm, mốc kết thúc từ kéo tới tận từ sau (0,4–1,2 s/chữ), mọi câu bị gắn ♪, và ở chế
   // độ thường thì bị bỏ. Tiếng Trung giữ như cũ.
-  const split = splitSung(asr, { slow: !(cls.src === 'ja' || cls.src === 'ko') || cls.tagMusic || cls.label === 'singing' });
+  const split = splitSung(asr, { slow: !opts.live && !opts.noSlowSing && (!(cls.src === 'ja' || cls.src === 'ko') || cls.tagMusic || cls.label === 'singing') });
   // Cả đoạn là bài hát khi: lặp lời, hoặc quá nửa số câu là câu hát, hoặc chữ kéo dài kèm hashtag nhạc.
   // Hashtag nhạc cộng nói thưa (vlog có nhạc nền, nhiều khoảng lặng) thì không đủ: chỉ lọc từng câu.
   const song = cls.label === 'singing' && (cls.src === 'en' || (cls.repeat && slowChars(cls.medCharDur)) || split.sung * 2 > split.total || (cls.tagMusic && cls.medCharDur > 0.33));
@@ -1020,13 +1056,47 @@ export function cuesFromAsr(meta, asr, opts = {}) {
 // opts (video dài, từng đoạn): { kind: 'aac', offset: giây bắt đầu của âm thanh, from, to, context }; signal: huỷ giữa chừng.
 // opts.asrCache { load(), save(x) }: kết quả nhận dạng giọng nói của đúng âm thanh này (server giữ theo mã băm). Lần
 // trước dịch lỗi (sau khi đã trả tiền ASR) thì lần gửi lại chỉ còn bước dịch.
+// Đường dự phòng (âm thanh tab, opts.live): câu cuối còn đang nói lúc khúc âm thanh hết (chữ cuối kết thúc trong 0,8 s cuối) thì
+// không dịch lần này, vì nhận dạng trên âm thanh bị cắt ra câu cụt ("我的名。" rồi khúc sau "名字 | 是乐乐", thử thật 6/11). Trả mốc
+// bắt đầu câu đó (next, giây trong thời gian thu): extension gửi lại từ mốc ấy cùng âm thanh mới. Chỉ xét câu bắt đầu từ from.
+export const LIVE_OPEN = 0.8;
+export function liveHold(asr, offset, seconds, from) {
+  const end = offset + seconds;
+  const segs = (asr.segments || []).filter(x => x.text && x.text.trim() && x.start + offset >= from - 0.05);
+  const last = segs[segs.length - 1];
+  const lastWord = (asr.words || []).filter(w => w.end > w.start).reduce((m, w) => Math.max(m, w.end), 0);
+  if (!last || Math.max(last.end, lastWord) + offset <= end - LIVE_OPEN) return { next: round(end, 3), open: false };
+  // Câu cuối dài (nói nhanh, nhận dạng không chấm câu): chỉ giữ từ sau dấu phẩy cuối cùng, phần trước dịch luôn. Trước đây giữ cả
+  // câu: không có khoảng ngừng nào, extension chờ đủ 15 s, sub trễ 18,5 s (TikTok, 7/11).
+  const ws = (asr.words || []).filter(w => w.start >= last.start - 0.05 && w.end <= last.end + 0.05);
+  for (let i = ws.length - 2; i >= 0; i--) {
+    if (/[，、,;；：:]\s*$/.test(ws[i].text) && ws[i + 1].start + offset >= from + 1) return { next: round(ws[i + 1].start + offset, 3), open: true };
+  }
+  return { next: round(last.start + offset, 3), open: true };
+}
+
+// live: lượt nhận dạng sau có thể chia câu khác lượt trước ("你是" | "美国人" thành "你是美国人" bắt đầu trước con trỏ: cả câu bị bỏ,
+// thử thật 6/11). Cắt theo từng chữ: câu bắt đầu trước from mà còn chữ từ from trở đi thì giữ các chữ đó (lệch mốc 0,15 s).
+export function liveTrim(asr, offset, from) {
+  const words = (asr.words || []);
+  const segments = (asr.segments || []).map((x) => {
+    if (x.start + offset >= from - 0.05) return x;
+    if (x.end + offset <= from + 0.1) return x;   // xong trước con trỏ: windowAsr bỏ
+    // Lệch 0,3 s: lượt nhận dạng sau đặt mốc chữ đầu sớm hơn chỗ cắt ("meet" bị mất, TikTok 7/11). Chỗ cắt nằm giữa một khoảng
+    // ngừng ≥ 0,7 s nên chữ cuối của phần trước kết thúc trước đó ≥ 0,35 s.
+    const ws = words.filter(w => w.start >= x.start - 0.05 && w.end <= x.end + 0.05 && w.start + offset >= from - 0.3);
+    return ws.length ? { start: ws[0].start, end: ws[ws.length - 1].end, text: ws.map(w => w.text).join('').replace(/^\s+/, '') } : x;
+  });
+  return { ...asr, segments };
+}
+
 export async function makeSubtitles(meta, buf, opts = {}) {
   // Dịch đang tạm dừng (hết lượt trong ngày, key/model sai): báo ngay, khỏi tốn tiền nhận dạng giọng nói cho đoạn không dịch được.
   const paused = pausedError(mtService());
   if (paused) throw paused;
   const t0 = Date.now();
   const saved = opts.asrCache?.load();
-  const audio = saved ? { seconds: saved.seconds } : await extractAudio(buf, opts.kind);
+  const audio = saved ? { seconds: saved.seconds } : await extractAudio(buf, opts.kind, opts.trim);
   const tAudio = Date.now();
   if (!audio) return { status: 'no_audio', timings: { audioMs: tAudio - t0 } };
   // Từng lần gọi HTTP của bước ASR và bước dịch (net.asr, net.mt: headMs, fresh, connectMs): server ghi vào dòng log.
@@ -1034,7 +1104,18 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   let asr = saved ? saved.asr : resplitSentences(await netCtx.run({ calls: net.asr }, () => transcribe(audio.mp3, opts.signal)));
   if (!saved) opts.asrCache?.save({ seconds: audio.seconds, asr });
   const tAsr = Date.now();
-  const prep = cuesFromAsr(meta, asr, opts);
+  // live: chỉ dịch các câu bắt đầu trước câu còn dở (opts.final: dịch hết, extension đã chờ câu đó quá lâu).
+  const hold = opts.live && opts.from != null ? liveHold(asr, opts.offset || 0, audio.seconds, opts.from) : null;
+  if (hold && hold.open && !opts.final) {
+    // Chưa có câu nào nói xong (câu dở bắt đầu ngay từ con trỏ): không dịch gì, gửi lại sau cùng âm thanh mới. Trước đây vẫn trả
+    // dòng dở, extension gửi lại cùng câu ba lần (thử thật 7/11).
+    if (hold.next - opts.from < 0.3) {
+      return { status: 'skipped', label: 'held', next: hold.next, asr: asr.provider, seconds: audio.seconds, heard: (asr.text || '').slice(0, 40), sung: 0, sentences: 0,
+        timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio } };
+    }
+    opts = { ...opts, to: hold.next };
+  }
+  const prep = cuesFromAsr(meta, opts.live && opts.from != null ? liveTrim(asr, opts.offset || 0, opts.from) : asr, opts.live ? { ...opts, from: Math.max(0, opts.from - 0.2) } : opts);
   asr = prep.asr;
   const { before, cls, split, song } = prep;
   const cues = prep.cues;
@@ -1042,7 +1123,8 @@ export async function makeSubtitles(meta, buf, opts = {}) {
   // extension không dùng chung nó giữa hai chế độ (noSinging, modeFree).
   // src: ngôn ngữ nguồn khi không phải tiếng Trung (giai đoạn 3: 'en'); cũng nằm trong source để đổi ngôn ngữ đích dùng lại.
   const base = { asr: asr.provider, ...(asr.model && asr.model !== FUNASR_MODEL ? { asrModel: asr.model } : {}), ...(saved ? { asrCached: true } : {}), ...(cls.src && cls.src !== 'zh' ? { src: cls.src } : {}), seconds: audio.seconds, heard: (asr.text || '').slice(0, 40), sung: split.sung, sentences: split.total,
-    ...(song ? { song: true } : {}), debug: { features: cls, sentences: split.sentences, net } };
+    ...(song ? { song: true } : {}), ...(hold ? { next: hold.open && !opts.final ? hold.next : round((opts.offset || 0) + audio.seconds, 3) } : {}),
+    debug: { features: cls, sentences: split.sentences, net } };
   const skip = (label) => ({ status: 'skipped', label, ...base, timings: { audioMs: tAudio - t0, asrMs: tAsr - tAudio } });
   if (prep.skip) return skip(prep.skip);
   // source: đủ để dựng lại kết quả ở ngôn ngữ đích khác mà không nhận dạng lại (retranslate, server.mjs: yêu cầu retarget).
