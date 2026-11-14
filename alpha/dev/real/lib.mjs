@@ -225,6 +225,8 @@ export function outcomeOf(got) {
 // ---------------------------------------------------------------- cache của server
 // Tên file: <id>.<q?><from>-<to>.<loại>.<phiên bản>.json; loại <ngôn ngữ đích> | <ngôn ngữ đích>.lyr (vi, vi.lyr, en, en.lyr) |
 // asr.<băm> (server.mjs cacheFile).
+// Sub của dịch vụ dịch không mặc định (chọn ở ô "Dịch bằng" của popup) có phiên bản kèm đuôi dịch vụ (alpha-8.qwen): các lệnh
+// đo mặc định lọc theo PIPELINE_VERSION nên chỉ đọc sub của dịch vụ mặc định theo .env; muốn đo dịch vụ khác thì truyền version.
 const FILE = /^(\d+)\.(q?)(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)\.([a-z]{2}(?:\.lyr)?|asr\.[0-9a-f]+)\.(.+)\.json$/;
 export function cacheFiles(dir, version = PIPELINE_VERSION) {
   let names = [];

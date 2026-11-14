@@ -431,15 +431,20 @@
   // trả lời lại sau một lúc không gọi được (vừa chạy hoặc khởi động lại, thường là sau khi sửa .env): các đoạn đang chờ
   // thử lại được gửi ngay, đếm lỗi từ đầu, thay vì chờ hết 20–180 s (hay thời gian tạm nghỉ của server cũ) tính từ trước.
   let serverDown = false;
+  // Đoạn lỗi thử lại ngay, đếm lỗi từ đầu (server vừa có lại, hay vừa đổi dịch vụ dịch).
+  const clearErrorWaits = () => {
+    for (const v of vids.values()) for (const c of v.chunks.values()) if (c.status === 'error') Object.assign(c, { at: 0, fails: 0, wait: 0, retryAfterMs: 0 });
+  };
+  // Lúc người xem đổi dịch vụ dịch trong popup (settings.mtGen): dịch vụ cũ hết hạn mức thì đoạn lỗi không phải chờ 10 phút
+  // tạm nghỉ của nó, và lỗi của yêu cầu gửi trước lúc đổi không đặt lại thời gian chờ đó (Astra 15/11, F1).
+  let mtSwitchAt = 0;
   function noteReply(r) {
     if (r.status === 'cancelled') return false;
     if (r.status === 'error' && UNREACHABLE.test(String(r.error || ''))) { serverDown = true; return true; }
     if (r.unreachable || (r.status === 'error' && NOT_SENT.test(String(r.error || '')))) return true;
     if (serverDown) {
       serverDown = false;
-      for (const v of vids.values()) {
-        for (const c of v.chunks.values()) if (c.status === 'error') Object.assign(c, { at: 0, fails: 0, wait: 0, retryAfterMs: 0 });
-      }
+      clearErrorWaits();
     }
     return false;
   }
@@ -1217,8 +1222,9 @@
       const paid = sent && !down;
       const n = fails + (paid ? 1 : 0);
       // dl: lỗi mạng tạm thời trước khi gửi server (tải video); dlFails: số lần liền như vậy (fastRetry).
-      v.chunks.set(k, { ...r, pre: entry.pre, at: Date.now(), ...(r.status === 'error'
-        ? { fails: n, wait: paid ? RETRY_MS[Math.min(n, RETRY_MS.length) - 1] : RETRY_MS[0],
+      const oldMt = r.status === 'error' && sent && entry.sentAt < mtSwitchAt;   // lỗi của dịch vụ trước lúc đổi
+      v.chunks.set(k, { ...r, pre: entry.pre, at: Date.now(), ...(oldMt ? { retryAfterMs: 0 } : {}), ...(r.status === 'error'
+        ? { fails: oldMt ? 0 : n, wait: paid && !oldMt ? RETRY_MS[Math.min(n, RETRY_MS.length) - 1] : RETRY_MS[0],
           ...(!sent && r.transient ? { dl: true, dlFails: (before && before.dl ? before.dlFails || 0 : 0) + 1 } : {}) } : {}) });
       mergeCues(v);
       wakeTurns();   // đoạn kế đang chờ lượt gửi (sendWait) gửi ngay
@@ -1672,8 +1678,9 @@
     if (area === 'local' && ch.settings) {
       const nv = { ...(ch.settings.newValue || {}) };
       if (delayWrite) delete nv.delay;         // đang có chỉnh lệch bằng phím chưa ghi xong
-      const was = settings.enabled, wasLyrics = settings.lyrics !== false, wasTarget = targetLang();
+      const was = settings.enabled, wasLyrics = settings.lyrics !== false, wasTarget = targetLang(), wasMt = settings.mtGen;
       settings = { ...settings, ...nv };
+      if (settings.mtGen !== wasMt) { mtSwitchAt = Date.now(); clearErrorWaits(); }
       if (lyricsOn() !== wasLyrics) resetResults();
       if (targetLang() !== wasTarget) switchTarget();
       // Vừa bật lại: chỗ đang xem là của lúc tắt (người xem có thể đã tua, lướt đi). Đọc lại ngay ở khung hình sau rồi

@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkFfmpeg, condenseCues, config, dotEnvInfo, makeSubtitles, mergePronouns, misplacedOpenAIKey, normalizePronouns, PIPELINE_VERSION, pronounChanges, retranslate, tooLong, warmProviders } from './pipeline.mjs';
+import { checkFfmpeg, condenseCues, config, defaultMt, dotEnvInfo, globalConfig, makeSubtitles, mergePronouns, misplacedOpenAIKey, mtProvider, normalizePronouns, PIPELINE_VERSION, pronounChanges, retranslate, setMt, tooLong, warmProviders, withMt } from './pipeline.mjs';
 import { TARGETS } from './langs.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +24,12 @@ const KEEP_ASR = process.env.TOD_KEEP_ASR === '1';
 // gấp và dịch sẵn (HANDOFF §6an).
 const CONDENSE = process.env.TOD_CONDENSE === '1';
 fs.mkdirSync(CACHE, { recursive: true });
+// Dịch vụ dịch chọn trong popup (ô "Dịch bằng"): lưu ở work/settings.json để bật lại server vẫn nhớ.
+const SETTINGS = path.join(CACHE, '..', 'settings.json');
+try { const m = JSON.parse(fs.readFileSync(SETTINGS, 'utf8')).mt; if (m && !setMt(m)) console.log(`  → Dịch vụ dịch đã chọn (${m}) không còn key trong .env: dùng mặc định.`); } catch (_) {}
+// Phiên bản trong tên file cache: dịch vụ mặc định theo .env giữ tên cũ (<phiên bản>), dịch vụ khác thêm đuôi (<phiên bản>.gemini)
+// để mỗi dịch vụ có sub riêng, đổi qua lại so sánh được mà không ghi đè nhau.
+const cacheVer = (mt = mtProvider()) => (mt && mt !== defaultMt() ? `${PIPELINE_VERSION}.${mt}` : PIPELINE_VERSION);
 
 // Tối đa MAX_PARALLEL đoạn xử lý cùng lúc; cùng một đoạn thì dùng chung một lần xử lý (inflight).
 // Hàng đợi có ưu tiên: đoạn chứa chỗ đang xem (urgent) trước, rồi video gần chỗ đang xem trước (rank: 0 = video đang
@@ -54,11 +60,12 @@ const rankOf = (x) => (Number.isInteger(x) && x >= 0 ? x : 0);
 // fn(signal): signal bị huỷ khi không còn ai chờ đoạn đang chạy → dừng lệnh gọi ASR/dịch, nhường chỗ cho chỗ đang xem.
 function submit(key, urgent, rank, fn) {
   const job = { urgent: !!urgent, rank: rankOf(rank), seq: ++seq, started: false, waiters: 0, at: Date.now() };
+  const jobMt = mtProvider();   // dịch vụ lúc nhận yêu cầu (pumpQueue có thể chạy việc này trong lúc xử lý request khác)
   const ctl = new AbortController();
   job.promise = new Promise((resolve, reject) => {
     job.start = () => {
       job.started = true; job.startedAt = Date.now();
-      Promise.resolve().then(() => fn(ctl.signal))
+      withMt(jobMt, () => Promise.resolve().then(() => fn(ctl.signal)))
         .then(resolve, (e) => reject(ctl.signal.aborted ? cancelledError() : e))
         .finally(() => { running--; pumpQueue(); });
     };
@@ -139,7 +146,8 @@ async function handleSubtitles(req, res) {
   if (meta.fmt != null && !['aac', 'webm', 'wav', 'fmp4'].includes(meta.fmt)) return send(res, 400, { error: 'fmt must be aac, webm, wav or fmp4' });
   if (chunked && !(num(meta.from) && num(meta.to) && meta.to > meta.from && (retarget || num(meta.audioStart)))) return send(res, 400, { error: 'need from < to and audioStart' });
   const span = (a, b) => `${a}-${b}`;
-  const cacheFile = (sp, kind = 'vi') => path.join(CACHE, `${id}.${sp ? sp + '.' : ''}${kind}.${PIPELINE_VERSION}.json`);
+  const VER = cacheVer();
+  const cacheFile = (sp, kind = 'vi') => path.join(CACHE, `${id}.${sp ? sp + '.' : ''}${kind}.${VER}.json`);
   // Mẩu nhanh (quick): ~10 s ngay tại chỗ vừa tua tới, gửi song song với đoạn 30 s để sub đầu ra sớm. Cache riêng (tiền tố q).
   const quick = chunked && meta.quick === true;
   const fileSpan = chunked ? (quick ? 'q' : '') + span(meta.from, meta.to) : '';
@@ -254,7 +262,7 @@ async function handleSubtitles(req, res) {
         } else if (!quick) return [];   // đoạn đầu video
         // Đoạn liền trước chưa dịch (vừa tua tới) hoặc không có dòng nào, hoặc mẩu nhanh (không chờ gì): lấy đoạn đã
         // dịch gần nhất phía trước có dòng dịch, để giữ xưng hô, tên riêng.
-        const re = new RegExp(`^${id}\\.(\\d+)-(\\d+)\\.${target}(?:\\.lyr)?\\.${PIPELINE_VERSION}\\.json$`);
+        const re = new RegExp(`^${id}\\.(\\d+)-(\\d+)\\.${target}(?:\\.lyr)?\\.${VER.replace('.', '\\.')}\\.json$`);
         const near = fs.readdirSync(CACHE).map(f => [f, re.exec(f)]).filter(([, m]) => m && Number(m[2]) <= meta.from)
           .sort((a, b) => Number(b[1][2]) - Number(a[1][2]));
         for (const [f] of near) {
@@ -288,7 +296,8 @@ async function handleSubtitles(req, res) {
     // TOD_KEEP_ASR=1 (chỉ server đo của alpha/dev/real): giữ lại cả file này để chạy lại offline bước chia câu, chia đoạn, ghép sub;
     // công cụ đo xoá cả thư mục khi xong lượt đo. window: vị trí âm thanh trong video và mô tả, hashtag (classifySpeech
     // dùng hashtag nhạc), để chạy lại đúng như lúc đó.
-    const asrFile = buf ? cacheFile(fileSpan, 'asr.' + crypto.createHash('sha1').update(buf).digest('hex').slice(0, 16)) : null;
+    // Kết quả nhận dạng không phụ thuộc dịch vụ dịch: giữ tên không đuôi dịch vụ, đổi dịch vụ thì khỏi nhận dạng lại (Astra 15/11, F6).
+    const asrFile = buf ? path.join(CACHE, `${id}.${fileSpan ? fileSpan + '.' : ''}asr.${crypto.createHash('sha1').update(buf).digest('hex').slice(0, 16)}.${PIPELINE_VERSION}.json`) : null;
     const asrCache = buf && {
       load: () => { const x = readCache(asrFile); return x && typeof x.seconds === 'number' && x.asr && Array.isArray(x.asr.segments) ? x : null; },
       save: (x) => writeCache(asrFile, KEEP_ASR && chunked ? { ...x, window: { audioStart: meta.audioStart, from: meta.from, to: meta.to, quick, desc: meta.desc || '', hashtags: meta.hashtags || [] } } : x),
@@ -443,21 +452,40 @@ async function handleBump(req, res) {
   // chỉ tìm .vi. nên ở chế độ mặc định không bao giờ thấy việc nào để đẩy lên.
   // Theo ngôn ngữ đích của yêu cầu (thiếu thì tiếng Việt).
   const t = TARGETS[targetOf(meta)] ? targetOf(meta) : 'vi';
-  const jobs = [t + '.lyr', t].map(mt => inflight.get(path.join(CACHE, `${id}.${meta.from}-${meta.to}.${mt}.${PIPELINE_VERSION}.json`))).filter(Boolean);
+  // Việc gửi trước lúc đổi dịch vụ dịch nằm dưới tên file của dịch vụ cũ: tìm ở mọi dịch vụ (Astra 15/11, F3).
+  const vers = [...new Set([PIPELINE_VERSION, ...config().mts.map(m => cacheVer(m.id))])];
+  const jobs = [t + '.lyr', t].flatMap(mt => vers.map(v => inflight.get(path.join(CACHE, `${id}.${meta.from}-${meta.to}.${mt}.${v}.json`)))).filter(Boolean);
   const waiting = jobs.filter(job => !job.started);
   for (const job of waiting) { job.urgent = true; job.rank = 0; job.seq = ++seq; }
   if (waiting.length) pumpQueue();
   send(res, 200, { ok: true, found: jobs.length > 0, queued: waiting.length > 0 });
 }
 
+// Ô "Dịch bằng" của popup: { mt: 'openai' | 'gemini' | 'qwen' } (null: về mặc định theo .env). Áp cho đoạn gửi tới sau đó.
+async function handleMt(req, res) {
+  let meta;
+  try { meta = JSON.parse((await readBody(req)).toString('utf8')); } catch (e) { return send(res, 400, { error: 'bad_body: ' + e.message }); }
+  const mt = meta.mt == null || meta.mt === '' ? null : String(meta.mt);
+  // Báo theo lựa chọn chung của server, không theo dịch vụ đã chốt cho chính request này (withMt ở http.createServer).
+  if (!setMt(mt)) return send(res, 400, { ...globalConfig(), error: 'mt_unavailable', asked: String(mt).slice(0, 20) });
+  // Ghi file tạm rồi đổi tên (như writeCache): tắt máy giữa chừng không để lại settings.json dở. Không lưu được thì vẫn đổi
+  // trong lúc server chạy, báo saved: false để popup nói rõ bật lại server sẽ quên (Astra 15/11, F5).
+  let saved = true;
+  try { const tmp = SETTINGS + '.' + process.pid + '.tmp'; fs.writeFileSync(tmp, JSON.stringify({ mt })); fs.renameSync(tmp, SETTINGS); }
+  catch (e) { saved = false; console.log(`  → Không lưu được lựa chọn dịch vụ dịch: ${e.message}`); }
+  const c = globalConfig();
+  console.log(`${new Date().toLocaleTimeString()} Dịch bằng: ${c.mt} (${c.model})${mt ? '' : ', mặc định theo .env'}`);
+  send(res, 200, { ok: true, saved, ...c });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://local');
   if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, version: PIPELINE_VERSION, targets: TARGET_CODES, ...config(), running, queued: queue.length });
-  const handler = req.method === 'POST' && { '/v1/subtitles': handleSubtitles, '/v1/bump': handleBump, '/v1/warm': handleWarm }[url.pathname];
+  const handler = req.method === 'POST' && { '/v1/subtitles': handleSubtitles, '/v1/bump': handleBump, '/v1/warm': handleWarm, '/v1/mt': handleMt }[url.pathname];
   if (!handler) return send(res, 404, { error: 'not_found' });
   if (rejectForeign(req, res)) return;
   // Lỗi không lường trước trong một request (body lạ, đĩa lỗi) chỉ làm hỏng request đó, không làm server thoát.
-  handler(req, res).catch((e) => {
+  withMt(mtProvider(), () => handler(req, res)).catch((e) => {
     console.log(`${new Date().toLocaleTimeString()} LỖI xử lý ${url.pathname}: ${e.message}`);
     if (!res.headersSent && !res.destroyed) send(res, 500, { status: 'error', error: String(e.message).slice(0, 300) });
   });

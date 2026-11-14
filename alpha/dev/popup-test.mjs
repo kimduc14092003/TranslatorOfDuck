@@ -12,14 +12,23 @@ const SRC = fs.readFileSync(path.join(EXT, 'popup.js'), 'utf8');
 
 // health: câu trả lời của /health, hoặc null khi không kết nối được server.
 // stored: cài đặt đã lưu (chrome.storage.local); writes: các lần popup ghi.
-async function run(health, stored = {}, writes = []) {
+// posts: các lần popup gửi POST (ô "Dịch bằng": /v1/mt); afterPost: /health trả sau lần POST đầu (null: giữ health).
+async function run(health, stored = {}, writes = [], posts = [], afterPost = null) {
   const els = {};
-  const document = { getElementById: (id) => (els[id] ||= { id, checked: false, value: '', textContent: '', className: '', listeners: {}, addEventListener(t, f) { this.listeners[t] = f; } }) };
+  const el = (id) => ({ id, checked: false, value: '', textContent: '', className: '', disabled: false, children: [], listeners: {},
+    addEventListener(t, f) { this.listeners[t] = f; }, replaceChildren(...c) { this.children = c; } });
+  const document = { getElementById: (id) => (els[id] ||= el(id)), createElement: () => el(null) };
   const chrome = {
     storage: { local: { get: async () => ({ settings: { ...stored } }), set: async (o) => { writes.push(o.settings); stored = o.settings; } } },
     tabs: { query: async () => [{ id: 1 }], sendMessage: async () => { throw new Error('no tab'); } },
   };
-  const fetch = async () => {
+  const fetch = async (url, init) => {
+    if (init && init.method === 'POST') {
+      posts.push({ url, body: JSON.parse(init.body) });
+      if (afterPost && afterPost.reject) return { ok: false, status: 400, json: async () => afterPost.reject };
+      if (afterPost) health = afterPost;
+      return { ok: true, json: async () => ({ ok: true, ...(afterPost && afterPost.saved === false ? { saved: false } : {}) }) };
+    }
     if (!health) throw new TypeError('Failed to fetch');
     return { json: async () => JSON.parse(JSON.stringify(health)) };
   };
@@ -80,6 +89,67 @@ for (const [name, h, cls, ok] of CASES) {
     assert.equal(JSON.stringify(writes[0]), JSON.stringify({ lyrics: false, target: 'en' }));
     pass++; console.log('ok   ô Dịch sang ghi target, không ghi giá trị mặc định');
   } catch (e) { fail++; console.log('FAIL ô Dịch sang →', e.message); }
+}
+// Ô "Dịch bằng": liệt kê dịch vụ có key (health.mts) kèm model, đánh dấu mặc định, chọn đúng dịch vụ server đang dùng;
+// đổi thì POST /v1/mt rồi kiểm lại server. Một dịch vụ, server cũ, không có server: khoá ô.
+const MTS = { ok: true, asr: 'funasr', asrModel: FUN, asrModels: [FUN, QWEN], targets: ['vi', 'en'],
+  mts: [{ id: 'openai', model: 'gpt-x' }, { id: 'qwen', model: 'qwen-flash' }], mtDefault: 'openai' };
+const step = async () => { for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r)); };
+{
+  const posts = [], writes = [];
+  const got = await run({ ...MTS, mt: 'openai', model: 'gpt-x' }, {}, writes, posts, { ...MTS, mt: 'qwen', model: 'qwen-flash' });
+  try {
+    const sel = got.els.mt;
+    assert.deepEqual(sel.children.map((o) => [o.value, o.textContent]), [['openai', 'OpenAI (gpt-x) · mặc định'], ['qwen', 'Qwen (qwen-flash)']]);
+    assert.equal(sel.value, 'openai');
+    assert.equal(sel.disabled, false);
+    assert.equal(got.text, 'Server chạy. Nhận dạng: Fun-ASR, dịch: OpenAI (gpt-x).');
+    sel.listeners.change({ target: { value: 'qwen' } });
+    await step();
+    assert.deepEqual(posts, [{ url: 'http://127.0.0.1:8787/v1/mt', body: { mt: 'qwen' } }]);
+    assert.equal(sel.value, 'qwen');
+    assert.equal(got.els.health.textContent, 'Server chạy. Nhận dạng: Fun-ASR, dịch: Qwen (qwen-flash).');
+    assert.equal(typeof writes.at(-1).mtGen, 'number', 'ghi mtGen để tab bỏ thời gian chờ của dịch vụ cũ');
+    pass++; console.log('ok   ô Dịch bằng: liệt kê, đổi gửi /v1/mt, dòng trạng thái theo dịch vụ mới');
+  } catch (e) { fail++; console.log('FAIL ô Dịch bằng →', e.message); }
+}
+// Server từ chối (400) hay không lưu được: lời báo còn sau khi popup kiểm lại server; bị từ chối thì không ghi mtGen.
+for (const [name, after, note, gen] of [
+  ['bị từ chối', { reject: { error: 'mt_unavailable' } }, /^Không đổi được: dịch vụ này không có key/, false],
+  ['không lưu được', { ...MTS, mt: 'qwen', saved: false }, /bật lại server sẽ về như cũ/, true],
+]) {
+  const writes = [];
+  const got = await run({ ...MTS, mt: 'openai' }, {}, writes, [], after);
+  try {
+    got.els.mt.listeners.change({ target: { value: 'qwen' } });
+    await step();
+    assert.match(got.els.mtNote.textContent, note);
+    assert.equal(writes.some((w) => w.mtGen), gen);
+    pass++; console.log('ok   ô Dịch bằng khi ' + name);
+  } catch (e) { fail++; console.log('FAIL ô Dịch bằng khi ' + name + ' →', e.message); }
+}
+// Dịch vụ mặc định không có key (mt null) mà còn đúng một dịch vụ: vẫn chọn được (Astra F8). Server cũ: ô hiện dịch vụ đang dùng (F9).
+{
+  const got = await run({ ...MTS, mts: [{ id: 'qwen', model: 'qwen-flash' }], mt: null });
+  const old = await run({ ok: true, asr: 'funasr', asrModel: FUN, asrModels: [FUN, QWEN], mt: 'openai' });
+  try {
+    assert.equal(got.els.mt.disabled, false);
+    assert.deepEqual(got.els.mt.children.map((o) => o.value), ['', 'qwen']);
+    assert.deepEqual(old.els.mt.children.map((o) => [o.value, o.textContent]), [['openai', 'OpenAI']]);
+    pass++; console.log('ok   ô Dịch bằng: một dịch vụ chưa chọn thì chọn được; server cũ hiện dịch vụ đang dùng');
+  } catch (e) { fail++; console.log('FAIL ô Dịch bằng mt null / server cũ →', e.message); }
+}
+for (const [name, h, note] of [
+  ['một dịch vụ', { ...MTS, mts: [{ id: 'qwen', model: 'qwen-flash' }], mt: 'qwen' }, /Chỉ có một dịch vụ/],
+  ['server cũ (không có mts)', { ok: true, asr: 'funasr', asrModel: FUN, asrModels: [FUN, QWEN], mt: 'openai' }, /Server cũ/],
+  ['không có server', null, /Cần server/],
+]) {
+  const got = await run(h);
+  try {
+    assert.equal(got.els.mt.disabled, true);
+    assert.match(got.els.mtNote.textContent, note);
+    pass++; console.log('ok   ô Dịch bằng khoá khi ' + name);
+  } catch (e) { fail++; console.log('FAIL ô Dịch bằng khi ' + name + ' →', e.message); }
 }
 console.log(`${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

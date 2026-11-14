@@ -54,12 +54,32 @@ for (const n of ['GEMINI_API_KEY', 'DASHSCOPE_API_KEY']) if (looksOpenAI(ENV[n])
 const QWEN_BASE = ENV.QWEN_BASE || DASHSCOPE_BASE + '/compatible-mode/v1';
 const QWEN_MODEL = ENV.QWEN_MODEL || 'qwen-flash';
 const MT_PROVIDER = String(ENV.MT_PROVIDER || '').toLowerCase();
-const mtProvider = () => {
-  if (MT_PROVIDER === 'qwen') return ENV.DASHSCOPE_API_KEY ? 'qwen' : null;
-  if (MT_PROVIDER === 'openai') return ENV.OPENAI_API_KEY ? 'openai' : null;
-  if (MT_PROVIDER === 'gemini') return ENV.GEMINI_API_KEY ? 'gemini' : null;
-  return ENV.OPENAI_API_KEY ? 'openai' : ENV.GEMINI_API_KEY ? 'gemini' : ENV.DASHSCOPE_API_KEY ? 'qwen' : null;
+const MT_KEY = { openai: 'OPENAI_API_KEY', gemini: 'GEMINI_API_KEY', qwen: 'DASHSCOPE_API_KEY' };
+// Dịch vụ dịch có key trong .env, theo thứ tự ưu tiên khi không chọn gì.
+export const mtChoices = () => ['openai', 'gemini', 'qwen'].filter(p => ENV[MT_KEY[p]]);
+// Dịch vụ mặc định theo .env (MT_PROVIDER, không thì dịch vụ đầu tiên có key). File cache của nó giữ tên cũ.
+export const defaultMt = () => (MT_KEY[MT_PROVIDER] ? (ENV[MT_KEY[MT_PROVIDER]] ? MT_PROVIDER : null) : mtChoices()[0] || null);
+// Chọn trong popup extension (setMt, server lưu ở work/settings.json): đổi được lúc server đang chạy, không cần sửa .env.
+let mtPicked = null;
+// Mỗi việc dịch chốt dịch vụ lúc nhận yêu cầu (withMt): người xem đổi giữa chừng thì việc đang chạy không bị trộn hai dịch vụ.
+// Ngữ cảnh là { mt }: mt null (lúc nhận yêu cầu chưa có dịch vụ nào dùng được) vẫn là đã chốt, không rơi về lựa chọn chung
+// (Astra 15/11, F2: chốt null rồi đổi giữa lúc nhận dạng thì dịch bằng dịch vụ mới mà ghi vào file cache của dịch vụ cũ).
+const mtStore = new AsyncLocalStorage();
+export const withMt = (mt, fn) => mtStore.run({ mt }, fn);
+const pickedMt = () => (mtPicked && ENV[MT_KEY[mtPicked]] ? mtPicked : defaultMt());
+export const mtProvider = () => {
+  const now = mtStore.getStore();
+  return now ? (now.mt && ENV[MT_KEY[now.mt]] ? now.mt : null) : pickedMt();
 };
+// Cấu hình theo lựa chọn chung của server, không theo dịch vụ đã chốt cho request đang chạy (trả lời /v1/mt).
+export const globalConfig = () => mtStore.exit(config);
+// Trả true khi đổi được (dịch vụ có key); null hay rỗng: về mặc định theo .env.
+export function setMt(p) {
+  if (p == null || p === '') { mtPicked = null; return true; }
+  if (!mtChoices().includes(p)) return false;
+  mtPicked = p;
+  return true;
+}
 const MT_MODEL = { openai: OPENAI_MODEL, gemini: GEMINI_MODEL, qwen: QWEN_MODEL };
 export function config() {
   const mt = mtProvider();
@@ -68,6 +88,8 @@ export function config() {
   return { asr: dash ? 'funasr' : (ENV.GEMINI_API_KEY ? 'gemini' : null),
     ...(dash ? { asrModel, asrModels: asrModels(), ...(asrModel && asrModel !== FUNASR_MODEL ? { asrFallback: true } : {}) } : {}), mt,
     model: MT_MODEL[mt] || null, ...(mt === 'openai' && OPENAI_REASONING_EFFORT ? { effort: OPENAI_REASONING_EFFORT } : {}),
+    // mts: các dịch vụ dịch chọn được (có key), cho ô "Dịch bằng" của popup; mtDefault: dịch vụ theo .env.
+    mts: mtChoices().map(id => ({ id, model: MT_MODEL[id] })), mtDefault: defaultMt(),
     maxSeconds: MAX_SECONDS };
 }
 

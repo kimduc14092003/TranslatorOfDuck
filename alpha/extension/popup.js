@@ -16,20 +16,59 @@ async function save(patch) {
   await chrome.storage.local.set({ settings: s });
   return { ...DEFAULTS, ...s };
 }
+const MT_NAME = { openai: 'OpenAI', gemini: 'Gemini', qwen: 'Qwen' };
+const mtName = (id) => MT_NAME[id] || String(id || '?');
+const serverUrl = (s) => s.server.replace(/\/+$/, '');
+// Ô "Dịch bằng": các dịch vụ có key trong .env của server (health.mts). Lựa chọn nằm ở server (work/settings.json), không ở
+// extension: mọi tab, mọi lần mở popup thấy cùng một dịch vụ. Server cũ không có mts thì khoá ô.
+function showMt(h) {
+  const sel = $('mt');
+  const list = h && Array.isArray(h.mts) ? h.mts : [];
+  const opt = (value, text) => { const o = document.createElement('option'); o.value = value; o.textContent = text; return o; };
+  // Server cũ (không có mts): một lựa chọn là dịch vụ đang dùng, giá trị khớp để ô không trống (Astra 15/11, F9).
+  // Chưa có dịch vụ nào đang dùng (MT_PROVIDER chỉ tới dịch vụ không có key) mà có dịch vụ khác: thêm dòng trống, cho chọn (F8).
+  const active = !!(h && h.mt && list.some((m) => m.id === h.mt));
+  sel.replaceChildren(...(list.length ? [...(active ? [] : [opt('', '— chọn —')]), ...list.map((m) => opt(m.id, `${mtName(m.id)} (${m.model})${m.id === h.mtDefault ? ' · mặc định' : ''}`))]
+    : [opt(h && h.mt ? h.mt : '', h && h.mt ? mtName(h.mt) : '—')]));
+  sel.value = h && h.mt ? h.mt : '';
+  sel.disabled = !list.length || (list.length < 2 && active);
+  $('mtNote').textContent = !h ? 'Cần server chạy để chọn.' : !Array.isArray(h.mts) ? 'Server cũ chưa đổi được dịch vụ: cập nhật alpha/server rồi bật lại.'
+    : list.length < 2 ? 'Chỉ có một dịch vụ có key trong alpha/server/.env. Thêm OPENAI_API_KEY, GEMINI_API_KEY hoặc DASHSCOPE_API_KEY (Qwen) để có thêm lựa chọn.'
+    : 'Áp cho đoạn dịch sau khi đổi. Sub của mỗi dịch vụ lưu riêng: đổi lại thì không phải dịch lại.';
+}
+// Đổi xong: ghi mtGen để tab đang mở bỏ thời gian chờ lỗi của dịch vụ cũ (content.js). Lỗi thì giữ lời báo sau khi kiểm lại
+// server (checkServer ghi đè mtNote; Astra 15/11, F4).
+async function pickMt(mt) {
+  const s = await load();
+  $('mt').disabled = true;
+  let note = null;
+  try {
+    const r = await fetch(serverUrl(s) + '/v1/mt', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mt }) });
+    const b = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(b.error === 'mt_unavailable' ? 'dịch vụ này không có key trong alpha/server/.env' : 'HTTP ' + r.status);
+    await save({ mtGen: Date.now() });
+    if (b.saved === false) note = 'Đã đổi, nhưng server không lưu được lựa chọn: bật lại server sẽ về như cũ.';
+  } catch (e) {
+    note = 'Không đổi được: ' + e.message;
+  }
+  await checkServer();
+  if (note) $('mtNote').textContent = note;
+}
 async function checkServer() {
   const s = await load();
   $('health').className = 'muted';
   $('health').textContent = 'Đang kiểm tra…';
   try {
-    const r = await fetch(s.server.replace(/\/+$/, '') + '/health');
+    const r = await fetch(serverUrl(s) + '/health');
     const h = await r.json();
+    showMt(h);
     const ok = h.ok && h.mt;
     // Fun-ASR hết hạn mức thì server tự chuyển sang model dự phòng (asrFallback); hết cả hai thì asrModel là null, nhận
     // dạng tạm dừng: hiện màu lỗi.
     const asrDown = h.asr === 'funasr' && h.asrModels && !h.asrModel;
     const asr = h.asr !== 'funasr' ? 'Gemini' : asrDown ? 'hết hạn mức' + (h.asrModels.length > 1 ? ' (cả model dự phòng)' : '')
       : h.asrFallback ? `${h.asrModel} (Fun-ASR hết hạn mức)` : 'Fun-ASR';
-    const mt = h.mt === 'openai' ? 'OpenAI' : 'Gemini';
+    const mt = mtName(h.mt) + (h.model ? ` (${h.model})` : '');
     // Không có DASHSCOPE_API_KEY lẫn GEMINI_API_KEY thì asr là null (chỉ có OPENAI_API_KEY): trước đây vẫn ghi "Gemini".
     $('health').className = ok && h.asr && !asrDown ? 'ok' : 'bad';
     $('health').textContent = !ok ? 'Server chạy nhưng thiếu OPENAI_API_KEY hoặc GEMINI_API_KEY trong alpha/server/.env.'
@@ -42,6 +81,7 @@ async function checkServer() {
       $('health').textContent += Array.isArray(h.targets) ? ` Server chưa dịch được sang ${s.target}.` : ' Server cũ chỉ dịch tiếng Việt: cập nhật alpha/server rồi chạy lại "npm start".';
     }
   } catch (_) {
+    showMt(null);
     $('health').className = 'bad';
     // Server chạy cả trên Mac lẫn Windows (đang dùng trên Mac, HANDOFF §7): không chỉ nói PowerShell.
     $('health').textContent = 'Không kết nối được. Mở cửa sổ dòng lệnh (Terminal, PowerShell) trong thư mục alpha/server và chạy "npm start".';
@@ -136,6 +176,7 @@ async function liveSetup() {
   $('dminus').addEventListener('click', () => nudge(-0.1));
   $('dplus').addEventListener('click', () => nudge(0.1));
   $('check').addEventListener('click', checkServer);
+  $('mt').addEventListener('change', (e) => pickMt(e.target.value));
   liveSetup();
   webSetup();
   checkServer();
