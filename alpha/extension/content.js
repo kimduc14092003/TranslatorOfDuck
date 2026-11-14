@@ -1383,7 +1383,9 @@
   function sendWait(id, k) {
     const plan = planFor(id);
     if (id !== currentId || !plan || urgentChunk(id, k, plan)) return false;
-    const long = watching();
+    // Đoạn dịch lúc rảnh luôn chờ đoạn ngay trước nó có kết quả, cả khi watching() vừa thành sai (đo 15/11 trên Douyin thật: trang
+    // tự phát tiếp giữa lúc tạm dừng, đoạn cuối [4:20,4:43) gửi trước khi [3:50,4:20) xong, mất ngữ cảnh liền trước).
+    const long = watching() || (idle.id === id && idle.keys.has(k));
     for (const [pk, c] of vid(id).chunks) if (pk < k && c.status === 'pending' && c.sent && (urgentChunk(id, pk, plan) || (long && pk === k - 1))) return true;
     return false;
   }
