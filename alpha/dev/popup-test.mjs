@@ -90,6 +90,18 @@ for (const [name, h, cls, ok] of CASES) {
     pass++; console.log('ok   ô Dịch sang ghi target, không ghi giá trị mặc định');
   } catch (e) { fail++; console.log('FAIL ô Dịch sang →', e.message); }
 }
+// Ô "Dịch trước cả video khi rảnh": mặc định tắt, tích thì ghi fullAhead: true (content.js, web.js đọc).
+{
+  const writes = [];
+  const got = await run(null, {}, writes);
+  try {
+    assert.equal(got.els.fullAhead.checked, false);
+    got.els.fullAhead.listeners.change({ target: { checked: true } });
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    assert.equal(JSON.stringify(writes[0]), JSON.stringify({ fullAhead: true }));
+    pass++; console.log('ok   ô Dịch trước cả video: mặc định tắt, tích thì ghi fullAhead');
+  } catch (e) { fail++; console.log('FAIL ô Dịch trước cả video →', e.message); }
+}
 // Ô "Dịch bằng": liệt kê dịch vụ có key (health.mts) kèm model, đánh dấu mặc định, chọn đúng dịch vụ server đang dùng;
 // đổi thì POST /v1/mt rồi kiểm lại server. Một dịch vụ, server cũ, không có server: khoá ô.
 const MTS = { ok: true, asr: 'funasr', asrModel: FUN, asrModels: [FUN, QWEN], targets: ['vi', 'en'],

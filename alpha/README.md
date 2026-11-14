@@ -48,6 +48,7 @@ Thấy dòng `TranslatorOfDuck Alpha server: http://127.0.0.1:8787` là được
 - **Gỡ hoặc tắt** extension S1 cũ ("TranslatorOfDuck S1 spike (đo đạc)"), để hai cái không cùng móc vào trang.
 - Bấm **Load unpacked** và chọn thư mục `D:\Project\TranslatorDuck\TranslatorOfDuck\alpha\extension`.
 - Bấm biểu tượng extension rồi **Kiểm tra server**. Phải hiện chữ xanh "Server chạy…".
+- Ô **Dịch trước cả video khi rảnh** (mặc định tắt): ở lại một video quá 10 s thì extension dịch nối tiếp tới hết video, từng đoạn 30 s một, lúc không có việc gấp hơn, kể cả lúc tạm dừng. Tua tới chỗ khác thì chỗ mới được làm trước, đoạn rảnh đang tải bị ngắt. Video kế tiếp vẫn được dịch sẵn như thường. Lướt sang video khác thì dừng. Bật ô này sẽ tốn tiền nhận dạng và dịch hơn nếu bạn bỏ dở video. Ở trang bất kỳ, extension chỉ dịch được tới phần trình phát của trang đã nạp.
 - Ô **Dịch bằng** trong popup chọn dịch vụ dịch: OpenAI, Gemini hoặc Qwen, kèm tên model. Ô chỉ hiện dịch vụ có key trong `.env`; có từ hai dịch vụ trở lên mới đổi được. Đổi xong là áp cho đoạn dịch tiếp theo, không cần bật lại server, và bật lại server vẫn nhớ lựa chọn. Sub của mỗi dịch vụ lưu riêng: đổi qua lại để so sánh thì không phải trả tiền dịch lại. Dịch vụ mặc định vẫn theo `.env` (`MT_PROVIDER=`, không có thì ưu tiên OpenAI, rồi Gemini, rồi Qwen). Muốn đổi model của một dịch vụ thì sửa `OPENAI_MODEL`, `GEMINI_MODEL` hoặc `QWEN_MODEL` trong `.env`.
 
 **4. Dùng:** mở https://www.douyin.com/ (tab 推荐) rồi lướt như bình thường.

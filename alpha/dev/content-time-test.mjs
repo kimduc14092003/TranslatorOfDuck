@@ -1636,6 +1636,68 @@ await t('Cách cũ: đoạn ở chỗ tua tải lỗi cả hai đường (CDN tr
   assert.ok(s10 && s10.perf - seekAt <= 15000, 'đoạn [290,320) gửi ' + (s10 && s10.perf - seekAt) + ' ms sau lần tua: ' + list);
 });
 
+// Ô "Dịch trước cả video khi rảnh" (settings.fullAhead, 0.2.54): ở lại quá 10 s rồi tạm dừng thì mọi đoạn tới hết video lần lượt
+// được gửi, theo thứ tự, mỗi lúc chỉ một đoạn rảnh đang tải; tắt ô hay chưa xem đủ 10 s thì chỉ 30 s như cũ; video kế tiếp vẫn
+// được dịch sẵn; tua giữa lúc đoạn rảnh đang tải thì lượt tải đó bị ngắt, đoạn ở chỗ mới gửi trước.
+const fullRun = async ({ full = true, playMs = 12000, runMs = 150000, bw = 60000, durMs = 300000, during, nextAt = 0 } = {}) => {
+  const NEXT = '7500000000000000071';
+  const e = makeEnv(EXT, { bw, autoReplyMs: 3000, settings: { ...(FIRST10 ? {} : OLD), ...(full ? { fullAhead: true } : {}) } });
+  e.up('items', nextAt ? [e.item(A, durMs)] : [e.item(A, durMs), e.item(NEXT, 60000)]);
+  e.activeId = A;
+  const v = e.video(A, 0);
+  let maxIdleLoading = 0;
+  for (let i = 0; i * 250 < runMs; i++) {
+    if (e.perf >= playMs) v.paused = true;
+    if (nextAt && e.perf === nextAt) e.up('items', [e.item(NEXT, 60000)]);
+    await e.tick(250);
+    const cv = e.vid(A);
+    if (cv && cv.plan) {
+      const ph = e.dbg.playhead;
+      const loading = [...cv.chunks].filter(([k, c]) => c.status === 'pending' && !c.sent && cv.plan[k][0] >= ph + 60).length;
+      maxIdleLoading = Math.max(maxIdleLoading, loading);
+    }
+    if (during) await during(e, v);
+  }
+  const sentKs = [...new Set(e.subs().filter((m) => /^\d+$/.test(m.key.slice(20)) && m.key.startsWith(A + ':')).map((m) => +m.key.slice(20)))];
+  const nextMsg = e.subs().find((m) => m.key.startsWith(NEXT + ':'));
+  return { e, plan: e.vid(A).plan, sentKs, maxIdleLoading, nextSent: !!nextMsg, nextSentAt: nextMsg ? nextMsg.perf : null };
+};
+await t('Dịch trước cả video khi rảnh: ở lại quá 10 s rồi tạm dừng thì dịch nối tiếp tới hết video, theo thứ tự, một đoạn rảnh một lúc; video kế tiếp vẫn được dịch sẵn', async () => {
+  const r = await fullRun();
+  assert.equal(JSON.stringify(r.sentKs), JSON.stringify([...r.plan.keys()]), 'đoạn đã gửi: ' + r.sentKs.join(',') + ' / ' + r.plan.length);
+  assert.ok(r.maxIdleLoading <= 1, 'đoạn rảnh tải cùng lúc: ' + r.maxIdleLoading);
+  // Video kế tiếp hiện ra ở giây 20, lúc đang dịch rảnh trên đường truyền chậm (4000 B/s): đoạn rảnh đang tải không giữ hàng
+  // dịch sẵn (currentBehind bỏ qua nó). Đo 15/11: gửi lúc 33,0 s; tính cả đoạn rảnh vào currentBehind thì 41,45 s.
+  const r2 = await fullRun({ bw: 4000, runMs: 80000, nextAt: 20000 });
+  assert.ok(r2.nextSent && r2.nextSentAt < 37000, 'video kế tiếp (hiện ở giây 20) gửi lúc ' + r2.nextSentAt);
+});
+await t('Dịch trước cả video khi rảnh: tắt ô, hay chưa xem đủ 10 s, thì vẫn chỉ dịch trước như cũ', async () => {
+  for (const [name, opt] of [['tắt ô', { full: false }], ['dừng ở giây 5', { playMs: 5000 }]]) {
+    const r = await fullRun({ ...opt, runMs: 60000 });
+    const far = Math.max(...r.sentKs.map((k) => r.plan[k][0]));
+    assert.ok(far <= 60, name + ': đoạn xa nhất đã gửi bắt đầu ở giây ' + far);
+  }
+});
+await t('Dịch trước cả video khi rảnh: tua giữa lúc đoạn rảnh đang tải thì ngắt lượt tải đó, đoạn ở chỗ mới gửi trước', async () => {
+  let seekAt = null, idleK = null, firstAfter = null;
+  const r = await fullRun({ bw: 4000, runMs: 90000, during: async (e, v) => {
+    const cv = e.vid(A);
+    if (seekAt == null && cv && cv.plan && e.perf > 15000) {
+      const c = [...cv.chunks].find(([k, x]) => x.status === 'pending' && !x.sent && cv.plan[k][0] >= e.dbg.playhead + 60);
+      if (c) { idleK = c[0]; seekAt = e.perf; v.currentTime = 200; v.paused = false; e.seekNSent = e.subs().length; }
+    } else if (seekAt != null && firstAfter == null) {
+      const m = e.subs().slice(e.seekNSent).find((x) => x.key.startsWith(A + ':') && /^\d+$/.test(x.key.slice(20)));
+      if (m) firstAfter = +m.key.slice(20);
+    }
+  } });
+  assert.ok(seekAt != null, 'không có lúc đoạn rảnh đang tải');
+  const k200 = r.plan.findIndex(([a, b]) => 200 >= a && 200 < b);
+  assert.equal(firstAfter, k200, 'đoạn gửi đầu tiên sau khi tua: ' + firstAfter + ', đoạn ở giây 200: ' + k200);
+  const [ia, ib] = r.plan[idleK];
+  const cut = r.e.media().some((f) => f.vid === A && f.aborted && f.start < seekAt && f.end >= seekAt);
+  assert.ok(cut || (ia <= 200 && ib > 200), 'lượt tải đoạn rảnh [' + ia + ',' + ib + ') không bị ngắt');
+});
+
 const modeTag = FIRST10 ? ' (FIRST10=1: mặc định dịch sẵn 10 s)' : ' (mặc định của harness: dịch sẵn 20–30 s)';
 console.log((failed ? `\n${failed} kiểm tra trượt, ${n} đạt.` : `\n${n} kiểm tra đều đạt.`) + modeTag);
 if (failed) process.exit(1);

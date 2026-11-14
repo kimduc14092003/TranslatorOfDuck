@@ -193,6 +193,15 @@
     return v.slow ? LOOKAHEAD_LONG : LOOKAHEAD;
   }
   let warmAt = -Infinity;        // lần báo làm nóng gần nhất (performance.now())
+  // Dịch trước cả video khi rảnh (ô "Dịch trước cả video khi rảnh" trong popup, settings.fullAhead; chủ dự án 15/11): ở lại
+  // video quá WATCH_MS (watching) mà hàng của video đang xem không còn việc trong cửa sổ thường (aheadFor) thì thêm một đoạn
+  // kế tiếp sau cửa sổ đó, schedule() 4 lần/giây nên thành dịch cuốn chiếu tới hết video, cả lúc tạm dừng. Đoạn k gửi sau khi
+  // đoạn k-1 có kết quả (sendWait ở chế độ video dài) nên server không bị dồn việc. idle.keys: các đoạn thêm theo cách này
+  // (của video idle.id); có việc gấp hơn (vừa tua) thì đoạn rảnh đang tải mà chưa gửi bị bỏ, đã gửi thì để chạy nốt;
+  // currentBehind không tính chúng, hàng dịch sẵn video kế tiếp vẫn chạy.
+  const idle = { id: null, keys: new Set() };
+  const fullAheadOn = () => !!settings.fullAhead && watching();
+  const idleOnly = (v, k) => idle.id === currentId && idle.keys.has(k) && !!v && !!v.plan && v.plan[k] && v.plan[k][0] >= playhead + aheadFor(v);
 
   const alive = () => { try { return !!(chrome.runtime && chrome.runtime.id); } catch (_) { return false; } };
   // Service worker (background.js) có cùng bản với file này không, có đọc được NDJSON (stream) không. Chrome mở lại bằng
@@ -522,6 +531,19 @@
     const c0 = cv && cv.chunks.get(ph0), early = !!c0 && (c0.sent || ['ok', 'skipped', 'no_audio'].includes(c0.status));
     if (plan) plan.forEach(([a, b], k) => { if (gated && k > ph0 + (early ? 1 : 0) && a - playhead > F10_NEAR) return; if (b > playhead && a < playhead + ahead) want.push([currentId, k]); });
     else want.push([currentId, 0]);
+    if (idle.id !== currentId) { idle.id = currentId; idle.keys.clear(); }
+    if (plan && fullAheadOn() && !gated && eligible(items.get(currentId))) {
+      const busy = want.some(([id, k]) => needsWork(id, k));   // cửa sổ thường còn việc chưa làm (vừa tua, đoạn lỗi tới lượt thử lại)
+      for (const k of [...idle.keys]) {
+        const c = cv && cv.chunks.get(k);
+        if (!c || c.status !== 'pending') { if (!c || c.status !== 'error') idle.keys.delete(k); if (c && c.status === 'error' && !busy) want.push([currentId, k]); continue; }
+        if (c.sent || !busy) want.push([currentId, k]);   // đang tải mà có việc gấp hơn: bỏ khỏi wanted, cancelUnwanted ngắt lượt tải
+      }
+      if (!busy && !lanes.current.busy && !lanes.current.queue.length && !rateWait()) {
+        const k = plan.findIndex(([a, b], j) => b > playhead && a >= playhead + ahead && !idle.keys.has(j) && needsWork(currentId, j));
+        if (k >= 0) { idle.keys.add(k); want.push([currentId, k]); }
+      }
+    } else idle.keys.clear();
     for (const id of upcoming()) want.push([id, 0]);
     wanted = new Set(want.map(([id, k]) => id + ':' + k));
     bumpCurrent(plan);
@@ -1389,7 +1411,7 @@
     if (now - (v.byteAt || -Infinity) >= BYTE_GAP
       && (loading.some((x) => now - x.made >= BYTE_GAP) || (h && !h.closed && now - h.at >= BYTE_GAP))) return false;
     for (let k = 0; k < plan.length; k++) {
-      if (!wanted.has(currentId + ':' + k)) continue;
+      if (!wanted.has(currentId + ':' + k) || idleOnly(v, k)) continue;   // đoạn dịch lúc rảnh không giữ hàng dịch sẵn
       const c = v.chunks.get(k);
       if (!c || (c.status === 'pending' && !c.sent && !c.waiting)) return true;
     }
@@ -1505,7 +1527,7 @@
     for (const q of qs) out.push(`Mẩu nhanh ${mmss(q.from)}–${mmss(end(q.to))}  ${pieceState(q)}`);
     const pairs = v.pron && Array.isArray(v.pron.pairs) ? v.pron.pairs.filter((x) => x && x.who) : [];
     if (pairs.length) out.push('Xưng hô: ' + pairs.slice(0, 3).map((x) => `${x.who}: ${x.self}/${x.other}`).join('; ') + (pairs.length > 3 ? ` (+${pairs.length - 3})` : ''));
-    out.push(`Dịch trước ${aheadFor(v)} s${watching() ? (v.slow ? ' (đang xem, tải chậm)' : ' (đang xem)') : ''} · lời bài hát: ${lyricsOn() ? 'dịch' : 'bỏ qua'}${v.short0 ? ' · dịch sẵn 10 s đầu' : ''}`);
+    out.push(`Dịch trước ${fullAheadOn() && v === vids.get(currentId) ? 'cả video (khi rảnh)' : aheadFor(v) + ' s'}${watching() ? (v.slow ? ' (đang xem, tải chậm)' : ' (đang xem)') : ''} · lời bài hát: ${lyricsOn() ? 'dịch' : 'bỏ qua'}${v.short0 ? ' · dịch sẵn 10 s đầu' : ''}`);
     return out.join('\n');
   }
   let lastFind = 0;

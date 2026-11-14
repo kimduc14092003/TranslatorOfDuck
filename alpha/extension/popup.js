@@ -151,6 +151,7 @@ async function liveSetup() {
   $('lyrics').checked = s.lyrics !== false;
   $('cover').checked = !!s.cover;
   $('first10').checked = s.first10 !== false || !s.first10Set;
+  $('fullAhead').checked = !!s.fullAhead;
   $('target').value = ['vi', 'en'].includes(s.target) ? s.target : 'vi';
   $('position').value = s.position;
   $('size').value = s.size;
@@ -161,6 +162,7 @@ async function liveSetup() {
   $('first10').addEventListener('change', (e) => save({ first10: e.target.checked, first10Set: true }));
   $('target').addEventListener('change', async (e) => { await save({ target: e.target.value }); checkServer(); });
   $('cover').addEventListener('change', (e) => save({ cover: e.target.checked }));
+  $('fullAhead').addEventListener('change', (e) => save({ fullAhead: e.target.checked }));
   // Chọn lại vị trí: bỏ các lần dời bằng Alt+↑/↓ đã nhớ theo trang.
   $('position').addEventListener('change', async (e) => { await chrome.storage.local.set({ subPos: {} }); save({ position: e.target.value }); });
   $('size').addEventListener('change', (e) => save({ size: e.target.value }));

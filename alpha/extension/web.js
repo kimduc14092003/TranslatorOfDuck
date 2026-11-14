@@ -221,7 +221,7 @@
       const edge = reach(tr, Math.max(0, t - 0.1));
       out.push(`Âm thanh: ${tr.info && tr.info.mux ? 'tách từ luồng gộp hình + tiếng' : 'luồng tiếng riêng'} · ${edge != null ? `trình phát đã nạp tới ${mmss(edge)} (trước ${Math.max(0, Math.round(edge - t))} s)` : 'chưa nạp chỗ đang xem'}`);
     } else out.push('Âm thanh: chưa thấy');
-    out.push(`Dịch trước ${AHEAD} s · lời bài hát: ${settings.lyrics !== false ? 'dịch' : 'bỏ qua'}`);
+    out.push(`Dịch trước ${settings.fullAhead ? 'tới hết phần trình phát đã nạp' : AHEAD + ' s'} · lời bài hát: ${settings.lyrics !== false ? 'dịch' : 'bỏ qua'}`);
     return out.join('\n');
   }
   const DOT = { ok: '#2ecc71', pending: '#f5a623', wait: '#9b9b9b', error: '#e74c3c' };
@@ -268,8 +268,16 @@
     else {
       const dur = isFinite(v.duration) ? v.duration : Infinity, t = v.currentTime;
       let inflight = [...sources.values()].reduce((n, x) => n + [...x.sent.values()].filter((y) => y === 'pending').length, 0);
-      // Video đang xem: đoạn chứa chỗ đang xem trước, rồi tới AHEAD giây phía trước.
-      for (let k = indexAt(t); startOf(k) < Math.min(dur, t + AHEAD) && inflight < MAX_INFLIGHT; k++) if (trySend(s, k, dur)) inflight++;
+      // Video đang xem: đoạn chứa chỗ đang xem trước, rồi tới AHEAD giây phía trước. Ô "Dịch trước cả video khi rảnh"
+      // (settings.fullAhead): tới hết video, nhưng chỉ được phần trình phát của trang đã nạp (trySend không gửi đoạn chưa có
+      // âm thanh); việc gấp vẫn trước vì vòng đi từ chỗ đang xem và giới hạn MAX_INFLIGHT.
+      // Ngoài cửa sổ AHEAD thì dừng ở đoạn đầu tiên chưa gửi mà không gửi được (trình phát chưa nạp tới): livestream có dur vô
+      // cực, không dừng thì vòng lặp không bao giờ hết.
+      const until = settings.fullAhead ? dur : t + AHEAD;
+      for (let k = indexAt(t); startOf(k) < Math.min(dur, until) && inflight < MAX_INFLIGHT; k++) {
+        if (trySend(s, k, dur)) inflight++;
+        else if (startOf(k) >= t + AHEAD && !s.sent.has(k)) break;
+      }
       // Video tải sẵn trong feed (chưa xem): đoạn đầu, để lướt sang là có sub ngay.
       for (const [, x] of sources) if (x !== s && inflight < MAX_INFLIGHT + 1 && !x.closed && Date.now() - x.seen < 60000 && trySend(x, 0, Infinity)) inflight++;
       const k = indexAt(t), st = s.sent.get(k), tr = trackOf(s);
