@@ -34,12 +34,11 @@ DASHSCOPE_API_KEY=key Alibaba của bạn (Fun-ASR)
 
 Dịch dùng OpenAI nếu có `OPENAI_API_KEY`, không thì dùng `GEMINI_API_KEY`. Đổi model OpenAI bằng dòng `OPENAI_MODEL=...`. Với model suy luận, thêm `OPENAI_REASONING_EFFORT=none` (hoặc `low` nếu model không nhận `none`) để sub ra nhanh. Dịch vụ khác cùng kiểu API với OpenAI thì đặt `OPENAI_BASE=.../v1`. Nếu chỉ có `GEMINI_API_KEY` thì server vẫn chạy (Gemini lo cả nhận dạng lẫn dịch), nhưng Fun-ASR cho mốc thời gian chuẩn hơn. Key Gemini gói miễn phí hết lượt sau vài chục video mỗi ngày.
 
-**2. Bật server** (mỗi lần dùng):
+**2. Bật server** (mỗi lần dùng): bấm đúp `alpha\server\start-server.bat` (trên Mac: `alpha/server/start-server.command`). Không cần mở PowerShell hay `cd`. Server sẵn sàng trong chưa tới 1 giây.
 
-```powershell
-cd D:\Project\TranslatorDuck\TranslatorOfDuck\alpha\server
-npm start
-```
+- Cho tiện, tạo lối tắt ra Desktop: chuột phải `start-server.bat` → **Show more options** → **Send to** → **Desktop (create shortcut)**.
+- Muốn server tự bật mỗi lần mở máy: bấm `Win+R`, gõ `shell:startup`, Enter, rồi chép lối tắt vừa tạo vào thư mục hiện ra. Chuột phải lối tắt → **Properties** → **Run: Minimized** để cửa sổ thu nhỏ xuống thanh tác vụ. (Mac: **System Settings** → **General** → **Login Items** → dấu **+** → chọn `start-server.command`.)
+- Cách cũ vẫn dùng được: `cd` vào `alpha\server` rồi `npm start`.
 
 Thấy dòng `TranslatorOfDuck Alpha server: http://127.0.0.1:8787` là được. Để nguyên cửa sổ này; mỗi video dịch xong sẽ in một dòng ở đây.
 
@@ -73,7 +72,7 @@ Thấy dòng `TranslatorOfDuck Alpha server: http://127.0.0.1:8787` là được
 
 | Hiện tượng | Cách xử lý |
 |---|---|
-| Nhãn đỏ "không kết nối được server" | Cửa sổ `npm start` đã bị đóng. Mở lại theo bước 2. |
+| Nhãn đỏ "không kết nối được server" | Cửa sổ server đã bị đóng. Bấm đúp `start-server.bat` lại (bước 2). |
 | Popup: "thiếu OPENAI_API_KEY hoặc GEMINI_API_KEY" | Kiểm tra file `alpha\server\.env`, rồi tắt và bật lại `npm start`. |
 | Nhãn đỏ "OpenAI hết hạn mức…" hoặc "Gemini đã hết lượt…" | Key hết tiền hoặc hết lượt miễn phí. Server tạm ngừng gọi 10 phút; nạp tiền hoặc đổi key rồi bật lại `npm start`. |
 | `npm` báo ENOENT / không thấy package.json | Bạn đang đứng sai thư mục. `cd` vào `alpha\server` trước. |
